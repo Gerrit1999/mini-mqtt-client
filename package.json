@@ -11,19 +11,21 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "~2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
     "element-plus": "^2.13.1",
+    "pako": "^2.1.0",
     "pinia": "^3.0.4",
     "vue": "^3.5.13",
     "vue-i18n": "^11.2.8"
   },
   "devDependencies": {
     "@intlify/unplugin-vue-i18n": "^11.0.3",
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "~2.10.0",
     "@types/js-yaml": "^4.0.9",
+    "@types/pako": "^2.0.4",
     "@vitejs/plugin-vue": "^5.2.1",
     "js-yaml": "^4.1.1",
     "sass-embedded": "^1.97.2",

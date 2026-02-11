@@ -143,6 +143,14 @@
           <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
         </el-table>
       </div>
+
+      <div class="function-category">
+        <h4>{{ $t('script.functionCategories.compression') }}</h4>
+        <el-table :data="compressionFunctions" size="small">
+          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="320" />
+          <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
+        </el-table>
+      </div>
       
       <div class="function-category">
         <h4>{{ $t('script.functionCategories.other') }}</h4>
@@ -207,6 +215,7 @@ const basicFunctions = [
   { name: 'JSON.parse(str)', desc: 'Parse JSON string' },
   { name: 'JSON.stringify(obj)', desc: 'Object to JSON string' },
   { name: 'console.log(...args)', desc: 'Output log (debug)' },
+  { name: 'payloadBytes', desc: 'Raw payload bytes (Uint8Array, after_receive only)' },
   { name: 'btoa(str)', desc: 'Base64 encode' },
   { name: 'atob(str)', desc: 'Base64 decode' },
 ]
@@ -236,6 +245,13 @@ const aesFunctions = [
   { name: 'await crypto.aesGcmDecryptHex(cipherHex, keyHex)', desc: 'AES-GCM decrypt (Hex)' },
   { name: 'await crypto.aesCbcEncryptHex(text, keyHex, ivHex?)', desc: 'AES-CBC encrypt (Hex)' },
   { name: 'await crypto.aesCbcDecryptHex(cipherHex, keyHex)', desc: 'AES-CBC decrypt (Hex)' },
+]
+
+const compressionFunctions = [
+  { name: 'pako.gzip(data, options?)', desc: 'raw gzip compress (returns Uint8Array)' },
+  { name: 'pako.ungzip(data, options?)', desc: 'raw gzip decompress' },
+  { name: 'pako.deflate(data, options?)', desc: 'raw zlib(deflate) compress' },
+  { name: 'pako.inflate(data, options?)', desc: 'raw zlib(inflate) decompress' },
 ]
 
 const otherFunctions = [

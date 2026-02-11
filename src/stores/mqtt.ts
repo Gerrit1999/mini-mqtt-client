@@ -192,13 +192,15 @@ export const useMqttStore = defineStore("mqtt", () => {
         const scripts = await getCachedScripts(msg.server_id, "after_receive");
         
         if (scripts.length > 0) {
+          const originalPayloadBytes = new Uint8Array(payloadBytes);
           const originalPayload = new TextDecoder().decode(payloadBytes);
           const envVariables = await getCachedEnvVariables(msg.server_id);
           const processedPayload = await ScriptEngine.executeAfterReceive(
             scripts,
             originalPayload,
             msg.topic,
-            envVariables
+            envVariables,
+            originalPayloadBytes
           );
           payloadBytes = new TextEncoder().encode(processedPayload);
         }

@@ -188,6 +188,7 @@ script:
     encoding: Encoding
     hash: Hash Functions
     aes: AES Encryption
+    compression: Compression
     other: Other Tools
     env: Environment Variables
   functionColumns:

@@ -1,5 +1,6 @@
 import type { Script } from "@/stores/script";
 import { errorHandler, ErrorType } from "@/utils/errorHandler";
+import { deflate, gzip, inflate, ungzip } from "pako";
 
 /**
  * 加密工具类 - 提供常用的加解密函数
@@ -557,13 +558,14 @@ export class ScriptEngine {
     scripts: Script[], 
     payload: string, 
     topic: string,
-    envVariables?: Record<string, string>
+    envVariables?: Record<string, string>,
+    payloadBytes?: Uint8Array
   ): Promise<string> {
     let result = payload;
     
     for (const script of scripts) {
       try {
-        result = await this.executeScript(script.code, { payload: result, topic, env: envVariables });
+        result = await this.executeScript(script.code, { payload: result, topic, env: envVariables, payloadBytes });
       } catch (error: any) {
         const errorMessage = `脚本执行失败 [${script.name}]: ${error?.message || error}`;
         console.error(errorMessage, error);
@@ -585,7 +587,7 @@ export class ScriptEngine {
    */
   private static async executeScript(
     code: string,
-    context: { payload: string; topic?: string; env?: Record<string, string> }
+    context: { payload: string; topic?: string; env?: Record<string, string>; payloadBytes?: Uint8Array }
   ): Promise<string> {
     // 创建环境变量对象，支持直接属性访问和方法调用
     const envData = context.env || {};
@@ -613,6 +615,8 @@ export class ScriptEngine {
     // 创建沙箱环境
     const sandbox = {
       payload: context.payload,
+      // 原始 payload 字节（只读副本），用于处理 gzip/zlib 等二进制内容
+      payloadBytes: new Uint8Array(context.payloadBytes || []),
       topic: context.topic || "",
       env: envObject,
       console: {
@@ -665,6 +669,13 @@ export class ScriptEngine {
         // 其他
         xor: CryptoUtils.xor.bind(CryptoUtils),
         crc32: CryptoUtils.crc32.bind(CryptoUtils),
+      },
+      // 原生压缩工具
+      pako: {
+        gzip,
+        ungzip,
+        deflate,
+        inflate,
       },
     };
 

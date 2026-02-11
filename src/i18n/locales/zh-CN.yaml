@@ -188,6 +188,7 @@ script:
     encoding: 编码转换
     hash: 哈希函数
     aes: AES 加解密
+    compression: 压缩/解压
     other: 其他工具
     env: 环境变量
   functionColumns:

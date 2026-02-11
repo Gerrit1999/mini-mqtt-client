@@ -109,7 +109,8 @@ function process(payload, topic) {
 
 ## 脚本引擎 API
 
-脚本中可通过 `env` 对象访问当前服务器的环境变量，通过 `crypto` 对象访问加密工具：
+脚本中可通过 `env` 对象访问当前服务器的环境变量，通过 `crypto` 对象访问加密工具。
+接收后脚本还可直接使用 `payloadBytes`（Uint8Array，原始 MQTT payload 字节）：
 
 ### 编码转换
 - `crypto.stringToBytes(str)` / `crypto.bytesToString(bytes)`
@@ -131,6 +132,10 @@ function process(payload, topic) {
 - `await crypto.aesGcmDecryptHex(cipherHex, keyHex)`
 - `await crypto.aesCbcEncryptHex(text, keyHex, ivHex?)`
 - `await crypto.aesCbcDecryptHex(cipherHex, keyHex)`
+
+### 压缩 / 解压 (gzip / zlib)
+- `pako.gzip(data, options?)` / `pako.ungzip(data, options?)`
+- `pako.deflate(data, options?)` / `pako.inflate(data, options?)`
 
 ### 其他工具
 - `crypto.randomBytes(length)` / `crypto.generateKey(bits)` / `crypto.generateIv(length)`
