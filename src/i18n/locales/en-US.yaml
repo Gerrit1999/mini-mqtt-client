@@ -114,6 +114,9 @@ publish:
 messages:
   title: Messages
   clear: Clear Messages
+  export: Export Messages
+  exportEmpty: No messages to export
+  exportSuccess: Exported {count} messages to {path}
   noMessages: No messages
   viewPayload: View Payload
   copyPayload: Copy

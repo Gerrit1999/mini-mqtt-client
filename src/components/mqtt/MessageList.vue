@@ -50,9 +50,15 @@
         <el-tooltip :content="$t('messages.clear')" placement="top">
           <el-button text size="small" :icon="Delete" @click="handleClear" />
         </el-tooltip>
-        <!-- <el-tooltip content="导出消息" placement="top">
-          <el-button text size="small" :icon="Download" @click="handleExport" />
-        </el-tooltip> -->
+        <el-dropdown trigger="click" @command="handleExportCommand">
+          <el-button text size="small" :icon="Download" :title="$t('messages.export')" />
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="json">JSON</el-dropdown-item>
+              <el-dropdown-item command="csv">CSV</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
@@ -201,6 +207,7 @@ import { useI18n } from "vue-i18n";
 import {
   ChatDotRound,
   Delete,
+  Download,
   Top,
   Bottom,
   ArrowDown,
@@ -210,6 +217,8 @@ import {
   WarningFilled,
 } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useServerStore } from "@/stores/server";
 import { useMqttStore } from "@/stores/mqtt";
 import { useAppStore } from "@/stores/app";
@@ -221,6 +230,7 @@ const { t } = useI18n();
 
 type PayloadFormat = "json" | "binary" | "text";
 type DirectionFilter = "all" | "publish" | "receive";
+type ExportFormat = "json" | "csv";
 
 const serverStore = useServerStore();
 const mqttStore = useMqttStore();
@@ -553,6 +563,121 @@ function copyToPublish() {
     });
     ElMessage.success(t('messages.copied'));
     showDetailDialog.value = false;
+  }
+}
+
+interface ExportMessageItem {
+  timestamp: string;
+  direction: "publish" | "receive";
+  topic: string;
+  qos: number;
+  retain: boolean;
+  payloadType: PayloadFormat;
+  payloadText: string;
+  payloadHex?: string;
+  scriptError?: string;
+}
+
+function toExportMessage(msg: MqttMessage): ExportMessageItem {
+  const format = getMessageFormat(msg);
+  const item: ExportMessageItem = {
+    timestamp: msg.timestamp ?? "",
+    direction: msg.direction,
+    topic: msg.topic,
+    qos: msg.qos,
+    retain: msg.retain,
+    payloadType: format,
+    payloadText: getPayloadString(msg.payload),
+    scriptError: msg.scriptError,
+  };
+  if (format === "binary") {
+    item.payloadHex = getPayloadHexString(msg.payload);
+  }
+  return item;
+}
+
+function toCsvValue(value: string | number | boolean): string {
+  const str = String(value ?? "");
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+function buildExportFileName(format: ExportFormat): string {
+  const now = new Date();
+  const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(
+    now.getDate()
+  ).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(
+    2,
+    "0"
+  )}${String(now.getSeconds()).padStart(2, "0")}`;
+  return `mqtt-messages-${stamp}.${format}`;
+}
+
+async function saveContentToFile(content: string, format: ExportFormat): Promise<string | null> {
+  const defaultPath = buildExportFileName(format);
+  const filePath = await save({
+    defaultPath,
+    filters: [
+      {
+        name: format.toUpperCase(),
+        extensions: [format],
+      },
+    ],
+  });
+
+  if (!filePath) return null;
+  await writeTextFile(filePath, content);
+  return filePath;
+}
+
+async function exportAsJson(items: ExportMessageItem[]): Promise<string | null> {
+  const payload = JSON.stringify(items, null, 2);
+  return saveContentToFile(payload, "json");
+}
+
+async function exportAsCsv(items: ExportMessageItem[]): Promise<string | null> {
+  const header = [
+    "timestamp",
+    "direction",
+    "topic",
+    "qos",
+    "retain",
+    "payloadType",
+    "payloadText",
+    "payloadHex",
+    "scriptError",
+  ].join(",");
+  const rows = items.map((item) =>
+    [
+      toCsvValue(item.timestamp),
+      toCsvValue(item.direction),
+      toCsvValue(item.topic),
+      toCsvValue(item.qos),
+      toCsvValue(item.retain),
+      toCsvValue(item.payloadType),
+      toCsvValue(item.payloadText),
+      toCsvValue(item.payloadHex ?? ""),
+      toCsvValue(item.scriptError ?? ""),
+    ].join(",")
+  );
+  return saveContentToFile([header, ...rows].join("\n"), "csv");
+}
+
+async function handleExportCommand(command: string): Promise<void> {
+  const format = command as ExportFormat;
+  const exportItems = filteredMessages.value.map(toExportMessage);
+
+  if (exportItems.length === 0) {
+    ElMessage.warning(t("messages.exportEmpty"));
+    return;
+  }
+
+  try {
+    const savedPath =
+      format === "csv" ? await exportAsCsv(exportItems) : await exportAsJson(exportItems);
+    if (!savedPath) return;
+    ElMessage.success(t("messages.exportSuccess", { count: exportItems.length, path: savedPath }));
+  } catch (error) {
+    ElMessage.error(`${t("errors.saveFailed")}: ${error}`);
   }
 }
 </script>

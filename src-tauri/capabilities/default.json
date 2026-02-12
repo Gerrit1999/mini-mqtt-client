@@ -9,6 +9,17 @@
     "core:event:allow-listen",
     "opener:default",
     "dialog:default",
-    "fs:default"
+    "fs:default",
+    "fs:allow-write-text-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$DESKTOP/**/*",
+        "$DOWNLOAD/**/*",
+        "$DOCUMENT/**/*",
+        "$HOME/**/*",
+        "$TEMP/**/*"
+      ]
+    }
   ]
 }

@@ -114,6 +114,9 @@ publish:
 messages:
   title: 消息列表
   clear: 清空消息
+  export: 导出消息
+  exportEmpty: 没有可导出的消息
+  exportSuccess: 已导出 {count} 条消息到 {path}
   noMessages: 暂无消息
   viewPayload: 查看消息内容
   copyPayload: 复制
