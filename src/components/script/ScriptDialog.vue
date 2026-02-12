@@ -86,7 +86,7 @@
           <div class="form-actions">
             <div class="left-actions">
               <el-button :icon="FolderOpened" @click="handleImportFile">{{ $t('script.importJs') }}</el-button>
-              <el-button :icon="Document" @click="showFunctionList = true">{{ $t('script.functions') }}</el-button>
+              <el-button :icon="Document" @click.stop="showFunctionList = true">{{ $t('script.functions') }}</el-button>
             </div>
             <el-button type="primary" :loading="saving" @click="handleSave">
               {{ $t('common.save') }}
@@ -110,6 +110,7 @@
     :title="$t('script.functions')"
     width="600px"
     :append-to-body="true"
+    :close-on-click-modal="false"
   >
     <div class="function-list">
       <div class="function-category">
