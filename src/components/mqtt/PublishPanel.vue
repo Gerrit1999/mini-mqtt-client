@@ -56,7 +56,6 @@
           <el-input
             v-model="publishData.payload"
             type="textarea"
-            :rows="3"
             :placeholder="payloadPlaceholder"
             resize="none"
             class="payload-input"
@@ -310,6 +309,9 @@ const handlePublish = async () => {
 .publish-panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .panel-header {
@@ -340,6 +342,8 @@ const handlePublish = async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1;
+  min-height: 0;
 }
 
 .form-row {
@@ -354,16 +358,31 @@ const handlePublish = async () => {
 }
 
 .payload-row {
-  align-items: flex-end;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 
   .payload-input-wrapper {
     flex: 1;
+    min-height: 0;
   }
 
   .form-actions {
     display: flex;
     gap: 8px;
+    align-items: flex-end;
+    flex-shrink: 0;
   }
+}
+
+.payload-input {
+  height: 100%;
+}
+
+.payload-input :deep(.el-textarea),
+.payload-input :deep(.el-textarea__inner) {
+  height: 100%;
+  min-height: 96px;
 }
 
 
