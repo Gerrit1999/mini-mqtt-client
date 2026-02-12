@@ -1,6 +1,6 @@
 <template>
   <div class="message-payload" :class="{ preview, expanded: !preview }">
-    <!-- JSON 格式 - 保持原样展示，不格式化 -->
+    <!-- JSON 格式 -->
     <div v-if="effectiveFormat === 'json'" class="payload-content json-content">
       <pre
         v-if="shouldHighlight"
@@ -53,6 +53,7 @@ const props = defineProps<{
   payload: string | Uint8Array | undefined;
   preview?: boolean;
   payloadType?: "json" | "hex" | "text";
+  formatJson?: boolean;
   highlightKeyword?: string;
   searchMatchCase?: boolean;
   searchWholeWord?: boolean;
@@ -139,15 +140,27 @@ const simpleHexPreview = computed(() => {
     .join(" ");
 });
 
+// JSON 格式化（失败时回退原始文本，避免破坏现有行为）
+const formattedJsonPayload = computed(() => {
+  if (!props.formatJson || effectiveFormat.value !== "json") {
+    return payloadString.value;
+  }
+  try {
+    const parsed = JSON.parse(payloadString.value);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return payloadString.value;
+  }
+});
+
 // 显示的 payload（用于预览或文本显示）
-// 始终显示完整内容，不做截断
 const displayPayload = computed(() => {
-  return payloadString.value;
+  return formattedJsonPayload.value;
 });
 
 // 带换行符标记的 payload（用于详情展示）
 const displayPayloadWithLineBreaks = computed(() => {
-  const str = payloadString.value;
+  const str = displayPayload.value;
   // 在换行符前添加 ↵ 符号标记原始换行位置
   return str.replace(/\r?\n/g, '↵$&');
 });

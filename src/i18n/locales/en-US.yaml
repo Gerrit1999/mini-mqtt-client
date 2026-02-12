@@ -129,6 +129,7 @@ messages:
   clearConfirm: Are you sure to clear all messages?
   clearTitle: Clear Messages
   copied: Message copied
+  formatJson: Format JSON
 
 template:
   title: Command Templates

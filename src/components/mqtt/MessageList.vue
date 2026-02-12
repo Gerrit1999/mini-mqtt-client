@@ -42,6 +42,10 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <div class="format-toggle">
+          <span class="format-toggle-label">{{ $t('messages.formatJson') }}</span>
+          <el-switch v-model="formatJsonPayload" size="small" />
+        </div>
         <el-divider direction="vertical" />
         <el-tooltip :content="$t('messages.clear')" placement="top">
           <el-button text size="small" :icon="Delete" @click="handleClear" />
@@ -107,6 +111,7 @@
             :payload="msg.payload"
             :preview="true"
             :payload-type="msg.payload_type"
+            :format-json="formatJsonPayload"
             :highlight-keyword="searchKeyword.trim()"
             :search-match-case="searchMatchCase"
             :search-whole-word="searchWholeWord"
@@ -178,6 +183,7 @@
             :payload="selectedMessage.payload"
             :preview="false"
             :payload-type="selectedMessage.payload_type"
+            :format-json="formatJsonPayload"
             :highlight-keyword="searchKeyword.trim()"
             :search-match-case="searchMatchCase"
             :search-whole-word="searchWholeWord"
@@ -239,6 +245,7 @@ const searchMatchCase = ref(false);
 const searchWholeWord = ref(false);
 const searchUseRegex = ref(false);
 const directionFilter = ref<DirectionFilter>("all");
+const formatJsonPayload = ref(false);
 const showDetailDialog = ref(false);
 const selectedMessage = ref<MqttMessage | null>(null);
 
@@ -580,6 +587,17 @@ function copyToPublish() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.format-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.format-toggle-label {
+  font-size: 12px;
+  color: var(--app-text-secondary);
 }
 
 .search-options {
