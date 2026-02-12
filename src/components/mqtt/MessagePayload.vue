@@ -2,14 +2,19 @@
   <div class="message-payload" :class="{ preview, expanded: !preview }">
     <!-- JSON 格式 - 保持原样展示，不格式化 -->
     <div v-if="effectiveFormat === 'json'" class="payload-content json-content">
-      <pre>{{ preview ? displayPayload : displayPayloadWithLineBreaks }}</pre>
+      <pre
+        v-if="shouldHighlight"
+        v-html="highlightText(preview ? displayPayload : displayPayloadWithLineBreaks)"
+      />
+      <pre v-else>{{ preview ? displayPayload : displayPayloadWithLineBreaks }}</pre>
     </div>
 
     <!-- 二进制/HEX 格式 -->
     <div v-else-if="effectiveFormat === 'binary'" class="payload-content hex-content">
       <!-- 预览模式：只显示简单的 HEX 字符串 -->
       <div v-if="preview" class="hex-preview-simple">
-        <span>{{ simpleHexPreview }}</span>
+        <span v-if="shouldHighlight" v-html="highlightText(simpleHexPreview)" />
+        <span v-else>{{ simpleHexPreview }}</span>
       </div>
       <!-- 详情模式：显示完整的 HEX + ASCII 展示 -->
       <div v-else class="hex-display">
@@ -30,7 +35,11 @@
 
     <!-- 纯文本格式 -->
     <div v-else class="payload-content text-content">
-      <pre>{{ preview ? displayPayload : displayPayloadWithLineBreaks }}</pre>
+      <pre
+        v-if="shouldHighlight"
+        v-html="highlightText(preview ? displayPayload : displayPayloadWithLineBreaks)"
+      />
+      <pre v-else>{{ preview ? displayPayload : displayPayloadWithLineBreaks }}</pre>
     </div>
   </div>
 </template>
@@ -44,7 +53,13 @@ const props = defineProps<{
   payload: string | Uint8Array | undefined;
   preview?: boolean;
   payloadType?: "json" | "hex" | "text";
+  highlightKeyword?: string;
+  searchMatchCase?: boolean;
+  searchWholeWord?: boolean;
+  searchUseRegex?: boolean;
 }>();
+
+const shouldHighlight = computed(() => Boolean(props.highlightKeyword?.trim()));
 
 // 将 payload 转换为字符串
 const payloadString = computed(() => {
@@ -136,6 +151,74 @@ const displayPayloadWithLineBreaks = computed(() => {
   // 在换行符前添加 ↵ 符号标记原始换行位置
   return str.replace(/\r?\n/g, '↵$&');
 });
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (char) => {
+    const htmlEscapeMap: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return htmlEscapeMap[char];
+  });
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildSearchRegex(
+  keyword: string,
+  options: { matchCase: boolean; wholeWord: boolean; useRegex: boolean }
+): RegExp | null {
+  if (!keyword) return null;
+
+  let pattern = options.useRegex ? keyword : escapeRegExp(keyword);
+  if (options.wholeWord) {
+    pattern = `\\b(?:${pattern})\\b`;
+  }
+
+  const flags = options.matchCase ? "g" : "gi";
+
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
+
+function highlightText(text: string): string {
+  const source = String(text ?? "");
+  const keyword = props.highlightKeyword?.trim() ?? "";
+  const regex = buildSearchRegex(keyword, {
+    matchCase: Boolean(props.searchMatchCase),
+    wholeWord: Boolean(props.searchWholeWord),
+    useRegex: Boolean(props.searchUseRegex),
+  });
+  if (!keyword || !regex) return escapeHtml(source);
+
+  const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
+  let highlighted = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = globalRegex.exec(source)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    highlighted += escapeHtml(source.slice(lastIndex, start));
+    highlighted += `<mark class="search-highlight">${escapeHtml(source.slice(start, end))}</mark>`;
+    lastIndex = end;
+
+    if (match[0].length === 0) {
+      globalRegex.lastIndex++;
+    }
+  }
+
+  highlighted += escapeHtml(source.slice(lastIndex));
+  return highlighted;
+}
 
 // HEX 行数据
 const hexRows = computed(() => {
@@ -275,6 +358,13 @@ defineExpose({
   pre {
     color: var(--app-text-color);
   }
+}
+
+:deep(mark.search-highlight) {
+  background: rgba(250, 204, 21, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .raw-text {

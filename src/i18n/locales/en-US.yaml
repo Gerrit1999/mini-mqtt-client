@@ -118,6 +118,11 @@ messages:
   viewPayload: View Payload
   copyPayload: Copy
   copyToPublish: Copy to Publish
+  search:
+    matchCase: Match case
+    wholeWord: Match whole word
+    useRegex: Use regular expression
+    invalidRegex: Invalid regular expression
   direction:
     received: Received
     sent: Sent

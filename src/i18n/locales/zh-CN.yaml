@@ -118,6 +118,11 @@ messages:
   viewPayload: 查看消息内容
   copyPayload: 复制
   copyToPublish: 复制到发布
+  search:
+    matchCase: 区分大小写
+    wholeWord: 全词匹配
+    useRegex: 使用正则表达式
+    invalidRegex: 正则表达式无效
   direction:
     received: 接收
     sent: 发送

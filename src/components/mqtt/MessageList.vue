@@ -11,12 +11,24 @@
       <div class="header-actions">
         <el-input
           v-model="searchKeyword"
+          :class="{ 'is-invalid-regex': isRegexInvalid }"
           :placeholder="$t('template.searchPlaceholder')"
           :prefix-icon="Search"
           size="small"
           style="width: 160px"
           clearable
+          :title="isRegexInvalid ? t('messages.search.invalidRegex') : ''"
         />
+        <el-popover placement="bottom" trigger="click" :width="220">
+          <template #reference>
+            <el-button size="small">.*</el-button>
+          </template>
+          <div class="search-options">
+            <el-checkbox v-model="searchMatchCase">{{ t('messages.search.matchCase') }}</el-checkbox>
+            <el-checkbox v-model="searchWholeWord">{{ t('messages.search.wholeWord') }}</el-checkbox>
+            <el-checkbox v-model="searchUseRegex">{{ t('messages.search.useRegex') }}</el-checkbox>
+          </div>
+        </el-popover>
         <el-dropdown @command="handleFilterCommand">
           <el-button size="small">
             {{ filterLabel }}
@@ -59,7 +71,7 @@
             :style="getTopicColor(msg) ? { color: getTopicColor(msg) } : {}"
           >
             <span v-if="getTopicColor(msg)" class="topic-color-dot" :style="{ backgroundColor: getTopicColor(msg) }" />
-            {{ msg.topic }}
+            <span class="topic-text" v-html="highlightText(msg.topic)" />
           </span>
           <div class="msg-meta">
             <el-tag
@@ -91,7 +103,15 @@
           <span>{{ msg.scriptError }}</span>
         </div>
         <div class="message-body">
-          <MessagePayload :payload="msg.payload" :preview="true" :payload-type="msg.payload_type" />
+          <MessagePayload
+            :payload="msg.payload"
+            :preview="true"
+            :payload-type="msg.payload_type"
+            :highlight-keyword="searchKeyword.trim()"
+            :search-match-case="searchMatchCase"
+            :search-whole-word="searchWholeWord"
+            :search-use-regex="searchUseRegex"
+          />
         </div>
       </div>
 
@@ -154,7 +174,15 @@
               </el-button>
             </div>
           </div>
-          <MessagePayload :payload="selectedMessage.payload" :preview="false" :payload-type="selectedMessage.payload_type" />
+          <MessagePayload
+            :payload="selectedMessage.payload"
+            :preview="false"
+            :payload-type="selectedMessage.payload_type"
+            :highlight-keyword="searchKeyword.trim()"
+            :search-match-case="searchMatchCase"
+            :search-whole-word="searchWholeWord"
+            :search-use-regex="searchUseRegex"
+          />
         </div>
       </div>
     </el-dialog>
@@ -207,6 +235,9 @@ function getTopicColor(msg: MqttMessage): string | undefined {
   return subscription?.color;
 }
 const searchKeyword = ref("");
+const searchMatchCase = ref(false);
+const searchWholeWord = ref(false);
+const searchUseRegex = ref(false);
 const directionFilter = ref<DirectionFilter>("all");
 const showDetailDialog = ref(false);
 const selectedMessage = ref<MqttMessage | null>(null);
@@ -229,15 +260,17 @@ const filteredMessages = computed(() => {
 
   // 关键词搜索
   if (searchKeyword.value.trim()) {
-    const keyword = searchKeyword.value.toLowerCase();
+    const regex = searchRegex.value;
+    if (!regex) return [];
+
     result = result.filter((m) => {
       const payloadStr = getPayloadString(m.payload);
       // 同时搜索 HEX 表示（支持二进制消息搜索）
       const hexStr = getPayloadHexString(m.payload);
       return (
-        m.topic.toLowerCase().includes(keyword) ||
-        payloadStr.toLowerCase().includes(keyword) ||
-        hexStr.toLowerCase().includes(keyword)
+        matchesSearchField(m.topic, regex) ||
+        matchesSearchField(payloadStr, regex) ||
+        matchesSearchField(hexStr, regex)
       );
     });
   }
@@ -258,6 +291,90 @@ const filterLabel = computed(() => {
       return t('template.allCategories');
   }
 });
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (char) => {
+    const htmlEscapeMap: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return htmlEscapeMap[char];
+  });
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildSearchRegex(
+  keyword: string,
+  options: { matchCase: boolean; wholeWord: boolean; useRegex: boolean }
+): RegExp | null {
+  if (!keyword) return null;
+
+  let pattern = options.useRegex ? keyword : escapeRegExp(keyword);
+  if (options.wholeWord) {
+    pattern = `\\b(?:${pattern})\\b`;
+  }
+
+  const flags = options.matchCase ? "g" : "gi";
+
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
+
+const searchRegex = computed(() =>
+  buildSearchRegex(searchKeyword.value.trim(), {
+    matchCase: searchMatchCase.value,
+    wholeWord: searchWholeWord.value,
+    useRegex: searchUseRegex.value,
+  })
+);
+
+const isRegexInvalid = computed(
+  () =>
+    Boolean(searchKeyword.value.trim()) &&
+    searchUseRegex.value &&
+    !searchRegex.value
+);
+
+function matchesSearchField(value: string, regex: RegExp): boolean {
+  regex.lastIndex = 0;
+  return regex.test(value);
+}
+
+function highlightText(text: string): string {
+  const source = String(text ?? "");
+  const regex = searchRegex.value;
+  if (!searchKeyword.value.trim() || !regex) return escapeHtml(source);
+
+  const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
+  let highlighted = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = globalRegex.exec(source)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    highlighted += escapeHtml(source.slice(lastIndex, start));
+    highlighted += `<mark class="search-highlight">${escapeHtml(source.slice(start, end))}</mark>`;
+    lastIndex = end;
+
+    // 防止零宽匹配导致死循环
+    if (match[0].length === 0) {
+      globalRegex.lastIndex++;
+    }
+  }
+
+  highlighted += escapeHtml(source.slice(lastIndex));
+  return highlighted;
+}
 
 // 获取 payload 字符串
 function getPayloadString(payload: string | Uint8Array | undefined): string {
@@ -465,6 +582,16 @@ function copyToPublish() {
   gap: 8px;
 }
 
+.search-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.is-invalid-regex :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset !important;
+}
+
 .message-container {
   flex: 1;
   overflow-y: auto;
@@ -537,6 +664,17 @@ function copyToPublish() {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.topic-text {
+  min-width: 0;
+}
+
+:deep(mark.search-highlight) {
+  background: rgba(250, 204, 21, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .topic-color-dot {
