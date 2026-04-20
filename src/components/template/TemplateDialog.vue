@@ -239,7 +239,7 @@ const payloadPlaceholder = computed(() => {
 watch(() => props.visible, (visible) => {
   if (visible) {
     payloadError.value = ''
-    if (props.template) {
+    if (props.template?.id) {
       // 编辑模式：填充数据
       form.value = {
         name: props.template.name,
@@ -251,8 +251,20 @@ watch(() => props.visible, (visible) => {
         qos: props.template.qos,
         retain: props.template.retain
       }
+    } else if (props.template) {
+      // 新建但带预填（如从发布区存模版）：每次打开都重置「仅当前连接」
+      saveToCurrentConnectionOnly.value = false
+      form.value = {
+        name: props.template.name,
+        category: props.template.category || '',
+        description: props.template.description || '',
+        topic: props.template.topic,
+        payload_type: props.template.payload_type,
+        payload: props.template.payload,
+        qos: props.template.qos,
+        retain: props.template.retain
+      }
     } else {
-      // 新建模式：重置表单
       saveToCurrentConnectionOnly.value = false
       resetForm()
     }

@@ -286,10 +286,13 @@ const templates = computed(() => {
   return list
 })
 
-watch(templates, (list) => {
-  const ids = new Set(list.map((t) => t.id).filter((id): id is number => id != null))
-  selectedIds.value = selectedIds.value.filter((id) => ids.has(id))
-})
+/** 开始发布后固定，避免运行期间其他界面改动 scopeFilter 导致队列错乱 */
+const publishQueue = ref<CommandTemplate[]>([])
+
+// 运行状态（须在 templates watch 之前声明，供回调使用）
+const isRunning = ref(false)
+const isCompleted = ref(false) // 是否已完成（用于保持在发布视图）
+const isMinimized = ref(false) // 是否已最小化（用于区分最小化和关闭）
 
 // 选择状态
 const selectedIds = ref<number[]>([])
@@ -306,11 +309,6 @@ const config = ref({
   loopMode: 'infinite' as 'infinite' | 'count',
   loopCount: 10
 })
-
-// 运行状态
-const isRunning = ref(false)
-const isCompleted = ref(false)  // 是否已完成（用于保持在发布视图）
-const isMinimized = ref(false)  // 是否已最小化（用于区分最小化和关闭）
 const currentCommand = ref<CommandTemplate | null>(null)
 const currentIndex = ref(0)
 const currentRound = ref(1)
@@ -349,21 +347,26 @@ onUnmounted(() => {
 })
 
 // 进度百分比
+const progressTotal = computed(() =>
+  publishQueue.value.length > 0 ? publishQueue.value.length : selectedIds.value.length
+)
+
 const progressPercentage = computed(() => {
-  const total = selectedIds.value.length
+  const total = progressTotal.value
   if (total === 0) return 0
   return Math.round((currentIndex.value / total) * 100)
 })
 
 // 格式化进度
 function formatProgress(_percentage: number) {
-  return `${currentIndex.value}/${selectedIds.value.length}`
+  return `${currentIndex.value}/${progressTotal.value}`
 }
 
 // 重置状态
 function resetState() {
   selectedIds.value = []
   selectAll.value = false
+  publishQueue.value = []
   isRunning.value = false
   isCompleted.value = false
   isMinimized.value = false
@@ -410,6 +413,13 @@ function updateSelectAll() {
   selectAll.value = selectedIds.value.length === templates.value.length && templates.value.length > 0
 }
 
+watch(templates, (list) => {
+  if (isRunning.value) return
+  const ids = new Set(list.map((t) => t.id).filter((id): id is number => id != null))
+  selectedIds.value = selectedIds.value.filter((id) => ids.has(id))
+  updateSelectAll()
+})
+
 // 全选处理
 function handleSelectAll(val: boolean) {
   if (val) {
@@ -417,6 +427,7 @@ function handleSelectAll(val: boolean) {
   } else {
     selectedIds.value = []
   }
+  updateSelectAll()
 }
 
 // 获取排序后的命令
@@ -426,7 +437,9 @@ function getOrderedCommands(): CommandTemplate[] {
     return [...selected].sort((a, b) => a.name.localeCompare(b.name))
   }
   // 按勾选顺序
-  return selectedIds.value.map(id => selected.find(t => t.id === id)!).filter(Boolean)
+  return selectedIds.value
+    .map((id) => selected.find((t) => t.id === id))
+    .filter((t): t is CommandTemplate => t != null)
 }
 
 // 添加日志
@@ -454,7 +467,15 @@ async function handleStart() {
     ElMessage.warning(t('scheduled.noTemplateSelected'))
     return
   }
-  
+
+  const ordered = getOrderedCommands()
+  if (ordered.length === 0) {
+    ElMessage.warning(t('scheduled.noTemplateSelected'))
+    return
+  }
+
+  publishQueue.value = ordered
+
   isRunning.value = true
   currentIndex.value = 0
   currentRound.value = 1
@@ -462,24 +483,28 @@ async function handleStart() {
   successCount.value = 0
   failCount.value = 0
   logs.value = []
-  
+
   // 通知父组件运行状态变化
   emit('running-change', true)
-  
+
   await publishNext()
 }
 
 // 发布下一条
 async function publishNext() {
   if (!isRunning.value) return
-  
-  const commands = getOrderedCommands()
+
+  const commands = publishQueue.value
   if (commands.length === 0) {
     stopPublishing()
     return
   }
-  
+
   const command = commands[currentIndex.value]
+  if (!command) {
+    stopPublishing()
+    return
+  }
   currentCommand.value = command
   
   try {
@@ -563,6 +588,8 @@ function stopPublishing(keepView: boolean = false) {
   isRunning.value = false
   if (keepView) {
     isCompleted.value = true
+  } else {
+    publishQueue.value = []
   }
   if (publishTimeout) {
     clearTimeout(publishTimeout)
@@ -575,6 +602,7 @@ function stopPublishing(keepView: boolean = false) {
 // 返回配置界面
 function handleBackToConfig() {
   isCompleted.value = false
+  publishQueue.value = []
   currentIndex.value = 0
   currentRound.value = 1
   sentCount.value = 0
