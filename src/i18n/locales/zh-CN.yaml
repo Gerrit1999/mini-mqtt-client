@@ -163,6 +163,8 @@ template:
   useCount: 使用次数
   importSuccess: 成功导入 {count} 个模板
   exportSuccess: 模板已导出
+  global: 全局
+  saveToCurrentConnectionOnly: 仅保存到当前连接
 
 script:
   title: 预处理脚本

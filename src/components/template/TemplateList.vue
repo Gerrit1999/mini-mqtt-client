@@ -78,7 +78,18 @@
         <el-table-column prop="name" :label="$t('template.name')" min-width="140">
           <template #default="{ row }">
             <div class="template-name-cell">
-              <span class="name">{{ row.name }}</span>
+              <span class="name-row">
+                <span class="name">{{ row.name }}</span>
+                <el-tag
+                  v-if="row.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+                  size="small"
+                  type="success"
+                  effect="plain"
+                  class="global-tag"
+                >
+                  {{ $t('template.global') }}
+                </el-tag>
+              </span>
               <span v-if="row.description" class="desc text-ellipsis">
                 {{ row.description }}
               </span>
@@ -239,7 +250,11 @@ import {
   Check,
   Close
 } from '@element-plus/icons-vue'
-import { useTemplateStore, type CommandTemplate } from '@/stores/template'
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID
+} from '@/stores/template'
 import TemplateDialog from './TemplateDialog.vue'
 
 const { t } = useI18n()
@@ -529,9 +544,20 @@ async function handleImport() {
   flex-direction: column;
   gap: 2px;
 
+  .name-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
   .name {
     font-weight: 500;
     color: var(--app-text-color);
+  }
+
+  .global-tag {
+    flex-shrink: 0;
   }
 
   .desc {

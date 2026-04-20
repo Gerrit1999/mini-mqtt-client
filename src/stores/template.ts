@@ -2,8 +2,12 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
+/** Shared across all connections; real broker ids start at 1. */
+export const GLOBAL_TEMPLATE_SERVER_ID = 0
+
 export interface CommandTemplate {
   id?: number
+  /** `GLOBAL_TEMPLATE_SERVER_ID` = global; else bound to that connection. */
   server_id: number
   name: string
   topic: string
@@ -119,8 +123,12 @@ export const useTemplateStore = defineStore('template', () => {
   async function createTemplate(request: CreateTemplateRequest): Promise<number> {
     try {
       const id = await invoke<number>('create_template', { request })
-      if (currentServerId.value === request.server_id) {
-        await loadTemplates(request.server_id)
+      if (
+        currentServerId.value != null &&
+        (request.server_id === GLOBAL_TEMPLATE_SERVER_ID ||
+          request.server_id === currentServerId.value)
+      ) {
+        await loadTemplates(currentServerId.value)
       }
       return id
     } catch (error) {

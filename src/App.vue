@@ -78,7 +78,7 @@ import EnvDrawer from "@/components/env/EnvDrawer.vue";
 import { useAppStore } from "@/stores/app";
 import { useMqttStore } from "@/stores/mqtt";
 import { useServerStore } from "@/stores/server";
-import { useTemplateStore, type CommandTemplate } from "@/stores/template";
+import { useTemplateStore, type CommandTemplate, GLOBAL_TEMPLATE_SERVER_ID } from "@/stores/template";
 import { ElMessage } from "element-plus";
 
 const { t } = useI18n();
@@ -129,7 +129,7 @@ function handleSaveTemplate(data: { topic: string; payload: string; qos: number;
   
   // 创建临时模板对象用于对话框
   templateToSave.value = {
-    server_id: activeServerId.value,
+    server_id: GLOBAL_TEMPLATE_SERVER_ID,
     name: "",
     topic: data.topic,
     payload: data.payload,

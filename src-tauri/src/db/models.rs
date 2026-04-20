@@ -73,6 +73,7 @@ pub struct PublishPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandTemplate {
     pub id: Option<i64>,
+    /// `0` = global template (all connections); otherwise bound to that MQTT server id.
     pub server_id: i64,
     pub name: String,
     pub topic: String,

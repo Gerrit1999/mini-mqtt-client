@@ -163,6 +163,8 @@ template:
   useCount: Use Count
   importSuccess: Successfully imported {count} templates
   exportSuccess: Templates exported
+  global: Global
+  saveToCurrentConnectionOnly: Save to this connection only
 
 script:
   title: Preprocessing Scripts
