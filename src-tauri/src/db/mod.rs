@@ -7,6 +7,9 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
 
+/// `CommandTemplate.server_id` for templates visible on every connection (not a real broker id).
+const GLOBAL_TEMPLATE_SERVER_ID: i64 = 0;
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct AppData {
     pub servers: Vec<MqttServer>,
@@ -263,7 +266,9 @@ impl Storage {
         let data = self.data.read();
         data.templates
             .iter()
-            .filter(|t| t.server_id == server_id)
+            .filter(|t| {
+                t.server_id == server_id || t.server_id == GLOBAL_TEMPLATE_SERVER_ID
+            })
             .cloned()
             .collect()
     }
@@ -357,7 +362,9 @@ impl Storage {
         let mut categories: Vec<String> = data
             .templates
             .iter()
-            .filter(|t| t.server_id == server_id)
+            .filter(|t| {
+                t.server_id == server_id || t.server_id == GLOBAL_TEMPLATE_SERVER_ID
+            })
             .filter_map(|t| t.category.clone())
             .collect();
         categories.sort();

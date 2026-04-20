@@ -55,6 +55,12 @@
             maxlength="200"
           />
         </el-form-item>
+
+        <div v-if="!isEdit" class="template-scope-row">
+          <el-checkbox v-model="saveToCurrentConnectionOnly">
+            {{ $t('template.saveToCurrentConnectionOnly') }}
+          </el-checkbox>
+        </div>
       </div>
 
       <!-- MQTT 配置 -->
@@ -163,7 +169,11 @@ import {
   Minus,
   WarningFilled
 } from '@element-plus/icons-vue'
-import { useTemplateStore, type CommandTemplate } from '@/stores/template'
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID
+} from '@/stores/template'
 
 const { t } = useI18n()
 
@@ -183,6 +193,7 @@ const templateStore = useTemplateStore()
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
 const payloadError = ref('')
+const saveToCurrentConnectionOnly = ref(false)
 
 const isEdit = computed(() => !!props.template?.id)
 
@@ -228,7 +239,7 @@ const payloadPlaceholder = computed(() => {
 watch(() => props.visible, (visible) => {
   if (visible) {
     payloadError.value = ''
-    if (props.template) {
+    if (props.template?.id) {
       // 编辑模式：填充数据
       form.value = {
         name: props.template.name,
@@ -240,8 +251,21 @@ watch(() => props.visible, (visible) => {
         qos: props.template.qos,
         retain: props.template.retain
       }
+    } else if (props.template) {
+      // 新建但带预填（如从发布区存模版）：每次打开都重置「仅当前连接」
+      saveToCurrentConnectionOnly.value = false
+      form.value = {
+        name: props.template.name,
+        category: props.template.category || '',
+        description: props.template.description || '',
+        topic: props.template.topic,
+        payload_type: props.template.payload_type,
+        payload: props.template.payload,
+        qos: props.template.qos,
+        retain: props.template.retain
+      }
     } else {
-      // 新建模式：重置表单
+      saveToCurrentConnectionOnly.value = false
       resetForm()
     }
   }
@@ -349,8 +373,11 @@ async function handleSubmit() {
         description: form.value.description || undefined
       })
     } else {
+      const serverId = saveToCurrentConnectionOnly.value
+        ? props.serverId
+        : GLOBAL_TEMPLATE_SERVER_ID
       await templateStore.createTemplate({
-        server_id: props.serverId,
+        server_id: serverId,
         name: form.value.name,
         topic: form.value.topic,
         payload: form.value.payload,
@@ -371,6 +398,10 @@ async function handleSubmit() {
 </script>
 
 <style scoped lang="scss">
+.template-scope-row {
+  margin-bottom: 8px;
+}
+
 .form-section {
   margin-bottom: 24px;
 

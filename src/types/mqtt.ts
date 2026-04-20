@@ -26,6 +26,7 @@ export interface MqttServer {
  */
 export interface CommandTemplate {
   id?: number;
+  /** `0` = global (all connections). */
   server_id: number;
   name: string;
   topic: string;

@@ -25,6 +25,11 @@
             :value="category"
           />
         </el-select>
+        <el-select v-model="scopeFilter" class="scope-select">
+          <el-option :label="$t('template.scopeFilterAll')" value="all" />
+          <el-option :label="$t('template.global')" value="global" />
+          <el-option :label="$t('template.connectionOnly')" value="connection" />
+        </el-select>
       </div>
       <div class="toolbar-right">
         <el-button type="primary" :icon="Plus" @click="handleCreate">
@@ -78,7 +83,27 @@
         <el-table-column prop="name" :label="$t('template.name')" min-width="140">
           <template #default="{ row }">
             <div class="template-name-cell">
-              <span class="name">{{ row.name }}</span>
+              <span class="name-row">
+                <span class="name">{{ row.name }}</span>
+                <el-tag
+                  v-if="row.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+                  size="small"
+                  type="success"
+                  effect="plain"
+                  class="scope-tag"
+                >
+                  {{ $t('template.global') }}
+                </el-tag>
+                <el-tag
+                  v-else
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="scope-tag"
+                >
+                  {{ $t('template.connectionOnly') }}
+                </el-tag>
+              </span>
               <span v-if="row.description" class="desc text-ellipsis">
                 {{ row.description }}
               </span>
@@ -239,7 +264,12 @@ import {
   Check,
   Close
 } from '@element-plus/icons-vue'
-import { useTemplateStore, type CommandTemplate } from '@/stores/template'
+import { storeToRefs } from 'pinia'
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID
+} from '@/stores/template'
 import TemplateDialog from './TemplateDialog.vue'
 
 const { t } = useI18n()
@@ -253,6 +283,7 @@ const emit = defineEmits<{
 }>()
 
 const templateStore = useTemplateStore()
+const { scopeFilter } = storeToRefs(templateStore)
 
 const searchKeyword = ref('')
 const selectedCategory = ref<string | null>(null)
@@ -462,6 +493,10 @@ async function handleImport() {
   width: 140px;
 }
 
+.scope-select {
+  width: 130px;
+}
+
 .toolbar-right {
   display: flex;
   gap: 8px;
@@ -529,9 +564,20 @@ async function handleImport() {
   flex-direction: column;
   gap: 2px;
 
+  .name-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
   .name {
     font-weight: 500;
     color: var(--app-text-color);
+  }
+
+  .scope-tag {
+    flex-shrink: 0;
   }
 
   .desc {

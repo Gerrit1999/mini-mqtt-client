@@ -12,7 +12,7 @@
       </el-button>
     </div>
 
-    <!-- 搜索框 -->
+    <!-- 搜索与范围 -->
     <div class="search-wrapper">
       <el-input
         v-model="searchKeyword"
@@ -20,7 +20,13 @@
         :prefix-icon="Search"
         clearable
         size="small"
+        class="search-input"
       />
+      <el-select v-model="scopeFilter" class="scope-select" size="small">
+        <el-option :label="$t('template.scopeFilterAll')" value="all" />
+        <el-option :label="$t('template.global')" value="global" />
+        <el-option :label="$t('template.connectionOnly')" value="connection" />
+      </el-select>
     </div>
 
     <!-- 分类标签 -->
@@ -62,6 +68,24 @@
             <div class="item-main">
               <div class="item-header">
                 <span class="item-name">{{ template.name }}</span>
+                <el-tag
+                  v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+                  size="small"
+                  type="success"
+                  effect="plain"
+                  class="scope-tag"
+                >
+                  {{ $t('template.global') }}
+                </el-tag>
+                <el-tag
+                  v-else
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="scope-tag"
+                >
+                  {{ $t('template.connectionOnly') }}
+                </el-tag>
                 <el-tag size="small" :type="getPayloadTypeTag(template.payload_type)">
                   {{ template.payload_type.toUpperCase() }}
                 </el-tag>
@@ -107,7 +131,29 @@
           effect="plain"
           @click="handleSend(template)"
         >
-          {{ template.name }}
+          <span class="recent-tag-inner">
+            <span class="recent-name">{{ template.name }}</span>
+            <el-tag
+              v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+              size="small"
+              type="success"
+              effect="plain"
+              class="recent-scope"
+              @click.stop
+            >
+              {{ $t('template.global') }}
+            </el-tag>
+            <el-tag
+              v-else
+              size="small"
+              type="info"
+              effect="plain"
+              class="recent-scope"
+              @click.stop
+            >
+              {{ $t('template.connectionOnly') }}
+            </el-tag>
+          </span>
         </el-tag>
       </div>
     </div>
@@ -116,6 +162,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
@@ -127,7 +174,11 @@ import {
 } from '@element-plus/icons-vue'
 // 使用 SVG 替代 Lightning 图标
 import { Promotion as Lightning } from '@element-plus/icons-vue'
-import { useTemplateStore, type CommandTemplate } from '@/stores/template'
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID
+} from '@/stores/template'
 
 const { t } = useI18n()
 
@@ -141,6 +192,7 @@ const emit = defineEmits<{
 }>()
 
 const templateStore = useTemplateStore()
+const { scopeFilter } = storeToRefs(templateStore)
 
 const searchKeyword = ref('')
 const selectedCategory = ref<string | null>(null)
@@ -150,6 +202,12 @@ const categories = computed(() => templateStore.categories)
 // 显示的模板列表
 const displayedTemplates = computed(() => {
   let result = templateStore.templates
+
+  if (scopeFilter.value === 'global') {
+    result = result.filter(t => t.server_id === GLOBAL_TEMPLATE_SERVER_ID)
+  } else if (scopeFilter.value === 'connection') {
+    result = result.filter(t => t.server_id !== GLOBAL_TEMPLATE_SERVER_ID)
+  }
 
   // 按分类筛选
   if (selectedCategory.value) {
@@ -239,7 +297,20 @@ async function handleSend(template: CommandTemplate) {
 
 // 搜索框
 .search-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   padding: 12px 16px 8px;
+  flex-shrink: 0;
+}
+
+.search-wrapper .search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-wrapper .scope-select {
+  width: 112px;
   flex-shrink: 0;
 }
 
@@ -305,6 +376,11 @@ async function handleSend(template: CommandTemplate) {
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.scope-tag {
+  flex-shrink: 0;
 }
 
 .item-name {
@@ -378,5 +454,26 @@ async function handleSend(template: CommandTemplate) {
     transform: translateY(-1px);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
   }
+}
+
+.recent-tag-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-scope {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0 4px;
+  height: 18px;
+  line-height: 16px;
 }
 </style>

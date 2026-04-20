@@ -10,6 +10,11 @@
         size="default"
         @input="handleSearch"
       />
+      <el-select v-model="scopeFilter" class="drawer-scope-select" size="default">
+        <el-option :label="$t('template.scopeFilterAll')" value="all" />
+        <el-option :label="$t('template.global')" value="global" />
+        <el-option :label="$t('template.connectionOnly')" value="connection" />
+      </el-select>
       <el-button type="primary" :icon="Plus" @click="handleCreate">
         {{ $t('template.addTemplate') }}
       </el-button>
@@ -45,7 +50,27 @@
         class="template-card"
       >
         <div class="card-header">
-          <span class="card-name">{{ template.name }}</span>
+          <span class="card-title-row">
+            <span class="card-name">{{ template.name }}</span>
+            <el-tag
+              v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+              size="small"
+              type="success"
+              effect="plain"
+              class="card-scope-tag"
+            >
+              {{ $t('template.global') }}
+            </el-tag>
+            <el-tag
+              v-else
+              size="small"
+              type="info"
+              effect="plain"
+              class="card-scope-tag"
+            >
+              {{ $t('template.connectionOnly') }}
+            </el-tag>
+          </span>
           <el-dropdown trigger="click" @command="(cmd: string) => handleCommand(cmd, template)">
             <el-button :icon="MoreFilled" text size="small" class="more-btn" />
             <template #dropdown>
@@ -108,6 +133,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -119,7 +145,11 @@ import {
   CopyDocument,
   Delete
 } from '@element-plus/icons-vue'
-import { useTemplateStore, type CommandTemplate } from '@/stores/template'
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID
+} from '@/stores/template'
 import TemplateDialog from './TemplateDialog.vue'
 
 const { t } = useI18n()
@@ -133,6 +163,7 @@ const emit = defineEmits<{
 }>()
 
 const templateStore = useTemplateStore()
+const { scopeFilter } = storeToRefs(templateStore)
 
 const searchKeyword = ref('')
 const selectedCategory = ref<string | null>(null)
@@ -145,6 +176,12 @@ const categories = computed(() => templateStore.categories)
 // 过滤模板
 const filteredTemplates = computed(() => {
   let result = templateStore.templates
+
+  if (scopeFilter.value === 'global') {
+    result = result.filter(t => t.server_id === GLOBAL_TEMPLATE_SERVER_ID)
+  } else if (scopeFilter.value === 'connection') {
+    result = result.filter(t => t.server_id !== GLOBAL_TEMPLATE_SERVER_ID)
+  }
 
   if (selectedCategory.value) {
     result = result.filter(t => t.category === selectedCategory.value)
@@ -285,6 +322,11 @@ function handleSaved() {
   flex: 1;
 }
 
+.drawer-scope-select {
+  width: 130px;
+  flex-shrink: 0;
+}
+
 .category-filter {
   display: flex;
   flex-wrap: wrap;
@@ -327,14 +369,32 @@ function handleSaved() {
 .card-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 8px;
   margin-bottom: 10px;
+}
+
+.card-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.card-scope-tag {
+  flex-shrink: 0;
 }
 
 .card-name {
   font-size: 14px;
   font-weight: 600;
   color: var(--app-text-color);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .more-btn {
