@@ -165,6 +165,7 @@ template:
   exportSuccess: 模板已导出
   global: 全局
   connectionOnly: 本连接
+  scopeFilterAll: 全部
   saveToCurrentConnectionOnly: 仅保存到当前连接
 
 script:

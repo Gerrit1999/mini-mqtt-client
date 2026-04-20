@@ -5,6 +5,9 @@ import { invoke } from '@tauri-apps/api/core'
 /** Shared across all connections; real broker ids start at 1. */
 export const GLOBAL_TEMPLATE_SERVER_ID = 0
 
+/** List filter: all templates, global only, or current-connection only. */
+export type TemplateScopeFilter = 'all' | 'global' | 'connection'
+
 export interface CommandTemplate {
   id?: number
   /** `GLOBAL_TEMPLATE_SERVER_ID` = global; else bound to that connection. */
@@ -54,10 +57,17 @@ export const useTemplateStore = defineStore('template', () => {
   const currentServerId = ref<number | null>(null)
   const selectedCategory = ref<string | null>(null)
   const searchKeyword = ref('')
+  const scopeFilter = ref<TemplateScopeFilter>('all')
 
-  // 计算属性：按分类过滤的模板
+  // 计算属性：按分类、关键词、范围过滤的模板
   const filteredTemplates = computed(() => {
     let result = templates.value
+
+    if (scopeFilter.value === 'global') {
+      result = result.filter(t => t.server_id === GLOBAL_TEMPLATE_SERVER_ID)
+    } else if (scopeFilter.value === 'connection') {
+      result = result.filter(t => t.server_id !== GLOBAL_TEMPLATE_SERVER_ID)
+    }
 
     if (selectedCategory.value) {
       result = result.filter(t => t.category === selectedCategory.value)
@@ -262,6 +272,11 @@ export const useTemplateStore = defineStore('template', () => {
   function clearFilters() {
     selectedCategory.value = null
     searchKeyword.value = ''
+    scopeFilter.value = 'all'
+  }
+
+  function setScopeFilter(scope: TemplateScopeFilter) {
+    scopeFilter.value = scope
   }
 
   return {
@@ -271,6 +286,7 @@ export const useTemplateStore = defineStore('template', () => {
     currentServerId,
     selectedCategory,
     searchKeyword,
+    scopeFilter,
     filteredTemplates,
     frequentTemplates,
     recentTemplates,
@@ -286,6 +302,7 @@ export const useTemplateStore = defineStore('template', () => {
     duplicateTemplate,
     setCategory,
     setSearchKeyword,
+    setScopeFilter,
     clearFilters
   }
 })

@@ -12,7 +12,7 @@
       </el-button>
     </div>
 
-    <!-- 搜索框 -->
+    <!-- 搜索与范围 -->
     <div class="search-wrapper">
       <el-input
         v-model="searchKeyword"
@@ -20,7 +20,13 @@
         :prefix-icon="Search"
         clearable
         size="small"
+        class="search-input"
       />
+      <el-select v-model="scopeFilter" class="scope-select" size="small">
+        <el-option :label="$t('template.scopeFilterAll')" value="all" />
+        <el-option :label="$t('template.global')" value="global" />
+        <el-option :label="$t('template.connectionOnly')" value="connection" />
+      </el-select>
     </div>
 
     <!-- 分类标签 -->
@@ -156,6 +162,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
@@ -185,6 +192,7 @@ const emit = defineEmits<{
 }>()
 
 const templateStore = useTemplateStore()
+const { scopeFilter } = storeToRefs(templateStore)
 
 const searchKeyword = ref('')
 const selectedCategory = ref<string | null>(null)
@@ -194,6 +202,12 @@ const categories = computed(() => templateStore.categories)
 // 显示的模板列表
 const displayedTemplates = computed(() => {
   let result = templateStore.templates
+
+  if (scopeFilter.value === 'global') {
+    result = result.filter(t => t.server_id === GLOBAL_TEMPLATE_SERVER_ID)
+  } else if (scopeFilter.value === 'connection') {
+    result = result.filter(t => t.server_id !== GLOBAL_TEMPLATE_SERVER_ID)
+  }
 
   // 按分类筛选
   if (selectedCategory.value) {
@@ -283,7 +297,20 @@ async function handleSend(template: CommandTemplate) {
 
 // 搜索框
 .search-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   padding: 12px 16px 8px;
+  flex-shrink: 0;
+}
+
+.search-wrapper .search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-wrapper .scope-select {
+  width: 112px;
   flex-shrink: 0;
 }
 

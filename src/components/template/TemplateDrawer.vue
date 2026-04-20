@@ -10,6 +10,11 @@
         size="default"
         @input="handleSearch"
       />
+      <el-select v-model="scopeFilter" class="drawer-scope-select" size="default">
+        <el-option :label="$t('template.scopeFilterAll')" value="all" />
+        <el-option :label="$t('template.global')" value="global" />
+        <el-option :label="$t('template.connectionOnly')" value="connection" />
+      </el-select>
       <el-button type="primary" :icon="Plus" @click="handleCreate">
         {{ $t('template.addTemplate') }}
       </el-button>
@@ -128,6 +133,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -157,6 +163,7 @@ const emit = defineEmits<{
 }>()
 
 const templateStore = useTemplateStore()
+const { scopeFilter } = storeToRefs(templateStore)
 
 const searchKeyword = ref('')
 const selectedCategory = ref<string | null>(null)
@@ -169,6 +176,12 @@ const categories = computed(() => templateStore.categories)
 // 过滤模板
 const filteredTemplates = computed(() => {
   let result = templateStore.templates
+
+  if (scopeFilter.value === 'global') {
+    result = result.filter(t => t.server_id === GLOBAL_TEMPLATE_SERVER_ID)
+  } else if (scopeFilter.value === 'connection') {
+    result = result.filter(t => t.server_id !== GLOBAL_TEMPLATE_SERVER_ID)
+  }
 
   if (selectedCategory.value) {
     result = result.filter(t => t.category === selectedCategory.value)
@@ -307,6 +320,11 @@ function handleSaved() {
 
 .drawer-toolbar .el-input {
   flex: 1;
+}
+
+.drawer-scope-select {
+  width: 130px;
+  flex-shrink: 0;
 }
 
 .category-filter {

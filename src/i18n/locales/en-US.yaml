@@ -165,6 +165,7 @@ template:
   exportSuccess: Templates exported
   global: Global
   connectionOnly: This connection
+  scopeFilterAll: All
   saveToCurrentConnectionOnly: Save to this connection only
 
 script:

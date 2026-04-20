@@ -25,6 +25,11 @@
             :value="category"
           />
         </el-select>
+        <el-select v-model="scopeFilter" class="scope-select">
+          <el-option :label="$t('template.scopeFilterAll')" value="all" />
+          <el-option :label="$t('template.global')" value="global" />
+          <el-option :label="$t('template.connectionOnly')" value="connection" />
+        </el-select>
       </div>
       <div class="toolbar-right">
         <el-button type="primary" :icon="Plus" @click="handleCreate">
@@ -259,6 +264,7 @@ import {
   Check,
   Close
 } from '@element-plus/icons-vue'
+import { storeToRefs } from 'pinia'
 import {
   useTemplateStore,
   type CommandTemplate,
@@ -277,6 +283,7 @@ const emit = defineEmits<{
 }>()
 
 const templateStore = useTemplateStore()
+const { scopeFilter } = storeToRefs(templateStore)
 
 const searchKeyword = ref('')
 const selectedCategory = ref<string | null>(null)
@@ -484,6 +491,10 @@ async function handleImport() {
 
 .category-select {
   width: 140px;
+}
+
+.scope-select {
+  width: 130px;
 }
 
 .toolbar-right {

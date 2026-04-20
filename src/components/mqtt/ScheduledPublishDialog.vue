@@ -14,6 +14,11 @@
         <div class="section-header">
           <span class="section-title">{{ $t('scheduled.selectTemplate') }}</span>
           <div class="section-actions">
+            <el-select v-model="scopeFilter" size="small" class="scheduled-scope-select">
+              <el-option :label="$t('template.scopeFilterAll')" value="all" />
+              <el-option :label="$t('template.global')" value="global" />
+              <el-option :label="$t('template.connectionOnly')" value="connection" />
+            </el-select>
             <el-checkbox
               v-model="selectAll"
               :indeterminate="isIndeterminate"
@@ -231,6 +236,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Position, Loading, SuccessFilled } from '@element-plus/icons-vue'
@@ -258,6 +264,7 @@ const emit = defineEmits<{
 }>()
 
 const templateStore = useTemplateStore()
+const { scopeFilter } = storeToRefs(templateStore)
 const mqttStore = useMqttStore()
 const envStore = useEnvStore()
 
@@ -269,7 +276,20 @@ const dialogVisible = computed({
 
 // 加载状态
 const loading = computed(() => templateStore.loading)
-const templates = computed(() => templateStore.templates)
+const templates = computed(() => {
+  let list = templateStore.templates
+  if (scopeFilter.value === 'global') {
+    list = list.filter((t) => t.server_id === GLOBAL_TEMPLATE_SERVER_ID)
+  } else if (scopeFilter.value === 'connection') {
+    list = list.filter((t) => t.server_id !== GLOBAL_TEMPLATE_SERVER_ID)
+  }
+  return list
+})
+
+watch(templates, (list) => {
+  const ids = new Set(list.map((t) => t.id).filter((id): id is number => id != null))
+  selectedIds.value = selectedIds.value.filter((id) => ids.has(id))
+})
 
 // 选择状态
 const selectedIds = ref<number[]>([])
