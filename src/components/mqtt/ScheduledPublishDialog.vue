@@ -38,7 +38,27 @@
               @click.stop
             />
             <div class="command-info">
-              <div class="command-name">{{ cmd.name }}</div>
+              <div class="command-name-row">
+                <span class="command-name">{{ cmd.name }}</span>
+                <el-tag
+                  v-if="cmd.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+                  size="small"
+                  type="success"
+                  effect="plain"
+                  class="command-scope-tag"
+                >
+                  {{ $t('template.global') }}
+                </el-tag>
+                <el-tag
+                  v-else
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="command-scope-tag"
+                >
+                  {{ $t('template.connectionOnly') }}
+                </el-tag>
+              </div>
               <div class="command-meta">
                 <span class="topic">
                   <el-icon><Position /></el-icon>
@@ -215,7 +235,11 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Position, Loading, SuccessFilled } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useTemplateStore, type CommandTemplate } from '@/stores/template'
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID
+} from '@/stores/template'
 import { useMqttStore } from '@/stores/mqtt'
 import { useEnvStore } from '@/stores/env'
 import { ScriptEngine } from '@/utils/scriptEngine'
@@ -636,11 +660,22 @@ function handleClose() {
   min-width: 0;
 }
 
+.command-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .command-name {
   font-size: 14px;
   font-weight: 500;
   color: var(--app-text-color);
-  margin-bottom: 6px;
+}
+
+.command-scope-tag {
+  flex-shrink: 0;
 }
 
 .command-meta {

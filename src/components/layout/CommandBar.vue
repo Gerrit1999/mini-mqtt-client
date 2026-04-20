@@ -11,9 +11,32 @@
           v-for="template in frequentTemplates"
           :key="template.id"
           size="small"
+          class="template-quick-btn"
           @click="handleQuickSend(template)"
         >
-          {{ template.name }}
+          <span class="template-quick-btn__inner">
+            <span class="template-quick-btn__name">{{ template.name }}</span>
+            <el-tag
+              v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+              size="small"
+              type="success"
+              effect="plain"
+              class="template-quick-btn__scope"
+              @click.stop
+            >
+              {{ $t('template.global') }}
+            </el-tag>
+            <el-tag
+              v-else
+              size="small"
+              type="info"
+              effect="plain"
+              class="template-quick-btn__scope"
+              @click.stop
+            >
+              {{ $t('template.connectionOnly') }}
+            </el-tag>
+          </span>
         </el-button>
         
         <!-- 无模板时显示添加按钮 -->
@@ -48,7 +71,11 @@
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Histogram, Plus, FolderOpened, Document, Key } from "@element-plus/icons-vue";
-import { useTemplateStore, type CommandTemplate } from "@/stores/template";
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID,
+} from "@/stores/template";
 import { useServerStore } from "@/stores/server";
 import { useAppStore } from "@/stores/app";
 import { ElMessage } from "element-plus";
@@ -153,6 +180,27 @@ function handleOpenScripts() {
   &::-webkit-scrollbar {
     height: 4px;
   }
+}
+
+.template-quick-btn__inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+}
+
+.template-quick-btn__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-quick-btn__scope {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0 5px;
+  height: 18px;
+  line-height: 16px;
 }
 
 .command-bar-actions {

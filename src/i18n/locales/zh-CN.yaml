@@ -164,6 +164,7 @@ template:
   importSuccess: 成功导入 {count} 个模板
   exportSuccess: 模板已导出
   global: 全局
+  connectionOnly: 本连接
   saveToCurrentConnectionOnly: 仅保存到当前连接
 
 script:

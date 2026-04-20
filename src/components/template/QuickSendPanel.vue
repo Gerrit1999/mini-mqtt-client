@@ -62,6 +62,24 @@
             <div class="item-main">
               <div class="item-header">
                 <span class="item-name">{{ template.name }}</span>
+                <el-tag
+                  v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+                  size="small"
+                  type="success"
+                  effect="plain"
+                  class="scope-tag"
+                >
+                  {{ $t('template.global') }}
+                </el-tag>
+                <el-tag
+                  v-else
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="scope-tag"
+                >
+                  {{ $t('template.connectionOnly') }}
+                </el-tag>
                 <el-tag size="small" :type="getPayloadTypeTag(template.payload_type)">
                   {{ template.payload_type.toUpperCase() }}
                 </el-tag>
@@ -107,7 +125,29 @@
           effect="plain"
           @click="handleSend(template)"
         >
-          {{ template.name }}
+          <span class="recent-tag-inner">
+            <span class="recent-name">{{ template.name }}</span>
+            <el-tag
+              v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+              size="small"
+              type="success"
+              effect="plain"
+              class="recent-scope"
+              @click.stop
+            >
+              {{ $t('template.global') }}
+            </el-tag>
+            <el-tag
+              v-else
+              size="small"
+              type="info"
+              effect="plain"
+              class="recent-scope"
+              @click.stop
+            >
+              {{ $t('template.connectionOnly') }}
+            </el-tag>
+          </span>
         </el-tag>
       </div>
     </div>
@@ -127,7 +167,11 @@ import {
 } from '@element-plus/icons-vue'
 // 使用 SVG 替代 Lightning 图标
 import { Promotion as Lightning } from '@element-plus/icons-vue'
-import { useTemplateStore, type CommandTemplate } from '@/stores/template'
+import {
+  useTemplateStore,
+  type CommandTemplate,
+  GLOBAL_TEMPLATE_SERVER_ID
+} from '@/stores/template'
 
 const { t } = useI18n()
 
@@ -305,6 +349,11 @@ async function handleSend(template: CommandTemplate) {
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.scope-tag {
+  flex-shrink: 0;
 }
 
 .item-name {
@@ -378,5 +427,26 @@ async function handleSend(template: CommandTemplate) {
     transform: translateY(-1px);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
   }
+}
+
+.recent-tag-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-scope {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0 4px;
+  height: 18px;
+  line-height: 16px;
 }
 </style>

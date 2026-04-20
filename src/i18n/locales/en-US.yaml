@@ -164,6 +164,7 @@ template:
   importSuccess: Successfully imported {count} templates
   exportSuccess: Templates exported
   global: Global
+  connectionOnly: This connection
   saveToCurrentConnectionOnly: Save to this connection only
 
 script:

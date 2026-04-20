@@ -85,9 +85,18 @@
                   size="small"
                   type="success"
                   effect="plain"
-                  class="global-tag"
+                  class="scope-tag"
                 >
                   {{ $t('template.global') }}
+                </el-tag>
+                <el-tag
+                  v-else
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="scope-tag"
+                >
+                  {{ $t('template.connectionOnly') }}
                 </el-tag>
               </span>
               <span v-if="row.description" class="desc text-ellipsis">
@@ -556,7 +565,7 @@ async function handleImport() {
     color: var(--app-text-color);
   }
 
-  .global-tag {
+  .scope-tag {
     flex-shrink: 0;
   }
 
