@@ -62,6 +62,9 @@ export const useMqttStore = defineStore("mqtt", () => {
   let batchTimeout: ReturnType<typeof setTimeout> | null = null;
   const BATCH_INTERVAL = 50; // 批处理间隔（毫秒）
 
+  // 单调递增序列号，保证消息顺序
+  let nextSeq = 0;
+
   // 获取缓存的脚本
   async function getCachedScripts(serverId: number, scriptType: string): Promise<Script[]> {
     const cacheKey = `${serverId}-${scriptType}`;
@@ -130,7 +133,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     if (messageQueue.length === 0) return;
 
     const newMap = new Map(messagesByServer.value);
-    
+
     // 按 serverId 分组处理
     const messagesByServerId = new Map<number, MqttMessage[]>();
     for (const msg of messageQueue) {
@@ -140,8 +143,9 @@ export const useMqttStore = defineStore("mqtt", () => {
       messagesByServerId.get(msg.server_id)!.push(msg);
     }
 
-    // 合并到现有消息
+    // 合并到现有消息（按 seq 排序后，最新的在前）
     for (const [serverId, newMessages] of messagesByServerId) {
+      newMessages.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
       const existing = newMap.get(serverId) || [];
       const merged = [...newMessages, ...existing];
       // 限制每个 server 的消息数量
@@ -153,10 +157,13 @@ export const useMqttStore = defineStore("mqtt", () => {
     batchTimeout = null;
   }
 
-  // 添加消息到队列
+  // 添加消息到队列（未指定 seq 时自动分配）
   function queueMessage(msg: MqttMessage) {
+    if (msg.seq === undefined) {
+      msg = { ...msg, seq: nextSeq++ };
+    }
     messageQueue.push(msg);
-    
+
     if (!batchTimeout) {
       batchTimeout = setTimeout(flushMessageQueue, BATCH_INTERVAL);
     }
@@ -184,13 +191,14 @@ export const useMqttStore = defineStore("mqtt", () => {
     // 监听接收消息
     await listen<ReceivedMessage>("mqtt-message", async (event) => {
       const msg = event.payload;
+      const seq = nextSeq++; // 在异步处理前分配序列号
       let payloadBytes = new Uint8Array(msg.payload);
       let scriptError: string | undefined = undefined;
-      
+
       // 尝试应用接收后处理脚本（使用缓存）
       try {
         const scripts = await getCachedScripts(msg.server_id, "after_receive");
-        
+
         if (scripts.length > 0) {
           const originalPayloadBytes = new Uint8Array(payloadBytes);
           const originalPayload = new TextDecoder().decode(payloadBytes);
@@ -209,7 +217,7 @@ export const useMqttStore = defineStore("mqtt", () => {
         scriptError = error?.message || String(error);
         handleScriptError(error, true); // 静默处理，不显示通知（会写入日志）
       }
-      
+
       // 使用批处理队列
       queueMessage({
         server_id: msg.server_id,
@@ -220,6 +228,7 @@ export const useMqttStore = defineStore("mqtt", () => {
         retain: msg.retain,
         timestamp: msg.timestamp,
         scriptError: scriptError,
+        seq,
       });
     });
   };
@@ -246,6 +255,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     qos: 0 | 1 | 2 = 0,
     retain: boolean = false
   ) => {
+    const seq = nextSeq++; // 在异步调用前分配序列号
     const payloadBytes =
       typeof payload === "string"
         ? Array.from(new TextEncoder().encode(payload))
@@ -269,6 +279,7 @@ export const useMqttStore = defineStore("mqtt", () => {
       qos,
       retain,
       timestamp: new Date().toISOString(),
+      seq,
     });
   };
 
@@ -338,6 +349,7 @@ export const useMqttStore = defineStore("mqtt", () => {
       retain: boolean;
       scriptError?: string;
       payload_type?: "json" | "hex" | "text";
+      seq?: number;
     }
   ) => {
     // 根据 payload_type 决定如何编码 payload
@@ -349,7 +361,7 @@ export const useMqttStore = defineStore("mqtt", () => {
       // 其他格式：直接用 TextEncoder 编码
       payloadBytes = new TextEncoder().encode(msg.payload);
     }
-    
+
     // 使用批处理队列
     queueMessage({
       server_id: serverId,
@@ -361,8 +373,12 @@ export const useMqttStore = defineStore("mqtt", () => {
       timestamp: new Date().toISOString(),
       scriptError: msg.scriptError,
       payload_type: msg.payload_type,
+      seq: msg.seq,
     });
   };
+
+  // 预分配序列号（用于异步操作前标记顺序）
+  const reserveSeq = () => nextSeq++;
 
   return {
     connectionStates,
@@ -379,6 +395,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     getServerMessages,
     clearMessages,
     addPublishMessage,
+    reserveSeq,
     clearScriptCache,
     clearEnvCache,
   };
