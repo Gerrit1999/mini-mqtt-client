@@ -320,8 +320,8 @@ function handleScrollbarMouseMove(event: MouseEvent) {
   const maxThumbTop = containerHeight - scrollbarThumbHeight.value;
   const clampedThumbTop = Math.max(0, Math.min(newThumbTop, maxThumbTop));
 
-  const scrollRatio = clampedThumbTop / containerHeight;
-  el.scrollTop = scrollRatio * el.scrollHeight;
+  const scrollRatio = maxThumbTop > 0 ? clampedThumbTop / maxThumbTop : 0;
+  el.scrollTop = scrollRatio * (el.scrollHeight - el.clientHeight);
 }
 
 function handleScrollbarMouseUp() {
