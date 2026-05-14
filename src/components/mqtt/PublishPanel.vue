@@ -233,16 +233,19 @@ const handlePublish = async () => {
 
   publishing.value = true;
   try {
+    // 预分配序列号，确保在后续 await 期间到达的接收消息不会插队
+    const seq = mqttStore.reserveSeq();
+
     // 确保加载环境变量
     if (envStore.variables.length === 0) {
       await envStore.loadVariables(serverId);
     }
-    
+
     // 替换环境变量
     const processedTopic = envStore.replaceVariables(publishData.topic);
     let processedPayload = envStore.replaceVariables(publishData.payload);
     let scriptError: string | undefined = undefined;
-    
+
     // 应用发送前处理脚本
     try {
       const scripts = await invoke<Script[]>("get_enabled_scripts", {
@@ -251,8 +254,8 @@ const handlePublish = async () => {
       });
       if (scripts.length > 0) {
         processedPayload = await ScriptEngine.executeBeforePublish(
-          scripts, 
-          processedPayload, 
+          scripts,
+          processedPayload,
           processedTopic,
           envStore.variablesMap
         );
@@ -262,7 +265,7 @@ const handlePublish = async () => {
       scriptError = error?.message || String(error);
       // 使用脚本错误处理器（会写入日志）
       handleScriptError(error);
-      
+
       // 将原始消息添加到列表中（带错误标记，不实际发布）
       mqttStore.addPublishMessage(serverId, {
         topic: processedTopic,
@@ -271,8 +274,9 @@ const handlePublish = async () => {
         retain: publishData.retain,
         scriptError: scriptError,
         payload_type: payloadFormat.value,
+        seq,
       });
-      
+
       ElMessage.error(`${t('script.testError')}: ${scriptError}`);
       return;
     }
@@ -293,6 +297,7 @@ const handlePublish = async () => {
       qos: publishData.qos as 0 | 1 | 2,
       retain: publishData.retain,
       payload_type: payloadFormat.value,
+      seq,
     });
 
     ElMessage.success(t('success.published'));

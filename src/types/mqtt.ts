@@ -54,6 +54,8 @@ export interface MqttMessage {
   scriptError?: string;
   /** 消息格式类型（发送时用户选择的格式） */
   payload_type?: "json" | "hex" | "text";
+  /** 单调递增序列号，用于保证消息显示顺序 */
+  seq?: number;
 }
 
 /**

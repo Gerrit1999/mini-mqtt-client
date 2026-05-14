@@ -133,6 +133,7 @@ messages:
   clearTitle: Clear Messages
   copied: Message copied
   formatJson: Format JSON
+  autoScroll: Auto scroll to bottom
 
 template:
   title: Command Templates

@@ -46,6 +46,9 @@ export const useAppStore = defineStore("app", () => {
   // 复制到发布面板的消息
   const copyToPublishData = ref<CopyToPublishData | null>(null);
 
+  // 消息列表自动滚动到底部
+  const autoScroll = ref(true);
+
   // 版本更新信息
   const updateInfo = ref<UpdateInfo | null>(null);
   const checkingUpdate = ref(false);
@@ -190,6 +193,28 @@ export const useAppStore = defineStore("app", () => {
     sidebarCollapsed.value = !sidebarCollapsed.value;
   };
 
+  // 保存自动滚动设置到本地存储
+  const saveAutoScroll = () => {
+    localStorage.setItem("mqtt-client-auto-scroll", autoScroll.value ? "true" : "false");
+  };
+
+  // 初始化自动滚动设置
+  const initAutoScroll = () => {
+    const stored = localStorage.getItem("mqtt-client-auto-scroll");
+    if (stored === "false") {
+      autoScroll.value = false;
+    } else {
+      // 默认开启
+      autoScroll.value = true;
+    }
+  };
+
+  // 设置自动滚动
+  const setAutoScroll = (value: boolean) => {
+    autoScroll.value = value;
+    saveAutoScroll();
+  };
+
   // 设置当前视图
   const setCurrentView = (view: ViewType) => {
     currentView.value = view;
@@ -263,6 +288,7 @@ export const useAppStore = defineStore("app", () => {
     sidebarCollapsed,
     currentView,
     copyToPublishData,
+    autoScroll,
     updateInfo,
     checkingUpdate,
     toggleTheme,
@@ -275,6 +301,8 @@ export const useAppStore = defineStore("app", () => {
     setCurrentView,
     setCopyToPublish,
     clearCopyToPublish,
+    setAutoScroll,
+    initAutoScroll,
     checkUpdate,
     clearUpdateInfo,
     cleanup,
