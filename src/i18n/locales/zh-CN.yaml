@@ -222,7 +222,7 @@ scheduled:
   once: 单次
   interval: 间隔
   cron: Cron表达式
-  intervalSeconds: 间隔（秒）
+  intervalMs: 间隔（毫秒）
   roundInterval: 轮次间隔
   cronExpression: Cron 表达式
   cronHelp: 例如：*/5 * * * * (每5分钟)
