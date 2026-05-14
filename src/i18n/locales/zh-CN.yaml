@@ -133,6 +133,7 @@ messages:
   clearTitle: 清空消息
   copied: 消息已复制
   formatJson: JSON格式化
+  autoScroll: 自动滚动到底部
 
 template:
   title: 命令模板

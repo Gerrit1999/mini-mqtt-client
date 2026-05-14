@@ -143,11 +143,11 @@ export const useMqttStore = defineStore("mqtt", () => {
       messagesByServerId.get(msg.server_id)!.push(msg);
     }
 
-    // 合并到现有消息（按 seq 排序后，最新的在前）
+    // 合并到现有消息（新消息与已有消息一起按 seq 全局排序）
     for (const [serverId, newMessages] of messagesByServerId) {
-      newMessages.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
       const existing = newMap.get(serverId) || [];
       const merged = [...newMessages, ...existing];
+      merged.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
       // 限制每个 server 的消息数量
       newMap.set(serverId, merged.length > 1000 ? merged.slice(0, 1000) : merged);
     }
@@ -155,6 +155,14 @@ export const useMqttStore = defineStore("mqtt", () => {
     messagesByServer.value = newMap;
     messageQueue.length = 0;
     batchTimeout = null;
+
+    // 派发事件通知消息列表已更新（供 MessageList.vue 自动滚动使用）
+    const serverIds = Array.from(messagesByServerId.keys());
+    if (typeof window !== "undefined" && serverIds.length > 0) {
+      window.dispatchEvent(
+        new CustomEvent("mqtt-messages-flushed", { detail: { serverIds } })
+      );
+    }
   }
 
   // 添加消息到队列（未指定 seq 时自动分配）

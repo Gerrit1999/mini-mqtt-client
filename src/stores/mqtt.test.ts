@@ -259,5 +259,81 @@ describe("useMqttStore", () => {
       expect(messages[1].topic).toBe("topic/recv");
       expect(messages[1].seq).toBeGreaterThan(seq);
     });
+
+    it("跨 batch 时仍应按 seq 全局排序", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+
+      // mock：第一次调用延迟（A 的处理），第二次立即返回（B 的处理）
+      let callCount = 0;
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_enabled_scripts") {
+          callCount++;
+          if (callCount === 1) {
+            // A 的脚本查询延迟两个微任务
+            await Promise.resolve();
+            await Promise.resolve();
+          }
+          return [];
+        }
+        return [];
+      });
+
+      // 1. 同时触发 A 和 B（A 先触发但处理慢，B 后触发但处理快）
+      const msgA = {
+        server_id: 1,
+        topic: "topic/A",
+        payload: [65],
+        qos: 0,
+        retain: false,
+        timestamp: "2024-01-01T00:00:00Z",
+      };
+      const msgB = {
+        server_id: 1,
+        topic: "topic/B",
+        payload: [66],
+        qos: 0,
+        retain: false,
+        timestamp: "2024-01-01T00:00:01Z",
+      };
+
+      const pA = mqttMessageListener!({ payload: msgA });
+      const pB = mqttMessageListener!({ payload: msgB });
+
+      // B 会在 A 挂起期间先完成 queueMessage
+      await Promise.all([pA, pB]);
+
+      // 2. 快进 batch timeout，A 和 B 在同一个 batch 中被 flush
+      vi.advanceTimersByTime(100);
+
+      const messages = store.getServerMessages(1);
+      // A 先触发（seq 更小），虽然后到，但应排在 B 前面
+      expect(messages[0].topic).toBe("topic/A");
+      expect(messages[1].topic).toBe("topic/B");
+
+      // 3. 再触发 C（seq 更大），让它在下一个 batch 中 flush
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_enabled_scripts") return [];
+        return [];
+      });
+
+      const msgC = {
+        server_id: 1,
+        topic: "topic/C",
+        payload: [67],
+        qos: 0,
+        retain: false,
+        timestamp: "2024-01-01T00:00:02Z",
+      };
+      const pC = mqttMessageListener!({ payload: msgC });
+      await pC;
+
+      // 4. 快进 batch timeout，C 在新的 batch 中被 flush
+      vi.advanceTimersByTime(100);
+
+      const messages2 = store.getServerMessages(1);
+      // 全局排序：A(seq 最小) < B(seq 中等) < C(seq 最大)
+      expect(messages2.map((m) => m.topic)).toEqual(["topic/A", "topic/B", "topic/C"]);
+    });
   });
 });

@@ -47,6 +47,16 @@
           <el-switch v-model="formatJsonPayload" size="small" />
         </div>
         <el-divider direction="vertical" />
+        <el-tooltip :content="$t('messages.autoScroll')" placement="top">
+          <el-button
+            text
+            size="small"
+            :icon="Bottom"
+            :type="appStore.autoScroll ? 'primary' : 'default'"
+            @click="appStore.setAutoScroll(!appStore.autoScroll)"
+          />
+        </el-tooltip>
+        <el-divider direction="vertical" />
         <el-tooltip :content="$t('messages.clear')" placement="top">
           <el-button text size="small" :icon="Delete" @click="handleClear" />
         </el-tooltip>
@@ -62,73 +72,85 @@
       </div>
     </div>
 
-    <div class="message-container" ref="messageContainer">
-      <div
-        v-for="msg in filteredMessages"
-        :key="msg.id || msg.timestamp"
-        class="message-item"
-        :class="[msg.direction, { 'has-error': msg.scriptError }]"
-        @click="showDetail(msg)"
-      >
-        <div class="message-header">
-          <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError }]">
-            <el-icon v-if="msg.direction === 'publish'"><Top /></el-icon>
-            <el-icon v-else><Bottom /></el-icon>
-            {{ msg.direction === "publish" ? "PUB" : "RCV" }}
-          </span>
-          <span 
-            class="msg-topic text-ellipsis" 
-            :style="getTopicColor(msg) ? { color: getTopicColor(msg) } : {}"
-          >
-            <span v-if="getTopicColor(msg)" class="topic-color-dot" :style="{ backgroundColor: getTopicColor(msg) }" />
-            <span class="topic-text" v-html="highlightText(msg.topic)" />
-          </span>
-          <div class="msg-meta">
-            <el-tag
-              v-if="msg.scriptError"
-              size="small"
-              effect="plain"
-              type="danger"
-              class="error-tag"
+    <div class="message-scroll-wrapper">
+      <div class="message-container" ref="messageContainer" @scroll="handleScroll">
+        <div
+          v-for="msg in filteredMessages"
+          :key="msg.seq ?? msg.id ?? msg.timestamp"
+          class="message-item"
+          :class="[msg.direction, { 'has-error': msg.scriptError }]"
+          @click="showDetail(msg)"
+        >
+          <div class="message-header">
+            <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError }]">
+              <el-icon v-if="msg.direction === 'publish'"><Top /></el-icon>
+              <el-icon v-else><Bottom /></el-icon>
+              {{ msg.direction === "publish" ? "PUB" : "RCV" }}
+            </span>
+            <span
+              class="msg-topic text-ellipsis"
+              :style="getTopicColor(msg) ? { color: getTopicColor(msg) } : {}"
             >
-              {{ $t('script.testError') }}
-            </el-tag>
-            <el-tag
-              size="small"
-              effect="plain"
-              :type="getFormatTagType(getMessageFormat(msg))"
-              class="format-tag"
-            >
-              {{ getFormatLabel(getMessageFormat(msg), msg) }}
-            </el-tag>
-            <el-tag size="small" effect="plain">Q{{ msg.qos }}</el-tag>
-            <el-tag v-if="msg.retain" size="small" type="warning" effect="plain">
-              R
-            </el-tag>
-            <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
+              <span v-if="getTopicColor(msg)" class="topic-color-dot" :style="{ backgroundColor: getTopicColor(msg) }" />
+              <span class="topic-text" v-html="highlightText(msg.topic)" />
+            </span>
+            <div class="msg-meta">
+              <el-tag
+                v-if="msg.scriptError"
+                size="small"
+                effect="plain"
+                type="danger"
+                class="error-tag"
+              >
+                {{ $t('script.testError') }}
+              </el-tag>
+              <el-tag
+                size="small"
+                effect="plain"
+                :type="getFormatTagType(getMessageFormat(msg))"
+                class="format-tag"
+              >
+                {{ getFormatLabel(getMessageFormat(msg), msg) }}
+              </el-tag>
+              <el-tag size="small" effect="plain">Q{{ msg.qos }}</el-tag>
+              <el-tag v-if="msg.retain" size="small" type="warning" effect="plain">
+                R
+              </el-tag>
+              <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
+            </div>
+          </div>
+          <div v-if="msg.scriptError" class="message-error">
+            <el-icon><WarningFilled /></el-icon>
+            <span>{{ msg.scriptError }}</span>
+          </div>
+          <div class="message-body">
+            <MessagePayload
+              :payload="msg.payload"
+              :preview="true"
+              :payload-type="msg.payload_type"
+              :format-json="formatJsonPayload"
+              :highlight-keyword="searchKeyword.trim()"
+              :search-match-case="searchMatchCase"
+              :search-whole-word="searchWholeWord"
+              :search-use-regex="searchUseRegex"
+            />
           </div>
         </div>
-        <div v-if="msg.scriptError" class="message-error">
-          <el-icon><WarningFilled /></el-icon>
-          <span>{{ msg.scriptError }}</span>
-        </div>
-        <div class="message-body">
-          <MessagePayload
-            :payload="msg.payload"
-            :preview="true"
-            :payload-type="msg.payload_type"
-            :format-json="formatJsonPayload"
-            :highlight-keyword="searchKeyword.trim()"
-            :search-match-case="searchMatchCase"
-            :search-whole-word="searchWholeWord"
-            :search-use-regex="searchUseRegex"
-          />
+
+        <div v-if="filteredMessages.length === 0" class="empty-state">
+          <el-empty :description="$t('messages.noMessages')" :image-size="60">
+          </el-empty>
         </div>
       </div>
 
-      <div v-if="filteredMessages.length === 0" class="empty-state">
-        <el-empty :description="$t('messages.noMessages')" :image-size="60">
-        </el-empty>
+      <!-- 自定义滚动条 -->
+      <div
+        v-show="showCustomScrollbar"
+        class="custom-scrollbar"
+        ref="customScrollbar"
+        @mousedown="handleScrollbarMouseDown"
+      >
+        <div class="custom-scrollbar-thumb" :style="scrollbarThumbStyle"></div>
       </div>
     </div>
 
@@ -202,7 +224,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   ChatDotRound,
@@ -238,6 +260,101 @@ const appStore = useAppStore();
 const subscriptionStore = useSubscriptionStore();
 
 const messageContainer = ref<HTMLElement>();
+const customScrollbar = ref<HTMLElement>();
+
+// 自定义滚动条状态
+const scrollbarThumbTop = ref(0);
+const scrollbarThumbHeight = ref(0);
+const showCustomScrollbar = ref(false);
+
+const scrollbarThumbStyle = computed(() => {
+  return {
+    top: `${scrollbarThumbTop.value}px`,
+    height: `${scrollbarThumbHeight.value}px`,
+  };
+});
+
+function updateScrollbar() {
+  const el = messageContainer.value;
+  if (!el) return;
+
+  const hasScrollbar = el.scrollHeight > el.clientHeight;
+  showCustomScrollbar.value = hasScrollbar;
+
+  if (hasScrollbar) {
+    const ratio = el.clientHeight / el.scrollHeight;
+    scrollbarThumbHeight.value = Math.max(30, el.clientHeight * ratio);
+    const maxScrollTop = el.scrollHeight - el.clientHeight;
+    const maxThumbTop = el.clientHeight - scrollbarThumbHeight.value;
+    const scrollRatio = maxScrollTop > 0 ? el.scrollTop / maxScrollTop : 0;
+    scrollbarThumbTop.value = scrollRatio * maxThumbTop;
+  }
+}
+
+function handleScroll() {
+  updateScrollbar();
+}
+
+let scrollbarDragStartY = 0;
+let scrollbarDragStartTop = 0;
+
+function handleScrollbarMouseDown(event: MouseEvent) {
+  event.preventDefault();
+  const el = messageContainer.value;
+  if (!el) return;
+
+  scrollbarDragStartY = event.clientY;
+  scrollbarDragStartTop = scrollbarThumbTop.value;
+
+  document.addEventListener("mousemove", handleScrollbarMouseMove);
+  document.addEventListener("mouseup", handleScrollbarMouseUp);
+}
+
+function handleScrollbarMouseMove(event: MouseEvent) {
+  const el = messageContainer.value;
+  if (!el) return;
+
+  const deltaY = event.clientY - scrollbarDragStartY;
+  const containerHeight = el.clientHeight;
+  const newThumbTop = scrollbarDragStartTop + deltaY;
+  const maxThumbTop = containerHeight - scrollbarThumbHeight.value;
+  const clampedThumbTop = Math.max(0, Math.min(newThumbTop, maxThumbTop));
+
+  const scrollRatio = clampedThumbTop / containerHeight;
+  el.scrollTop = scrollRatio * el.scrollHeight;
+}
+
+function handleScrollbarMouseUp() {
+  document.removeEventListener("mousemove", handleScrollbarMouseMove);
+  document.removeEventListener("mouseup", handleScrollbarMouseUp);
+}
+
+// 自动滚动到底部（监听 mqtt.ts 派发的原生事件，确保在 DOM 更新后触发）
+function handleMessagesFlushed(event: Event) {
+  const customEvent = event as CustomEvent<{ serverIds: number[] }>;
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return;
+  if (!customEvent.detail.serverIds.includes(serverId)) return;
+
+  nextTick(() => {
+    updateScrollbar();
+    if (!appStore.autoScroll) return;
+    const el = messageContainer.value;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  });
+}
+
+onMounted(() => {
+  window.addEventListener("mqtt-messages-flushed", handleMessagesFlushed);
+  updateScrollbar();
+});
+
+onUnmounted(() => {
+  window.removeEventListener("mqtt-messages-flushed", handleMessagesFlushed);
+  document.removeEventListener("mousemove", handleScrollbarMouseMove);
+  document.removeEventListener("mouseup", handleScrollbarMouseUp);
+});
 
 // 获取消息的 topic 颜色
 function getTopicColor(msg: MqttMessage): string | undefined {
@@ -688,6 +805,7 @@ async function handleExportCommand(command: string): Promise<void> {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .panel-header {
@@ -735,13 +853,57 @@ async function handleExportCommand(command: string): Promise<void> {
   box-shadow: 0 0 0 1px var(--el-color-danger) inset !important;
 }
 
+ .message-scroll-wrapper {
+  flex: 1;
+  position: relative;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .message-container {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  padding-right: 14px; // 为自定义滚动条预留空间
+  min-height: 0;
+
+  // 完全隐藏原生滚动条，使用自定义滚动条替代
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.custom-scrollbar {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  width: 12px;
+  height: 100%;
+  z-index: 10;
+  pointer-events: none;
+  background: transparent;
+
+  .custom-scrollbar-thumb {
+    position: absolute;
+    left: 2px;
+    width: 8px;
+    background-color: var(--app-text-secondary);
+    border-radius: 4px;
+    pointer-events: auto;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s ease, width 0.2s ease, left 0.2s ease;
+
+    &:hover {
+      opacity: 0.9;
+      left: 0;
+      width: 12px;
+      background-color: var(--app-text-color);
+    }
+  }
 }
 
 .message-item {
@@ -751,6 +913,7 @@ async function handleExportCommand(command: string): Promise<void> {
   border: 1px solid var(--app-border-color);
   cursor: pointer;
   transition: all 0.2s ease;
+  margin-bottom: 8px;
 
   &:hover {
     background-color: var(--sidebar-hover);
