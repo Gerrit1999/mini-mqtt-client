@@ -89,7 +89,7 @@
         <el-form :model="config" label-width="100px" class="config-form">
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item :label="$t('scheduled.intervalSeconds')">
+              <el-form-item :label="$t('scheduled.intervalMs')">
                 <el-input-number
                   v-model="config.interval"
                   :min="100"
@@ -551,18 +551,17 @@ async function publishNext() {
   
   sentCount.value++
   currentIndex.value++
-  
+
   // 检查是否完成一轮
   if (currentIndex.value >= commands.length) {
-    currentIndex.value = 0
-    
-    // 检查是否达到循环次数
+    // 检查是否达到循环次数（先检查，保留 currentIndex 用于显示 100%）
     if (config.value.loopMode === 'count' && currentRound.value >= config.value.loopCount) {
       stopPublishing(true)
       ElMessage.success(t('success.published'))
       return
     }
-    
+
+    currentIndex.value = 0
     currentRound.value++
     
     // 每轮间隔

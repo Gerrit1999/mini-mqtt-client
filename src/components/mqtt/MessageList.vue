@@ -9,6 +9,24 @@
         </el-tag>
       </span>
       <div class="header-actions">
+        <el-select
+          v-model="selectedTopics"
+          :placeholder="$t('publish.topic')"
+          multiple
+          filterable
+          clearable
+          collapse-tags
+          collapse-tags-tooltip
+          size="small"
+          style="width: 140px"
+        >
+          <el-option
+            v-for="topic in topics"
+            :key="topic"
+            :label="topic"
+            :value="topic"
+          />
+        </el-select>
         <el-input
           v-model="searchKeyword"
           :class="{ 'is-invalid-regex': isRegexInvalid }"
@@ -372,6 +390,7 @@ const searchMatchCase = ref(false);
 const searchWholeWord = ref(false);
 const searchUseRegex = ref(false);
 const directionFilter = ref<DirectionFilter>("all");
+const selectedTopics = ref<string[]>([]);
 const formatJsonPayload = ref(false);
 const showDetailDialog = ref(false);
 const selectedMessage = ref<MqttMessage | null>(null);
@@ -383,6 +402,17 @@ const messages = computed(() => {
   return mqttStore.getServerMessages(serverId);
 });
 
+// 从消息中提取所有唯一 Topic 并排序
+const topics = computed(() => {
+  const uniqueTopics = new Set<string>();
+  for (const msg of messages.value) {
+    if (msg.topic) {
+      uniqueTopics.add(msg.topic);
+    }
+  }
+  return Array.from(uniqueTopics).sort();
+});
+
 // 过滤后的消息
 const filteredMessages = computed(() => {
   let result = messages.value;
@@ -390,6 +420,11 @@ const filteredMessages = computed(() => {
   // 方向过滤
   if (directionFilter.value !== "all") {
     result = result.filter((m) => m.direction === directionFilter.value);
+  }
+
+  // Topic 多选筛选
+  if (selectedTopics.value.length > 0) {
+    result = result.filter((m) => selectedTopics.value.includes(m.topic));
   }
 
   // 关键词搜索

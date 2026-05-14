@@ -222,7 +222,7 @@ scheduled:
   once: Once
   interval: Interval
   cron: Cron Expression
-  intervalSeconds: Interval (seconds)
+  intervalMs: Interval (ms)
   roundInterval: Round Interval
   cronExpression: Cron Expression
   cronHelp: "Example: */5 * * * * (every 5 minutes)"
