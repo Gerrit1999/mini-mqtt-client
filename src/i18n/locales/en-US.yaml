@@ -3,6 +3,7 @@
 common:
   confirm: Confirm
   cancel: Cancel
+  selectAll: Select All
   save: Save
   delete: Delete
   edit: Edit
@@ -229,32 +230,32 @@ timedMessage:
 
 scheduled:
   title: Scheduled Publish
-  selectTemplate: Select Templates
-  noTemplateSelected: Please select templates to publish
-  mode: Publish Mode
+  selectTemplate: Command List
+  noTemplateSelected: Please select commands to publish
+  mode: Send Configuration
   once: Once
   interval: Interval
   cron: Cron Expression
-  intervalMs: Interval (ms)
-  roundInterval: Round Interval
+  intervalMs: Send Interval
+  roundInterval: Round Gap
   cronExpression: Cron Expression
   cronHelp: "Example: */5 * * * * (every 5 minutes)"
   executeTime: Execute Time
   selectTime: Select Time
-  start: Start
+  start: Start Publish
   stop: Stop
   running: Running
   nextExecution: Next Execution
   executionCount: Executed {count} times
-  selectedTemplates: "{count} templates selected"
+  selectedTemplates: "{count} commands selected"
   status: Publish Status
   completed: Completed
-  order: Order
-  selectionOrder: Selection Order
-  nameOrder: Name Order
+  order: Send Order
+  selectionOrder: By Selection
+  nameOrder: By Name
   loopMode: Loop Mode
   infinite: Infinite
-  count: Count
+  count: Specified Count
   logs: Logs
   minimize: Minimize
   back: Back

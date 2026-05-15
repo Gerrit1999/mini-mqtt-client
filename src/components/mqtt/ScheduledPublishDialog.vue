@@ -24,7 +24,7 @@
               :indeterminate="isIndeterminate"
               @change="(val: boolean | string | number) => handleSelectAll(Boolean(val))"
             >
-              {{ $t('template.allCategories') }}
+              {{ $t('common.selectAll') }}
             </el-checkbox>
             <span class="selected-count">{{ $t('scheduled.selectedTemplates', { count: selectedIds.length }) }}</span>
           </div>
@@ -667,12 +667,19 @@ function handleClose() {
 .section-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+}
+
+.scheduled-scope-select {
+  min-width: 90px;
 }
 
 .selected-count {
   font-size: 12px;
   color: var(--app-text-secondary);
+  white-space: nowrap;
+  min-width: 96px;
+  text-align: right;
 }
 
 .command-list {
