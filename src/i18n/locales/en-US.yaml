@@ -104,6 +104,7 @@ publish:
   clear: Clear
   saveTemplate: Save Template
   scheduledPublish: Scheduled Publish
+  timedMessage: Timed Message
   openScripts: Script Manager
   openTemplates: Templates
   payloadType: Format
@@ -213,6 +214,18 @@ script:
     getVarAlt: Get environment variable value (alternative)
     replace: Replace {{var}} placeholders in text
     getAll: Get all environment variables as array
+
+timedMessage:
+  title: Timed Message
+  frequency: Frequency
+  frequencyUnit: seconds
+  frequencyPlaceholder: Enter frequency
+  frequencyMin: Frequency must be at least 0.1s
+  frequencyMax: Frequency must not exceed 3600s
+  start: Start
+  stop: Stop
+  running: Sending...
+  runningWithCount: "Sent {count} messages"
 
 scheduled:
   title: Scheduled Publish

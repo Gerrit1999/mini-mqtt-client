@@ -104,6 +104,7 @@ publish:
   clear: 清空
   saveTemplate: 保存模板
   scheduledPublish: 定时发布
+  timedMessage: 定时消息
   openScripts: 脚本管理
   openTemplates: 命令模板
   payloadType: 格式
@@ -213,6 +214,18 @@ script:
     getVarAlt: 获取环境变量值（另一种写法）
     replace: 替换文本中的 {{变量名}} 占位符
     getAll: 获取所有环境变量数组
+
+timedMessage:
+  title: 定时消息
+  frequency: 发送频率
+  frequencyUnit: 秒
+  frequencyPlaceholder: 请输入发送频率
+  frequencyMin: 频率不能小于 0.1 秒
+  frequencyMax: 频率不能大于 3600 秒
+  start: 开始发送
+  stop: 停止发送
+  running: 定时发送中
+  runningWithCount: 已发送 {count} 条
 
 scheduled:
   title: 定时发布

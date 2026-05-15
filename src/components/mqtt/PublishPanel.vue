@@ -1,6 +1,7 @@
 <template>
-  <div class="publish-panel app-card">
-    <div class="panel-header">
+  <div class="publish-panel-wrapper">
+    <div class="publish-panel app-card">
+      <div class="panel-header">
       <span class="panel-title">
         <el-icon><Promotion /></el-icon>
         {{ $t('publish.send') }}
@@ -14,22 +15,19 @@
             :value="opt.value"
           />
         </el-select>
-        <el-button 
-          size="small" 
-          :icon="props.scheduledPublishRunning ? Loading : Timer" 
-          :type="props.scheduledPublishRunning ? 'primary' : 'default'"
-          :class="{ 'is-running': props.scheduledPublishRunning }"
-          @click="handleScheduledPublish"
-        >
-          {{ props.scheduledPublishRunning ? $t('scheduled.running') : $t('publish.scheduledPublish') }}
-        </el-button>
+        <el-select v-model="publishData.qos" size="small" style="width: 100px">
+          <el-option :value="0" label="QoS 0" />
+          <el-option :value="1" label="QoS 1" />
+          <el-option :value="2" label="QoS 2" />
+        </el-select>
+        <el-checkbox v-model="publishData.retain">Retain</el-checkbox>
       </div>
     </div>
 
     <div class="publish-form">
-      <!-- 第一行：Topic、QoS、Retain -->
-      <div class="form-row">
-        <div class="form-item topic-input">
+      <div class="form-row payload-row">
+        <!-- 左列：Topic 输入 -->
+        <div class="topic-input">
           <el-input
             v-model="publishData.topic"
             :placeholder="$t('publish.topicPlaceholder')"
@@ -41,17 +39,7 @@
           </el-input>
         </div>
 
-        <el-select v-model="publishData.qos" style="width: 100px" size="default">
-          <el-option :value="0" label="QoS 0" />
-          <el-option :value="1" label="QoS 1" />
-          <el-option :value="2" label="QoS 2" />
-        </el-select>
-
-        <el-checkbox v-model="publishData.retain">Retain</el-checkbox>
-      </div>
-
-      <!-- 第二行：Payload 输入 -->
-      <div class="form-row payload-row">
+        <!-- 左列：Payload 输入 -->
         <div class="payload-input-wrapper">
           <el-input
             v-model="publishData.payload"
@@ -61,7 +49,31 @@
             class="payload-input"
           />
         </div>
-        <div class="form-actions">
+
+        <!-- 右列：定时消息 -->
+        <el-button
+          class="btn-timed-message"
+          :icon="props.timedMessageRunning ? Loading : Timer"
+          :type="props.timedMessageRunning ? 'danger' : 'default'"
+          :class="{ 'is-running': props.timedMessageRunning }"
+          @click="handleTimedMessage"
+        >
+          {{ props.timedMessageRunning ? $t('timedMessage.stop') : $t('publish.timedMessage') }}
+        </el-button>
+
+        <!-- 右列：定时发布 -->
+        <el-button
+          class="btn-scheduled-publish"
+          :icon="props.scheduledPublishRunning ? Loading : Timer"
+          :type="props.scheduledPublishRunning ? 'primary' : 'default'"
+          :class="{ 'is-running': props.scheduledPublishRunning }"
+          @click="handleScheduledPublish"
+        >
+          {{ props.scheduledPublishRunning ? $t('scheduled.running') : $t('publish.scheduledPublish') }}
+        </el-button>
+
+        <!-- 右列底：模板/收藏/发送 -->
+        <div class="action-row-bottom">
           <el-tooltip :content="$t('publish.openTemplates')" placement="top">
             <el-button :icon="FolderOpened" @click="handleOpenTemplates" />
           </el-tooltip>
@@ -80,6 +92,34 @@
         </div>
       </div>
     </div>
+  </div>
+
+    <!-- 定时消息配置对话框 -->
+    <el-dialog
+      v-model="timedMessageDialogVisible"
+      :title="$t('timedMessage.title')"
+      width="400px"
+      :close-on-click-modal="false"
+      :append-to-body="false"
+    >
+    <el-form label-width="100px">
+      <el-form-item :label="$t('timedMessage.frequency')">
+        <el-input-number
+          v-model="timedMessageInterval"
+          :min="0.1"
+          :max="3600"
+          :step="0.1"
+          :precision="1"
+          style="width: 140px"
+        />
+        <span class="unit">{{ $t('timedMessage.frequencyUnit') }}</span>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="timedMessageDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+      <el-button type="primary" @click="startTimedMessage">{{ $t('timedMessage.start') }}</el-button>
+    </template>
+  </el-dialog>
   </div>
 </template>
 
@@ -105,6 +145,7 @@ type PayloadFormat = "json" | "hex" | "text";
 
 const props = defineProps<{
   scheduledPublishRunning: boolean;
+  timedMessageRunning: boolean;
 }>();
 
 const formatOptions = [
@@ -120,6 +161,19 @@ const appStore = useAppStore();
 const envStore = useEnvStore();
 
 const publishing = ref(false);
+
+// ===== 定时消息状态 =====
+const timedMessageDialogVisible = ref(false);
+const timedMessageInterval = ref(1);
+const timedMessageCount = ref(0);
+let timedMessageTimer: ReturnType<typeof setInterval> | null = null;
+
+const emit = defineEmits<{
+  saveTemplate: [data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: string }]
+  openTemplates: []
+  scheduledPublish: []
+  'update:timedMessageRunning': [value: boolean]
+}>();
 
 // 监听复制到发布的消息
 watch(
@@ -165,15 +219,19 @@ const isConnected = computed(() => {
   return mqttStore.getConnectionStatus(serverId) === "connected";
 });
 
+// 监听连接状态变化，断开时自动停止定时消息
+watch(
+  isConnected,
+  (connected) => {
+    if (!connected && props.timedMessageRunning) {
+      stopTimedMessage();
+    }
+  }
+);
+
 const payloadPlaceholder = computed(() => {
   return t('publish.payloadPlaceholder');
 });
-
-const emit = defineEmits<{
-  saveTemplate: [data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: string }]
-  openTemplates: []
-  scheduledPublish: []
-}>();
 
 // 打开模板管理
 const handleOpenTemplates = () => {
@@ -184,6 +242,174 @@ const handleOpenTemplates = () => {
 const handleScheduledPublish = () => {
   emit("scheduledPublish");
 };
+
+// 定时消息按钮点击
+const handleTimedMessage = () => {
+  if (props.timedMessageRunning) {
+    stopTimedMessage();
+  } else {
+    // 先验证基本条件
+    const topicValidation = validatePublishTopic(publishData.topic);
+    if (!topicValidation.valid) {
+      ElMessage.warning(topicValidation.error || t('errors.inputTopic'));
+      return;
+    }
+    const serverId = serverStore.activeServerId;
+    if (!serverId) {
+      ElMessage.warning(t('errors.selectServer'));
+      return;
+    }
+    if (!isConnected.value) {
+      ElMessage.warning(t('errors.connectFailed'));
+      return;
+    }
+    timedMessageDialogVisible.value = true;
+  }
+};
+
+// 开始定时消息
+const startTimedMessage = () => {
+  // 验证频率
+  if (timedMessageInterval.value < 0.1) {
+    ElMessage.warning(t('timedMessage.frequencyMin'));
+    return;
+  }
+  if (timedMessageInterval.value > 3600) {
+    ElMessage.warning(t('timedMessage.frequencyMax'));
+    return;
+  }
+
+  // 验证格式
+  if (payloadFormat.value === "hex") {
+    const hex = publishData.payload.replace(/\s/g, "");
+    if (!/^[0-9A-Fa-f]*$/.test(hex)) {
+      ElMessage.warning(t('errors.hexInvalid'));
+      return;
+    }
+  }
+
+  if (payloadFormat.value === "json" && publishData.payload.trim()) {
+    try {
+      JSON.parse(publishData.payload);
+    } catch {
+      ElMessage.warning(t('errors.jsonInvalid'));
+      return;
+    }
+  }
+
+  timedMessageDialogVisible.value = false;
+  timedMessageCount.value = 0;
+  emit('update:timedMessageRunning', true);
+
+  // 立即发送第一条
+  sendOneTimedMessage();
+
+  // 设置定时器
+  const intervalMs = Math.round(timedMessageInterval.value * 1000);
+  timedMessageTimer = setInterval(() => {
+    sendOneTimedMessage();
+  }, intervalMs);
+};
+
+// 停止定时消息
+const stopTimedMessage = () => {
+  if (timedMessageTimer) {
+    clearInterval(timedMessageTimer);
+    timedMessageTimer = null;
+  }
+  emit('update:timedMessageRunning', false);
+  ElMessage.info(t('timedMessage.stop'));
+};
+
+// 发送一条定时消息（不含 loading 状态）
+const sendOneTimedMessage = async () => {
+  const serverId = serverStore.activeServerId;
+  if (!serverId || !isConnected.value) {
+    stopTimedMessage();
+    return;
+  }
+
+  try {
+    await doPublishCore();
+    timedMessageCount.value++;
+  } catch (error: any) {
+    // 记录日志，继续下一次发送
+    console.error('Timed message failed:', error);
+  }
+};
+
+// 核心发布逻辑（不含 loading 状态和消息提示）
+async function doPublishCore(): Promise<void> {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) {
+    throw new Error(t('errors.selectServer'));
+  }
+
+  // 预分配序列号
+  const seq = mqttStore.reserveSeq();
+
+  // 确保加载环境变量
+  if (envStore.variables.length === 0) {
+    await envStore.loadVariables(serverId);
+  }
+
+  // 替换环境变量
+  const processedTopic = envStore.replaceVariables(publishData.topic);
+  let processedPayload = envStore.replaceVariables(publishData.payload);
+  let scriptError: string | undefined = undefined;
+
+  // 应用发送前处理脚本
+  try {
+    const scripts = await invoke<Script[]>("get_enabled_scripts", {
+      serverId,
+      scriptType: "before_publish",
+    });
+    if (scripts.length > 0) {
+      processedPayload = await ScriptEngine.executeBeforePublish(
+        scripts,
+        processedPayload,
+        processedTopic,
+        envStore.variablesMap
+      );
+    }
+  } catch (error: any) {
+    // 记录脚本错误
+    scriptError = error?.message || String(error);
+    handleScriptError(error);
+
+    // 将原始消息添加到列表中（带错误标记，不实际发布）
+    mqttStore.addPublishMessage(serverId, {
+      topic: processedTopic,
+      payload: publishData.payload,
+      qos: publishData.qos as 0 | 1 | 2,
+      retain: publishData.retain,
+      scriptError: scriptError,
+      payload_type: payloadFormat.value,
+      seq,
+    });
+
+    throw error;
+  }
+
+  // 调用 messageStore 发布消息（保存到数据库）
+  await messageStore.publishMessage(serverId, {
+    topic: processedTopic,
+    payload: processedPayload,
+    qos: publishData.qos,
+    retain: publishData.retain,
+    format: payloadFormat.value,
+  });
+
+  // 同时添加到 mqttStore 的消息列表（用于实时显示）
+  mqttStore.addPublishMessage(serverId, {
+    topic: processedTopic,
+    payload: processedPayload,
+    qos: publishData.qos as 0 | 1 | 2,
+    retain: publishData.retain,
+    payload_type: payloadFormat.value,
+    seq,
+  });
+}
 
 const handleSaveTemplate = () => {
   if (!publishData.topic.trim()) {
@@ -233,76 +459,9 @@ const handlePublish = async () => {
 
   publishing.value = true;
   try {
-    // 预分配序列号，确保在后续 await 期间到达的接收消息不会插队
-    const seq = mqttStore.reserveSeq();
-
-    // 确保加载环境变量
-    if (envStore.variables.length === 0) {
-      await envStore.loadVariables(serverId);
-    }
-
-    // 替换环境变量
-    const processedTopic = envStore.replaceVariables(publishData.topic);
-    let processedPayload = envStore.replaceVariables(publishData.payload);
-    let scriptError: string | undefined = undefined;
-
-    // 应用发送前处理脚本
-    try {
-      const scripts = await invoke<Script[]>("get_enabled_scripts", {
-        serverId,
-        scriptType: "before_publish",
-      });
-      if (scripts.length > 0) {
-        processedPayload = await ScriptEngine.executeBeforePublish(
-          scripts,
-          processedPayload,
-          processedTopic,
-          envStore.variablesMap
-        );
-      }
-    } catch (error: any) {
-      // 记录脚本错误
-      scriptError = error?.message || String(error);
-      // 使用脚本错误处理器（会写入日志）
-      handleScriptError(error);
-
-      // 将原始消息添加到列表中（带错误标记，不实际发布）
-      mqttStore.addPublishMessage(serverId, {
-        topic: processedTopic,
-        payload: publishData.payload,
-        qos: publishData.qos as 0 | 1 | 2,
-        retain: publishData.retain,
-        scriptError: scriptError,
-        payload_type: payloadFormat.value,
-        seq,
-      });
-
-      ElMessage.error(`${t('script.testError')}: ${scriptError}`);
-      return;
-    }
-
-    // 调用 messageStore 发布消息（保存到数据库）
-    await messageStore.publishMessage(serverId, {
-      topic: processedTopic,
-      payload: processedPayload,
-      qos: publishData.qos,
-      retain: publishData.retain,
-      format: payloadFormat.value,
-    });
-
-    // 同时添加到 mqttStore 的消息列表（用于实时显示）
-    mqttStore.addPublishMessage(serverId, {
-      topic: processedTopic,
-      payload: processedPayload,
-      qos: publishData.qos as 0 | 1 | 2,
-      retain: publishData.retain,
-      payload_type: payloadFormat.value,
-      seq,
-    });
-
+    await doPublishCore();
     ElMessage.success(t('success.published'));
   } catch (error: any) {
-    // 使用 MQTT 错误处理器
     handleMqttError(error?.message || String(error));
   } finally {
     publishing.value = false;
@@ -344,39 +503,50 @@ const handlePublish = async () => {
 
 .publish-form {
   padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
   flex: 1;
   min-height: 0;
-}
-
-.form-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.topic-input {
-  flex: 1;
-  min-width: 200px;
 }
 
 .payload-row {
-  align-items: stretch;
-  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto 1fr;
+  gap: 10px;
+  height: 100%;
   min-height: 0;
+}
 
-  .payload-input-wrapper {
+.topic-input {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.payload-input-wrapper {
+  grid-column: 1;
+  grid-row: 2 / 4;
+  min-height: 0;
+}
+
+.btn-timed-message {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.btn-scheduled-publish {
+  grid-column: 2;
+  grid-row: 2;
+  margin-left: 0 !important;
+}
+
+.action-row-bottom {
+  grid-column: 2;
+  grid-row: 3;
+  display: flex;
+  gap: 10px;
+  align-self: end;
+
+  .el-button {
     flex: 1;
-    min-height: 0;
-  }
-
-  .form-actions {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-    flex-shrink: 0;
   }
 }
 
@@ -400,5 +570,11 @@ const handlePublish = async () => {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+.unit {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--app-text-secondary);
 }
 </style>

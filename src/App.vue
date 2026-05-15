@@ -1,11 +1,13 @@
 <template>
   <AppLayout @open-templates="handleOpenTemplates" @open-scripts="handleOpenScripts" @open-env="handleOpenEnv" @settings="handleOpenSettings">
     <!-- 消息调试视图 -->
-    <MainContent 
+    <MainContent
       :scheduled-publish-running="isScheduledPublishRunning"
-      @save-template="handleSaveTemplate" 
+      :timed-message-running="isTimedMessageRunning"
+      @save-template="handleSaveTemplate"
       @open-templates="handleOpenTemplates"
       @scheduled-publish="handleScheduledPublish"
+      @update:timed-message-running="handleTimedMessageRunningChange"
     />
   </AppLayout>
 
@@ -102,6 +104,9 @@ const templateToSave = ref<CommandTemplate | null>(null);
 const showScheduledPublishDialog = ref(false);
 const isScheduledPublishRunning = ref(false);
 
+// 定时消息状态
+const isTimedMessageRunning = ref(false);
+
 // 系统设置对话框
 const showSettingsDialog = ref(false);
 
@@ -189,6 +194,11 @@ function handleScheduledPublish() {
 // 定时发布运行状态变化
 function handleScheduledPublishRunningChange(running: boolean) {
   isScheduledPublishRunning.value = running;
+}
+
+// 定时消息运行状态变化
+function handleTimedMessageRunningChange(running: boolean) {
+  isTimedMessageRunning.value = running;
 }
 
 // 打开系统设置

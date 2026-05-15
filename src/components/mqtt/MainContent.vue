@@ -6,13 +6,15 @@
     <div class="panel-resizer" @mousedown="handleResizeStart" />
 
     <!-- 发布消息 -->
-    <PublishPanel 
-      class="publish-panel" 
+    <PublishPanel
+      class="publish-panel"
       :style="{ height: `${publishPanelHeight}px` }"
       :scheduled-publish-running="scheduledPublishRunning"
-      @save-template="handleSaveTemplate" 
+      :timed-message-running="timedMessageRunning"
+      @save-template="handleSaveTemplate"
       @open-templates="handleOpenTemplates"
       @scheduled-publish="handleScheduledPublish"
+      @update:timed-message-running="handleTimedMessageRunningChange"
     />
   </div>
 </template>
@@ -32,6 +34,7 @@ interface SaveTemplateData {
 
 defineProps<{
   scheduledPublishRunning: boolean;
+  timedMessageRunning: boolean;
 }>();
 
 const mainContentRef = ref<HTMLElement | null>(null);
@@ -109,6 +112,7 @@ const emit = defineEmits<{
   saveTemplate: [data: SaveTemplateData]
   openTemplates: []
   scheduledPublish: []
+  'update:timedMessageRunning': [value: boolean]
 }>();
 
 function handleSaveTemplate(data: SaveTemplateData) {
@@ -121,6 +125,10 @@ function handleOpenTemplates() {
 
 function handleScheduledPublish() {
   emit('scheduledPublish');
+}
+
+function handleTimedMessageRunningChange(value: boolean) {
+  emit('update:timedMessageRunning', value);
 }
 
 onMounted(() => {
