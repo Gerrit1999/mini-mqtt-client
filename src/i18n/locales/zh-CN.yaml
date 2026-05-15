@@ -3,6 +3,7 @@
 common:
   confirm: 确定
   cancel: 取消
+  selectAll: 全选
   save: 保存
   delete: 删除
   edit: 编辑
@@ -104,6 +105,7 @@ publish:
   clear: 清空
   saveTemplate: 保存模板
   scheduledPublish: 定时发布
+  timedMessage: 定时消息
   openScripts: 脚本管理
   openTemplates: 命令模板
   payloadType: 格式
@@ -214,34 +216,46 @@ script:
     replace: 替换文本中的 {{变量名}} 占位符
     getAll: 获取所有环境变量数组
 
+timedMessage:
+  title: 定时消息
+  frequency: 发送频率
+  frequencyUnit: 秒
+  frequencyPlaceholder: 请输入发送频率
+  frequencyMin: 频率不能小于 0.1 秒
+  frequencyMax: 频率不能大于 3600 秒
+  start: 开始发送
+  stop: 停止发送
+  running: 定时发送中
+  runningWithCount: 已发送 {count} 条
+
 scheduled:
   title: 定时发布
-  selectTemplate: 选择模板
+  selectTemplate: 命令列表
   noTemplateSelected: 请选择要发布的模板
-  mode: 发布模式
+  mode: 发送配置
   once: 单次
   interval: 间隔
   cron: Cron表达式
-  intervalMs: 间隔（毫秒）
-  roundInterval: 轮次间隔
+  intervalMs: 发送间隔
+  roundInterval: 每轮间隔
   cronExpression: Cron 表达式
   cronHelp: 例如：*/5 * * * * (每5分钟)
   executeTime: 执行时间
   selectTime: 选择时间
-  start: 开始
+  start: 开始发布
   stop: 停止
   running: 运行中
   nextExecution: 下次执行
   executionCount: 已执行 {count} 次
-  selectedTemplates: 已选择 {count} 个模板
+  selectedTemplates: 已选择 {count} 条命令
   status: 发送状态
   completed: 已完成
-  order: 排序
-  selectionOrder: 选择顺序
-  nameOrder: 名称顺序
+  order: 发送顺序
+  selectionOrder: 按勾选顺序
+  nameOrder: 按名称排序
   loopMode: 循环模式
   infinite: 无限循环
-  count: 次数
+  count: 指定次数
   logs: 日志
   minimize: 最小化
   back: 返回

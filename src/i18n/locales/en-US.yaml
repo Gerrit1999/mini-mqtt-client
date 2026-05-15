@@ -3,6 +3,7 @@
 common:
   confirm: Confirm
   cancel: Cancel
+  selectAll: Select All
   save: Save
   delete: Delete
   edit: Edit
@@ -104,6 +105,7 @@ publish:
   clear: Clear
   saveTemplate: Save Template
   scheduledPublish: Scheduled Publish
+  timedMessage: Timed Message
   openScripts: Script Manager
   openTemplates: Templates
   payloadType: Format
@@ -214,34 +216,46 @@ script:
     replace: Replace {{var}} placeholders in text
     getAll: Get all environment variables as array
 
+timedMessage:
+  title: Timed Message
+  frequency: Frequency
+  frequencyUnit: seconds
+  frequencyPlaceholder: Enter frequency
+  frequencyMin: Frequency must be at least 0.1s
+  frequencyMax: Frequency must not exceed 3600s
+  start: Start
+  stop: Stop
+  running: Sending...
+  runningWithCount: "Sent {count} messages"
+
 scheduled:
   title: Scheduled Publish
-  selectTemplate: Select Templates
-  noTemplateSelected: Please select templates to publish
-  mode: Publish Mode
+  selectTemplate: Command List
+  noTemplateSelected: Please select commands to publish
+  mode: Send Configuration
   once: Once
   interval: Interval
   cron: Cron Expression
-  intervalMs: Interval (ms)
-  roundInterval: Round Interval
+  intervalMs: Send Interval
+  roundInterval: Round Gap
   cronExpression: Cron Expression
   cronHelp: "Example: */5 * * * * (every 5 minutes)"
   executeTime: Execute Time
   selectTime: Select Time
-  start: Start
+  start: Start Publish
   stop: Stop
   running: Running
   nextExecution: Next Execution
   executionCount: Executed {count} times
-  selectedTemplates: "{count} templates selected"
+  selectedTemplates: "{count} commands selected"
   status: Publish Status
   completed: Completed
-  order: Order
-  selectionOrder: Selection Order
-  nameOrder: Name Order
+  order: Send Order
+  selectionOrder: By Selection
+  nameOrder: By Name
   loopMode: Loop Mode
   infinite: Infinite
-  count: Count
+  count: Specified Count
   logs: Logs
   minimize: Minimize
   back: Back
