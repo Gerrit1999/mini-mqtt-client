@@ -145,10 +145,7 @@ impl LogManager {
         let file = File::open(&log_file).map_err(|e| format!("Failed to read log file: {}", e))?;
 
         let reader = BufReader::new(file);
-        let lines: Vec<String> = reader
-            .lines()
-            .filter_map(|line| line.ok())
-            .collect();
+        let lines: Vec<String> = reader.lines().filter_map(|line| line.ok()).collect();
 
         // 返回最后 limit 行
         let start = if lines.len() > limit {
@@ -164,7 +161,12 @@ impl LogManager {
     pub fn clear_logs(&self) -> Result<(), String> {
         for entry in fs::read_dir(&self.log_dir).map_err(|e| e.to_string())? {
             if let Ok(entry) = entry {
-                if entry.path().extension().map(|ext| ext == "log").unwrap_or(false) {
+                if entry
+                    .path()
+                    .extension()
+                    .map(|ext| ext == "log")
+                    .unwrap_or(false)
+                {
                     let _ = fs::remove_file(entry.path());
                 }
             }

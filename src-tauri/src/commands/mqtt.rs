@@ -9,9 +9,7 @@ pub async fn mqtt_connect(
     server_id: i64,
 ) -> Result<(), String> {
     // 从存储获取 server 配置
-    let server = storage
-        .get_server(server_id)
-        .ok_or("Server not found")?;
+    let server = storage.get_server(server_id).ok_or("Server not found")?;
 
     mqtt.connect(server).await
 }

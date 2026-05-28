@@ -1,6 +1,10 @@
 pub mod models;
 
-use models::{CommandTemplate, CreateTemplateRequest, CreateScriptRequest, MessageHistory, MqttServer, Script, Subscription, UpdateSubscriptionRequest, UpdateTemplateRequest, UpdateScriptRequest, EnvVariable, CreateEnvVariableRequest, UpdateEnvVariableRequest};
+use models::{
+    CommandTemplate, CreateEnvVariableRequest, CreateScriptRequest, CreateTemplateRequest,
+    EnvVariable, MessageHistory, MqttServer, Script, Subscription, UpdateEnvVariableRequest,
+    UpdateScriptRequest, UpdateSubscriptionRequest, UpdateTemplateRequest,
+};
 use parking_lot::RwLock;
 use std::fs;
 use std::path::PathBuf;
@@ -62,7 +66,9 @@ impl Storage {
                 if let Ok(config) = serde_yaml::from_str::<AppConfig>(&content) {
                     if let Some(custom_path) = config.data_path {
                         let custom_path = PathBuf::from(custom_path);
-                        if custom_path.exists() || custom_path.parent().map(|p| p.exists()).unwrap_or(false) {
+                        if custom_path.exists()
+                            || custom_path.parent().map(|p| p.exists()).unwrap_or(false)
+                        {
                             custom_path
                         } else {
                             app_dir.join("data.yaml")
@@ -92,7 +98,7 @@ impl Storage {
             file_path,
         })
     }
-    
+
     /// 获取当前数据文件路径
     pub fn get_file_path(&self) -> &PathBuf {
         &self.file_path
@@ -182,7 +188,10 @@ impl Storage {
         self.save()
     }
 
-    pub fn update_subscription(&self, req: UpdateSubscriptionRequest) -> Result<Subscription, String> {
+    pub fn update_subscription(
+        &self,
+        req: UpdateSubscriptionRequest,
+    ) -> Result<Subscription, String> {
         let mut data = self.data.write();
         if let Some(sub) = data.subscriptions.iter_mut().find(|s| s.id == Some(req.id)) {
             if let Some(topic) = req.topic {
@@ -266,9 +275,7 @@ impl Storage {
         let data = self.data.read();
         data.templates
             .iter()
-            .filter(|t| {
-                t.server_id == server_id || t.server_id == GLOBAL_TEMPLATE_SERVER_ID
-            })
+            .filter(|t| t.server_id == server_id || t.server_id == GLOBAL_TEMPLATE_SERVER_ID)
             .cloned()
             .collect()
     }
@@ -283,7 +290,7 @@ impl Storage {
         data.next_template_id += 1;
         let id = data.next_template_id;
         let now = chrono::Utc::now().to_rfc3339();
-        
+
         let template = CommandTemplate {
             id: Some(id),
             server_id: req.server_id,
@@ -300,7 +307,7 @@ impl Storage {
             created_at: Some(now.clone()),
             updated_at: Some(now),
         };
-        
+
         data.templates.push(template);
         drop(data);
         self.save()?;
@@ -362,9 +369,7 @@ impl Storage {
         let mut categories: Vec<String> = data
             .templates
             .iter()
-            .filter(|t| {
-                t.server_id == server_id || t.server_id == GLOBAL_TEMPLATE_SERVER_ID
-            })
+            .filter(|t| t.server_id == server_id || t.server_id == GLOBAL_TEMPLATE_SERVER_ID)
             .filter_map(|t| t.category.clone())
             .collect();
         categories.sort();
@@ -401,7 +406,7 @@ impl Storage {
         data.next_script_id += 1;
         let id = data.next_script_id;
         let now = chrono::Utc::now().to_rfc3339();
-        
+
         let script = Script {
             id: Some(id),
             server_id: req.server_id,
@@ -413,7 +418,7 @@ impl Storage {
             created_at: Some(now.clone()),
             updated_at: Some(now),
         };
-        
+
         data.scripts.push(script);
         drop(data);
         self.save()?;
@@ -470,16 +475,20 @@ impl Storage {
 
     pub fn get_env_variable(&self, id: i64) -> Option<EnvVariable> {
         let data = self.data.read();
-        data.env_variables.iter().find(|e| e.id == Some(id)).cloned()
+        data.env_variables
+            .iter()
+            .find(|e| e.id == Some(id))
+            .cloned()
     }
 
     pub fn create_env_variable(&self, req: CreateEnvVariableRequest) -> Result<i64, String> {
         let mut data = self.data.write();
-        
+
         // 检查变量名是否重复
-        let exists = data.env_variables.iter().any(|e| {
-            e.server_id == req.server_id && e.name == req.name
-        });
+        let exists = data
+            .env_variables
+            .iter()
+            .any(|e| e.server_id == req.server_id && e.name == req.name);
         if exists {
             return Err("Variable name already exists".to_string());
         }
@@ -487,7 +496,7 @@ impl Storage {
         data.next_env_variable_id += 1;
         let id = data.next_env_variable_id;
         let now = chrono::Utc::now().to_rfc3339();
-        
+
         let env_var = EnvVariable {
             id: Some(id),
             server_id: req.server_id,
@@ -497,7 +506,7 @@ impl Storage {
             created_at: Some(now.clone()),
             updated_at: Some(now),
         };
-        
+
         data.env_variables.push(env_var);
         drop(data);
         self.save()?;
@@ -506,7 +515,7 @@ impl Storage {
 
     pub fn update_env_variable(&self, req: UpdateEnvVariableRequest) -> Result<(), String> {
         let mut data = self.data.write();
-        
+
         // 如果要更新名称，检查是否与其他变量重复
         if let Some(new_name) = &req.name {
             let current = data.env_variables.iter().find(|e| e.id == Some(req.id));

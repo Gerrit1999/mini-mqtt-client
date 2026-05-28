@@ -20,17 +20,17 @@ pub fn migrate_data_path(
     migrate: bool,
 ) -> Result<(), String> {
     let new_path = PathBuf::from(&new_path);
-    
+
     // 验证新路径
     if !new_path.is_absolute() {
         return Err("Please provide an absolute path".to_string());
     }
-    
+
     // 确保目标目录存在
     if let Some(parent) = new_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
-    
+
     // 如果需要迁移，复制当前数据到新位置
     if migrate {
         let current_path = storage.get_file_path();
@@ -39,22 +39,24 @@ pub fn migrate_data_path(
                 .map_err(|e| format!("Failed to copy data file: {}", e))?;
         }
     }
-    
+
     // 保存新路径配置（使用单独的配置文件）
     let config_path = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("config.yaml");
-    
+
     let mut config_map: HashMap<String, String> = HashMap::new();
-    config_map.insert("data_path".to_string(), new_path.to_string_lossy().to_string());
-    
+    config_map.insert(
+        "data_path".to_string(),
+        new_path.to_string_lossy().to_string(),
+    );
+
     let config = serde_yaml::to_string(&config_map).map_err(|e| e.to_string())?;
-    
-    fs::write(&config_path, config)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-    
+
+    fs::write(&config_path, config).map_err(|e| format!("Failed to save config: {}", e))?;
+
     Ok(())
 }
 
@@ -62,13 +64,13 @@ pub fn migrate_data_path(
 #[tauri::command]
 pub async fn select_data_folder(app_handle: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    
+
     let folder = app_handle
         .dialog()
         .file()
         .set_title("Select Data Directory")
         .blocking_pick_folder();
-    
+
     match folder {
         Some(file_path) => {
             // FilePath 需要转换为 PathBuf

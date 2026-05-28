@@ -25,8 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // 初始化存储
-            let storage =
-                Storage::new(&app.handle()).expect("Failed to initialize storage");
+            let storage = Storage::new(&app.handle()).expect("Failed to initialize storage");
             app.manage(storage);
 
             // 初始化 MQTT 管理器

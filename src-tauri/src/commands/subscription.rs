@@ -131,7 +131,11 @@ pub async fn update_subscription(
         } else if new_qos.is_some() {
             // 只有 qos 变了
             mqtt_manager
-                .subscribe(server_id, subscription.topic.clone(), subscription.qos as u8)
+                .subscribe(
+                    server_id,
+                    subscription.topic.clone(),
+                    subscription.qos as u8,
+                )
                 .await
                 .map_err(|e| e.to_string())?;
         }

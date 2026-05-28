@@ -1,6 +1,6 @@
-use tauri::State;
-use crate::db::models::{EnvVariable, CreateEnvVariableRequest, UpdateEnvVariableRequest};
+use crate::db::models::{CreateEnvVariableRequest, EnvVariable, UpdateEnvVariableRequest};
 use crate::db::Storage;
+use tauri::State;
 
 /// 获取服务器的所有环境变量
 #[tauri::command]
@@ -16,13 +16,19 @@ pub fn get_env_variable(storage: State<Storage>, id: i64) -> Option<EnvVariable>
 
 /// 创建环境变量
 #[tauri::command]
-pub fn create_env_variable(storage: State<Storage>, request: CreateEnvVariableRequest) -> Result<i64, String> {
+pub fn create_env_variable(
+    storage: State<Storage>,
+    request: CreateEnvVariableRequest,
+) -> Result<i64, String> {
     storage.create_env_variable(request)
 }
 
 /// 更新环境变量
 #[tauri::command]
-pub fn update_env_variable(storage: State<Storage>, request: UpdateEnvVariableRequest) -> Result<(), String> {
+pub fn update_env_variable(
+    storage: State<Storage>,
+    request: UpdateEnvVariableRequest,
+) -> Result<(), String> {
     storage.update_env_variable(request)
 }
 

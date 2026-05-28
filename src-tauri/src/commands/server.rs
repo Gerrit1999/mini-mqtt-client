@@ -23,6 +23,9 @@ pub async fn delete_server(storage: State<'_, Storage>, id: i64) -> Result<(), S
 }
 
 #[tauri::command]
-pub async fn get_server(storage: State<'_, Storage>, id: i64) -> Result<Option<MqttServer>, String> {
+pub async fn get_server(
+    storage: State<'_, Storage>,
+    id: i64,
+) -> Result<Option<MqttServer>, String> {
     Ok(storage.get_server(id))
 }

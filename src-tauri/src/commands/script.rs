@@ -1,6 +1,6 @@
-use tauri::State;
-use crate::db::models::{Script, CreateScriptRequest, UpdateScriptRequest};
+use crate::db::models::{CreateScriptRequest, Script, UpdateScriptRequest};
 use crate::db::Storage;
+use tauri::State;
 
 /// 获取服务器的所有脚本
 #[tauri::command]
@@ -16,7 +16,11 @@ pub fn get_script(storage: State<Storage>, id: i64) -> Option<Script> {
 
 /// 获取启用的脚本（按类型）
 #[tauri::command]
-pub fn get_enabled_scripts(storage: State<Storage>, server_id: i64, script_type: String) -> Vec<Script> {
+pub fn get_enabled_scripts(
+    storage: State<Storage>,
+    server_id: i64,
+    script_type: String,
+) -> Vec<Script> {
     storage.get_enabled_scripts(server_id, &script_type)
 }
 

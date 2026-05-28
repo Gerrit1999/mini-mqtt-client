@@ -9,7 +9,10 @@ pub fn write_error_log(entry: LogEntry, log_manager: State<'_, LogManager>) -> R
 
 /// 获取最近的日志
 #[tauri::command]
-pub fn get_recent_logs(limit: Option<usize>, log_manager: State<'_, LogManager>) -> Result<Vec<String>, String> {
+pub fn get_recent_logs(
+    limit: Option<usize>,
+    log_manager: State<'_, LogManager>,
+) -> Result<Vec<String>, String> {
     log_manager.get_recent_logs(limit.unwrap_or(100))
 }
 

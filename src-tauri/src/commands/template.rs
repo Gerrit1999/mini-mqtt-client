@@ -11,12 +11,18 @@ pub async fn create_template(
 }
 
 #[command]
-pub async fn get_template(id: i64, storage: State<'_, Storage>) -> Result<Option<CommandTemplate>, String> {
+pub async fn get_template(
+    id: i64,
+    storage: State<'_, Storage>,
+) -> Result<Option<CommandTemplate>, String> {
     Ok(storage.get_template(id))
 }
 
 #[command]
-pub async fn list_templates(server_id: i64, storage: State<'_, Storage>) -> Result<Vec<CommandTemplate>, String> {
+pub async fn list_templates(
+    server_id: i64,
+    storage: State<'_, Storage>,
+) -> Result<Vec<CommandTemplate>, String> {
     Ok(storage.get_templates(server_id))
 }
 
@@ -34,18 +40,27 @@ pub async fn delete_template(id: i64, storage: State<'_, Storage>) -> Result<(),
 }
 
 #[command]
-pub async fn use_template(id: i64, storage: State<'_, Storage>) -> Result<Option<CommandTemplate>, String> {
+pub async fn use_template(
+    id: i64,
+    storage: State<'_, Storage>,
+) -> Result<Option<CommandTemplate>, String> {
     storage.increment_template_use_count(id)?;
     Ok(storage.get_template(id))
 }
 
 #[command]
-pub async fn get_template_categories(server_id: i64, storage: State<'_, Storage>) -> Result<Vec<String>, String> {
+pub async fn get_template_categories(
+    server_id: i64,
+    storage: State<'_, Storage>,
+) -> Result<Vec<String>, String> {
     Ok(storage.get_template_categories(server_id))
 }
 
 #[command]
-pub async fn export_templates(server_id: i64, storage: State<'_, Storage>) -> Result<String, String> {
+pub async fn export_templates(
+    server_id: i64,
+    storage: State<'_, Storage>,
+) -> Result<String, String> {
     let templates = storage.get_templates(server_id);
     serde_json::to_string_pretty(&templates).map_err(|e| e.to_string())
 }
@@ -87,9 +102,7 @@ pub async fn duplicate_template(
     new_name: String,
     storage: State<'_, Storage>,
 ) -> Result<i64, String> {
-    let template = storage
-        .get_template(id)
-        .ok_or("Template not found")?;
+    let template = storage.get_template(id).ok_or("Template not found")?;
 
     let req = CreateTemplateRequest {
         server_id: template.server_id,
