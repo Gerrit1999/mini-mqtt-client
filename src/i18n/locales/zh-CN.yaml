@@ -28,8 +28,11 @@ header:
     error: 连接错误
 
 sidebar:
-  server: SERVER
-  addServer: 添加 Server
+  server: 服务器
+  addServer: 添加服务器
+  addConnection: 添加连接
+  addGroup: 添加分组
+  ungrouped: 未分组
   noServer: 暂无 Server
   subscription: 订阅
   subscribe: 订阅
@@ -39,11 +42,20 @@ sidebar:
   colorMark: 颜色标记
   noColor: 无颜色
   topic: Topic
+  groupNamePrompt: 请输入分组名称
+  groupRenamePrompt: 请输入新的分组名称
+  moveToGroupPrompt: 请选择要移动到的分组编号
+  groupOptionInvalid: 请输入有效的分组编号
+  groupCreated: 分组已创建
   actions:
     edit: 编辑
     duplicate: 复制
+    moveToGroup: 移动到分组
+    renameGroup: 重命名分组
+    deleteGroup: 删除分组
     delete: 删除
   deleteServerConfirm: 确定要删除 "{name}" 吗？
+  deleteGroupConfirm: 确定要删除分组 "{name}" 吗？组内连接将移动到未分组。
   deleteSubscriptionConfirm: 确定要取消订阅 "{topic}" 吗？
   theme:
     light: 浅色模式
@@ -269,6 +281,8 @@ server:
   editTitle: 编辑服务器
   name: 名称
   namePlaceholder: 例如：本地测试服务器
+  group: 分组
+  groupPlaceholder: 选择分组，可留空
   host: 主机
   hostPlaceholder: 例如：localhost 或 192.168.1.1
   port: 端口

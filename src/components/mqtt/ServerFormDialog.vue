@@ -21,6 +21,22 @@
             <el-input v-model="formData.name" :placeholder="$t('server.namePlaceholder')" />
           </el-form-item>
 
+          <el-form-item :label="$t('server.group')">
+            <el-select
+              v-model="selectedGroupId"
+              clearable
+              style="width: 100%"
+              :placeholder="$t('server.groupPlaceholder')"
+            >
+              <el-option
+                v-for="group in serverStore.groups"
+                :key="group.id"
+                :label="group.name"
+                :value="group.id"
+              />
+            </el-select>
+          </el-form-item>
+
           <!-- 服务器地址：协议 + 主机 + 端口 -->
           <el-form-item :label="$t('server.host')" required>
             <div class="address-input">
@@ -188,13 +204,20 @@ import type { FormInstance, FormRules } from "element-plus";
 import { RefreshRight } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useServerStore } from "@/stores/server";
-import type { MqttCertificateType, MqttServer } from "@/types/mqtt";
+import {
+  generateDefaultClientId,
+  type MqttCertificateType,
+  type MqttServer,
+} from "@/types/mqtt";
+
+const DEFAULT_WEBSOCKET_PATH = "/mqtt";
 
 const { t } = useI18n();
 
 const props = defineProps<{
   visible: boolean;
   server?: MqttServer | null;
+  initialGroupId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -206,6 +229,7 @@ const serverStore = useServerStore();
 const formRef = ref<FormInstance>();
 const activeTab = ref("basic");
 const saving = ref(false);
+const selectedGroupId = ref<string | null>(null);
 
 const isEdit = computed(() => !!props.server?.id);
 
@@ -238,11 +262,11 @@ const formData = reactive<FormData>({
   protocol: "mqtt",
   host: "",
   port: 1883,
-  websocket_path: "",
+  websocket_path: DEFAULT_WEBSOCKET_PATH,
   protocol_version: "5.0",
   username: "",
   password: "",
-  client_id: "",
+  client_id: generateDefaultClientId(),
   keep_alive: 60,
   clean_session: true,
   use_tls: false,
@@ -278,11 +302,17 @@ watch(() => formData.protocol, (newProtocol, oldProtocol) => {
       if (oldProtocol === "wss" || oldProtocol === "ws" || formData.port === 8084) {
         formData.port = 8083;
       }
+      if (!formData.websocket_path?.trim()) {
+        formData.websocket_path = DEFAULT_WEBSOCKET_PATH;
+      }
       formData.use_tls = false;
       break;
     case "wss":
       if (oldProtocol === "ws" || oldProtocol === "wss" || formData.port === 8083) {
         formData.port = 8084;
+      }
+      if (!formData.websocket_path?.trim()) {
+        formData.websocket_path = DEFAULT_WEBSOCKET_PATH;
       }
       formData.use_tls = true;
       break;
@@ -327,10 +357,13 @@ watch(
         // 编辑模式
         formData.id = props.server.id;
         formData.name = props.server.name;
+        selectedGroupId.value = serverStore.getGroupIdForServer(props.server.id);
         formData.host = props.server.host;
         formData.protocol = props.server.protocol || (props.server.use_tls ? "mqtts" : "mqtt");
         formData.port = props.server.port;
-        formData.websocket_path = props.server.websocket_path || "";
+        formData.websocket_path =
+          props.server.websocket_path ||
+          (formData.protocol === "ws" || formData.protocol === "wss" ? DEFAULT_WEBSOCKET_PATH : "");
         formData.protocol_version = props.server.protocol_version;
         formData.username = props.server.username || "";
         formData.password = props.server.password || "";
@@ -349,14 +382,15 @@ watch(
         // 新增模式：重置表单
         formData.id = undefined;
         formData.name = "";
+        selectedGroupId.value = props.initialGroupId ?? null;
         formData.protocol = "mqtt";
         formData.host = "";
         formData.port = 1883;
-        formData.websocket_path = "";
+        formData.websocket_path = DEFAULT_WEBSOCKET_PATH;
         formData.protocol_version = "5.0";
         formData.username = "";
         formData.password = "";
-        formData.client_id = "";
+        formData.client_id = generateDefaultClientId();
         formData.keep_alive = 60;
         formData.clean_session = true;
         formData.use_tls = false;
@@ -372,9 +406,19 @@ watch(
   }
 );
 
+watch(
+  () => serverStore.groups,
+  (groups) => {
+    if (!selectedGroupId.value) return;
+    if (!groups.some((group) => group.id === selectedGroupId.value)) {
+      selectedGroupId.value = null;
+    }
+  },
+  { deep: true }
+);
+
 const generateClientId = () => {
-  const random = Math.random().toString(36).substring(2, 10);
-  formData.client_id = `mqtt_${Date.now()}_${random}`;
+  formData.client_id = generateDefaultClientId();
 };
 
 const handleSave = async () => {
@@ -407,10 +451,10 @@ const handleSave = async () => {
   saving.value = true;
   try {
     if (isEdit.value) {
-      await serverStore.updateServer(serverData);
+      await serverStore.updateServer(serverData, selectedGroupId.value);
       ElMessage.success(t('server.saveSuccess'));
     } else {
-      await serverStore.createServer(serverData);
+      await serverStore.createServer(serverData, selectedGroupId.value);
       ElMessage.success(t('server.saveSuccess'));
     }
     emit("saved");

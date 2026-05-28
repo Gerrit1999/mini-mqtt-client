@@ -158,6 +158,11 @@ export interface UpdateEnvVariableRequest {
   description?: string;
 }
 
+export function generateDefaultClientId(): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `mqtt_${Date.now()}_${random}`;
+}
+
 /**
  * 创建默认 Server 配置
  */
@@ -167,11 +172,11 @@ export function createDefaultServer(): MqttServer {
     host: "",
     port: 1883,
     protocol: "mqtt",
-    websocket_path: "",
+    websocket_path: "/mqtt",
     protocol_version: "5.0",
     username: "",
     password: "",
-    client_id: "",
+    client_id: generateDefaultClientId(),
     keep_alive: 60,
     clean_session: true,
     use_tls: false,

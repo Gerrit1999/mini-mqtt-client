@@ -30,6 +30,9 @@ header:
 sidebar:
   server: SERVER
   addServer: Add Server
+  addConnection: Add Connection
+  addGroup: Add Group
+  ungrouped: Ungrouped
   noServer: No Server
   subscription: Subscriptions
   subscribe: Subscribe
@@ -39,11 +42,20 @@ sidebar:
   colorMark: Mark
   noColor: No Color
   topic: Topic
+  groupNamePrompt: Enter group name
+  groupRenamePrompt: Enter a new group name
+  moveToGroupPrompt: Select the target group number
+  groupOptionInvalid: Please enter a valid group number
+  groupCreated: Group created
   actions:
     edit: Edit
     duplicate: Duplicate
+    moveToGroup: Move to Group
+    renameGroup: Rename Group
+    deleteGroup: Delete Group
     delete: Delete
   deleteServerConfirm: Are you sure to delete "{name}"?
+  deleteGroupConfirm: Are you sure to delete group "{name}"? Its connections will become ungrouped.
   deleteSubscriptionConfirm: Are you sure to unsubscribe "{topic}"?
   theme:
     light: Light Mode
@@ -269,6 +281,8 @@ server:
   editTitle: Edit Server
   name: Name
   namePlaceholder: "e.g., Local Test Server"
+  group: Group
+  groupPlaceholder: Select a group or leave empty
   host: Host
   hostPlaceholder: "e.g., localhost or 192.168.1.1"
   port: Port

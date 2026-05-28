@@ -30,50 +30,155 @@
             </el-icon>
             <span class="section-title">{{ $t('sidebar.server') }}</span>
           </div>
-          <el-button type="primary" size="small" :icon="Plus" circle @click="handleAddServer" />
+          <el-dropdown trigger="click" @command="handleCreateMenuCommand">
+            <el-button type="primary" size="small" :icon="Plus" circle />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="connection">
+                  <el-icon><Connection /></el-icon>
+                  <span>{{ $t('sidebar.addConnection') }}</span>
+                </el-dropdown-item>
+                <el-dropdown-item command="group">
+                  <el-icon><FolderAdd /></el-icon>
+                  <span>{{ $t('sidebar.addGroup') }}</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
 
         <div class="server-list" v-show="!isServerListCollapsed">
-          <div
-            v-for="serverState in serverStore.servers"
-            :key="serverState.server.id"
-            class="server-item"
-            :class="{ active: serverState.server.id === serverStore.activeServerId }"
-            @click="handleSelectServer(serverState.server.id!)"
-          >
-            <span class="status-indicator" :class="getConnectionClass(serverState.server.id!)" />
-            <div class="server-info">
-              <span class="server-name text-ellipsis">{{ serverState.server.name }}</span>
-              <span class="server-host text-ellipsis">
-                {{ formatServerAddress(serverState.server) }}
-              </span>
+          <div v-if="ungroupedServers.length > 0" class="server-group">
+            <div class="group-header group-header--static">
+              <span class="group-label">{{ $t('sidebar.ungrouped') }}</span>
             </div>
-            <el-dropdown trigger="click" @command="(cmd: string) => handleServerAction(cmd, serverState.server)">
-              <el-button :icon="MoreFilled" text size="small" class="more-btn" @click.stop />
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="edit">
-                    <el-icon><Edit /></el-icon>
-                    <span>{{ $t('sidebar.actions.edit') }}</span>
-                  </el-dropdown-item>
-                  <el-dropdown-item command="duplicate">
-                    <el-icon><CopyDocument /></el-icon>
-                    <span>{{ $t('sidebar.actions.duplicate') }}</span>
-                  </el-dropdown-item>
-                  <el-dropdown-item command="delete" divided>
-                    <el-icon><Delete /></el-icon>
-                    <span style="color: var(--el-color-danger)">{{ $t('sidebar.actions.delete') }}</span>
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            <div class="group-body">
+              <div
+                v-for="serverState in ungroupedServers"
+                :key="serverState.server.id"
+                class="server-item"
+                :class="{ active: serverState.server.id === serverStore.activeServerId }"
+                @click="handleSelectServer(serverState.server.id!)"
+              >
+                <span class="status-indicator" :class="getConnectionClass(serverState.server.id!)" />
+                <div class="server-info">
+                  <span class="server-name text-ellipsis">{{ serverState.server.name }}</span>
+                  <span class="server-host text-ellipsis">
+                    {{ formatServerAddress(serverState.server) }}
+                  </span>
+                </div>
+                <el-dropdown trigger="click" @command="(cmd: string) => handleServerAction(cmd, serverState.server)">
+                  <el-button :icon="MoreFilled" text size="small" class="more-btn" @click.stop />
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="edit">
+                        <el-icon><Edit /></el-icon>
+                        <span>{{ $t('sidebar.actions.edit') }}</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="duplicate">
+                        <el-icon><CopyDocument /></el-icon>
+                        <span>{{ $t('sidebar.actions.duplicate') }}</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="move">
+                        <el-icon><FolderOpened /></el-icon>
+                        <span>{{ $t('sidebar.actions.moveToGroup') }}</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="delete" divided>
+                        <el-icon><Delete /></el-icon>
+                        <span style="color: var(--el-color-danger)">{{ $t('sidebar.actions.delete') }}</span>
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-for="group in groupedServers"
+            :key="group.id"
+            class="server-group"
+          >
+            <div class="group-header" @click="toggleGroup(group.id)">
+              <div class="group-title">
+                <el-icon class="collapse-icon collapse-icon--group" :class="{ collapsed: group.collapsed }">
+                  <CaretBottom />
+                </el-icon>
+                <el-icon class="group-folder-icon"><Folder /></el-icon>
+                <span class="group-label text-ellipsis">{{ group.name }}</span>
+                <span class="group-count">{{ group.servers.length }}</span>
+              </div>
+              <el-dropdown
+                trigger="click"
+                @command="(cmd: string) => handleGroupAction(cmd, group.id)"
+              >
+                <el-button :icon="MoreFilled" text size="small" class="more-btn group-more-btn" @click.stop />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="addConnection">
+                      <el-icon><Connection /></el-icon>
+                      <span>{{ $t('sidebar.addConnection') }}</span>
+                    </el-dropdown-item>
+                    <el-dropdown-item command="rename">
+                      <el-icon><Edit /></el-icon>
+                      <span>{{ $t('sidebar.actions.renameGroup') }}</span>
+                    </el-dropdown-item>
+                    <el-dropdown-item command="delete" divided>
+                      <el-icon><Delete /></el-icon>
+                      <span style="color: var(--el-color-danger)">{{ $t('sidebar.actions.deleteGroup') }}</span>
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+
+            <div v-show="!group.collapsed" class="group-body">
+              <div
+                v-for="serverState in group.servers"
+                :key="serverState.server.id"
+                class="server-item server-item--nested"
+                :class="{ active: serverState.server.id === serverStore.activeServerId }"
+                @click="handleSelectServer(serverState.server.id!)"
+              >
+                <span class="status-indicator" :class="getConnectionClass(serverState.server.id!)" />
+                <div class="server-info">
+                  <span class="server-name text-ellipsis">{{ serverState.server.name }}</span>
+                  <span class="server-host text-ellipsis">
+                    {{ formatServerAddress(serverState.server) }}
+                  </span>
+                </div>
+                <el-dropdown trigger="click" @command="(cmd: string) => handleServerAction(cmd, serverState.server)">
+                  <el-button :icon="MoreFilled" text size="small" class="more-btn" @click.stop />
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="edit">
+                        <el-icon><Edit /></el-icon>
+                        <span>{{ $t('sidebar.actions.edit') }}</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="duplicate">
+                        <el-icon><CopyDocument /></el-icon>
+                        <span>{{ $t('sidebar.actions.duplicate') }}</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="move">
+                        <el-icon><FolderOpened /></el-icon>
+                        <span>{{ $t('sidebar.actions.moveToGroup') }}</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="delete" divided>
+                        <el-icon><Delete /></el-icon>
+                        <span style="color: var(--el-color-danger)">{{ $t('sidebar.actions.delete') }}</span>
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </div>
           </div>
 
           <!-- 空状态 -->
           <div v-if="serverStore.servers.length === 0" class="empty-state">
             <el-empty :description="$t('sidebar.noServer')" :image-size="60">
-              <el-button type="primary" size="small" @click="handleAddServer">
-                {{ $t('sidebar.addServer') }}
+              <el-button type="primary" size="small" @click="handleAddServer()">
+                {{ $t('sidebar.addConnection') }}
               </el-button>
             </el-empty>
           </div>
@@ -151,6 +256,7 @@
     <ServerFormDialog
       v-model:visible="showServerDialog"
       :server="editingServer"
+      :initial-group-id="pendingGroupId"
       @saved="handleServerSaved"
     />
 
@@ -208,6 +314,40 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="showMoveServerDialog"
+      :title="$t('sidebar.actions.moveToGroup')"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="90px">
+        <el-form-item :label="$t('server.name')">
+          <span class="move-server-name">{{ movingServer?.name }}</span>
+        </el-form-item>
+        <el-form-item :label="$t('server.group')">
+          <el-select
+            v-model="movingTargetGroupId"
+            style="width: 100%"
+            :placeholder="$t('server.groupPlaceholder')"
+          >
+            <el-option :label="$t('sidebar.ungrouped')" value="__ungrouped__" />
+            <el-option
+              v-for="group in serverStore.groups"
+              :key="group.id"
+              :label="group.name"
+              :value="group.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showMoveServerDialog = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="handleConfirmMoveServer">
+          {{ $t('common.confirm') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -223,10 +363,14 @@ import {
   Delete,
   Close,
   CopyDocument,
+  Connection,
   Moon,
   Sunny,
   Platform,
   CaretBottom,
+  Folder,
+  FolderAdd,
+  FolderOpened,
 } from "@element-plus/icons-vue";
 import { useAppStore, GITHUB_REPO } from "@/stores/app";
 import { useServerStore } from "@/stores/server";
@@ -245,6 +389,7 @@ const mqttStore = useMqttStore();
 const appVersion = ref("");
 const isServerListCollapsed = ref(false);
 const isSubscriptionListCollapsed = ref(false);
+const pendingGroupId = ref<string | null>(null);
 
 // 格式化服务器地址为 协议://host:port 格式
 const formatServerAddress = (server: MqttServer): string => {
@@ -269,6 +414,23 @@ const currentSubscriptions = computed(() => {
   const serverId = serverStore.activeServerId;
   if (!serverId) return [];
   return subscriptionStore.getSubscriptionsByServer(serverId);
+});
+
+const ungroupedServers = computed(() => {
+  return serverStore.servers.filter(
+    (serverState) => !serverStore.getGroupIdForServer(serverState.server.id)
+  );
+});
+
+const groupedServers = computed(() => {
+  return serverStore.groups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    collapsed: serverStore.isGroupCollapsed(group.id),
+    servers: serverStore.servers.filter(
+      (serverState) => serverStore.getGroupIdForServer(serverState.server.id) === group.id
+    ),
+  }));
 });
 
 // 主题标签文字
@@ -312,10 +474,25 @@ watch(
 // ===== Server 相关 =====
 const showServerDialog = ref(false);
 const editingServer = ref<MqttServer | null>(null);
+const showMoveServerDialog = ref(false);
+const movingServer = ref<MqttServer | null>(null);
+const movingTargetGroupId = ref("__ungrouped__");
 
-const handleAddServer = () => {
+const handleAddServer = (groupId: string | null = null) => {
+  pendingGroupId.value = groupId;
   editingServer.value = null;
   showServerDialog.value = true;
+};
+
+const handleCreateMenuCommand = (command: string) => {
+  if (command === "connection") {
+    handleAddServer();
+    return;
+  }
+
+  if (command === "group") {
+    handleAddGroup();
+  }
 };
 
 const handleSelectServer = (id: number) => {
@@ -325,12 +502,16 @@ const handleSelectServer = (id: number) => {
 const handleServerAction = async (command: string, server: MqttServer) => {
   switch (command) {
     case "edit":
+      pendingGroupId.value = serverStore.getGroupIdForServer(server.id);
       editingServer.value = server;
       showServerDialog.value = true;
       break;
     case "duplicate":
       await serverStore.duplicateServer(server.id!);
       ElMessage.success(t('server.duplicateSuccess'));
+      break;
+    case "move":
+      await handleMoveServer(server);
       break;
     case "delete":
       try {
@@ -353,7 +534,102 @@ const handleServerAction = async (command: string, server: MqttServer) => {
 };
 
 const handleServerSaved = () => {
-  // 对话框会自动关闭
+  pendingGroupId.value = null;
+};
+
+const handleAddGroup = async () => {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      t('sidebar.groupNamePrompt'),
+      t('sidebar.addGroup'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        inputPattern: /\S+/,
+        inputErrorMessage: t('errors.inputName'),
+      }
+    );
+
+    const name = value.trim();
+    if (!name) return;
+    serverStore.createGroup(name);
+    ElMessage.success(t('sidebar.groupCreated'));
+  } catch {
+    // 用户取消
+  }
+};
+
+const toggleGroup = (groupId: string) => {
+  serverStore.toggleGroupCollapsed(groupId);
+};
+
+const handleGroupAction = async (command: string, groupId: string) => {
+  const group = serverStore.groups.find((item) => item.id === groupId);
+  if (!group) return;
+
+  switch (command) {
+    case "addConnection":
+      handleAddServer(groupId);
+      break;
+    case "rename":
+      try {
+        const { value } = await ElMessageBox.prompt(
+          t('sidebar.groupRenamePrompt'),
+          t('sidebar.actions.renameGroup'),
+          {
+            confirmButtonText: t('common.save'),
+            cancelButtonText: t('common.cancel'),
+            inputValue: group.name,
+            inputPattern: /\S+/,
+            inputErrorMessage: t('errors.inputName'),
+          }
+        );
+
+        const name = value.trim();
+        if (!name) return;
+        serverStore.renameGroup(groupId, name);
+        ElMessage.success(t('success.saved'));
+      } catch {
+        // 用户取消
+      }
+      break;
+    case "delete":
+      try {
+        await ElMessageBox.confirm(
+          t('sidebar.deleteGroupConfirm', { name: group.name }),
+          t('common.confirm'),
+          {
+            confirmButtonText: t('common.delete'),
+            cancelButtonText: t('common.cancel'),
+            type: "warning",
+          }
+        );
+        serverStore.deleteGroup(groupId);
+        ElMessage.success(t('success.deleted'));
+      } catch {
+        // 用户取消
+      }
+      break;
+  }
+};
+
+const handleMoveServer = async (server: MqttServer) => {
+  const currentGroupId = serverStore.getGroupIdForServer(server.id);
+  movingServer.value = server;
+  movingTargetGroupId.value = currentGroupId ?? "__ungrouped__";
+  showMoveServerDialog.value = true;
+};
+
+const handleConfirmMoveServer = () => {
+  if (!movingServer.value?.id) return;
+
+  serverStore.assignServerToGroup(
+    movingServer.value.id,
+    movingTargetGroupId.value === "__ungrouped__" ? null : movingTargetGroupId.value
+  );
+  showMoveServerDialog.value = false;
+  movingServer.value = null;
+  ElMessage.success(t('success.saved'));
 };
 
 // 版本号点击处理
@@ -642,6 +918,73 @@ const handleConfirmSubscription = async () => {
   gap: 2px;
 }
 
+.server-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+
+  &:hover {
+    background-color: var(--sidebar-hover);
+
+    .group-more-btn {
+      opacity: 1;
+    }
+  }
+}
+
+.group-header--static {
+  cursor: default;
+
+  &:hover {
+    background-color: transparent;
+  }
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.group-folder-icon {
+  font-size: 13px;
+  color: var(--app-text-secondary);
+}
+
+.group-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text-secondary);
+}
+
+.group-count {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+  background: var(--sidebar-active);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 18px;
+}
+
+.group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .server-item {
   display: flex;
   align-items: center;
@@ -662,6 +1005,10 @@ const handleConfirmSubscription = async () => {
   &.active {
     background-color: var(--sidebar-active);
   }
+}
+
+.server-item--nested {
+  margin-left: 18px;
 }
 
 .server-info {
@@ -686,6 +1033,14 @@ const handleConfirmSubscription = async () => {
 .more-btn {
   opacity: 0;
   transition: opacity 0.2s ease;
+}
+
+.group-more-btn {
+  flex-shrink: 0;
+}
+
+.collapse-icon--group {
+  font-size: 11px;
 }
 
 .subscription-item {
@@ -828,5 +1183,10 @@ const handleConfirmSubscription = async () => {
       color: var(--app-text-secondary);
     }
   }
+}
+
+.move-server-name {
+  color: var(--app-text-color);
+  font-weight: 500;
 }
 </style>
