@@ -46,6 +46,14 @@
             </div>
           </el-form-item>
 
+          <el-form-item
+            v-if="formData.protocol === 'ws' || formData.protocol === 'wss'"
+            :label="$t('server.websocketPath')"
+            prop="websocket_path"
+          >
+            <el-input v-model="formData.websocket_path" :placeholder="$t('server.websocketPathPlaceholder')" />
+          </el-form-item>
+
           <el-form-item :label="$t('server.protocol')" prop="protocol_version">
             <el-radio-group v-model="formData.protocol_version">
               <el-radio value="3.1.1">MQTT 3.1.1</el-radio>
@@ -92,46 +100,73 @@
             <el-switch v-model="formData.clean_session" />
           </el-form-item>
 
-          <el-form-item :label="$t('server.useTls')" v-if="formData.protocol === 'mqtts' || formData.protocol === 'wss'">
-            <el-switch v-model="formData.use_tls" disabled />
+          <el-form-item :label="$t('server.useTls')">
+            <el-switch v-model="formData.use_tls" />
           </el-form-item>
 
-          <template v-if="formData.protocol === 'mqtts' || formData.protocol === 'wss'">
-            <el-form-item :label="$t('server.tls.caCert')" prop="ca_cert">
-              <el-input
-                v-model="formData.ca_cert"
-                type="textarea"
-                :rows="3"
-                :placeholder="$t('server.tls.caCertPlaceholder')"
-              />
-            </el-form-item>
+          <template v-if="showTlsSection">
+            <div class="tls-section">
+              <div class="tls-section__title">{{ $t('server.tls.title') }}</div>
 
-            <el-form-item :label="$t('server.tls.clientCert')" prop="client_cert">
-              <el-input
-                v-model="formData.client_cert"
-                type="textarea"
-                :rows="3"
-                :placeholder="$t('server.tls.clientCertPlaceholder')"
-              />
-            </el-form-item>
+              <el-form-item :label="$t('server.tls.sslSecure')" prop="ssl_secure">
+                <div class="tls-switch-row">
+                  <el-switch v-model="formData.ssl_secure" />
+                  <span class="form-hint">{{ $t('server.tls.sslSecureHint') }}</span>
+                </div>
+              </el-form-item>
 
-            <el-form-item :label="$t('server.tls.clientKey')" prop="client_key">
-              <el-input
-                v-model="formData.client_key"
-                type="textarea"
-                :rows="3"
-                :placeholder="$t('server.tls.clientKeyPlaceholder')"
-              />
-            </el-form-item>
+              <el-form-item :label="$t('server.tls.alpn')" prop="alpn">
+                <el-input
+                  v-model="formData.alpn"
+                  :placeholder="$t('server.tls.alpnPlaceholder')"
+                />
+              </el-form-item>
 
-            <el-form-item :label="$t('server.tls.keyPassword')" prop="client_key_password">
-              <el-input
-                v-model="formData.client_key_password"
-                type="password"
-                :placeholder="$t('server.tls.keyPasswordPlaceholder')"
-                show-password
-              />
-            </el-form-item>
+              <el-form-item :label="$t('server.tls.certificate')" prop="certificate_type">
+                <el-radio-group v-model="formData.certificate_type">
+                  <el-radio value="ca_signed">{{ $t('server.tls.certificateTypes.caSigned') }}</el-radio>
+                  <el-radio value="self_signed">{{ $t('server.tls.certificateTypes.selfSigned') }}</el-radio>
+                </el-radio-group>
+              </el-form-item>
+
+              <template v-if="showCertificateFields">
+                <el-form-item :label="$t('server.tls.caCert')" prop="ca_cert">
+                  <el-input
+                    v-model="formData.ca_cert"
+                    type="textarea"
+                    :rows="3"
+                    :placeholder="$t('server.tls.caCertPlaceholder')"
+                  />
+                </el-form-item>
+
+                <el-form-item :label="$t('server.tls.clientCert')" prop="client_cert">
+                  <el-input
+                    v-model="formData.client_cert"
+                    type="textarea"
+                    :rows="3"
+                    :placeholder="$t('server.tls.clientCertPlaceholder')"
+                  />
+                </el-form-item>
+
+                <el-form-item :label="$t('server.tls.clientKey')" prop="client_key">
+                  <el-input
+                    v-model="formData.client_key"
+                    type="textarea"
+                    :rows="3"
+                    :placeholder="$t('server.tls.clientKeyPlaceholder')"
+                  />
+                </el-form-item>
+
+                <el-form-item :label="$t('server.tls.keyPassword')" prop="client_key_password">
+                  <el-input
+                    v-model="formData.client_key_password"
+                    type="password"
+                    :placeholder="$t('server.tls.keyPasswordPlaceholder')"
+                    show-password
+                  />
+                </el-form-item>
+              </template>
+            </div>
           </template>
         </el-tab-pane>
       </el-tabs>
@@ -153,7 +188,7 @@ import type { FormInstance, FormRules } from "element-plus";
 import { RefreshRight } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useServerStore } from "@/stores/server";
-import type { MqttServer } from "@/types/mqtt";
+import type { MqttCertificateType, MqttServer } from "@/types/mqtt";
 
 const { t } = useI18n();
 
@@ -181,6 +216,7 @@ interface FormData {
   protocol: "mqtt" | "mqtts" | "ws" | "wss";
   host: string;
   port: number;
+  websocket_path?: string;
   protocol_version: "3.1.1" | "5.0";
   username?: string;
   password?: string;
@@ -188,6 +224,9 @@ interface FormData {
   keep_alive: number;
   clean_session: boolean;
   use_tls: boolean;
+  ssl_secure: boolean;
+  alpn: string;
+  certificate_type: MqttCertificateType;
   ca_cert?: string;
   client_cert?: string;
   client_key?: string;
@@ -199,6 +238,7 @@ const formData = reactive<FormData>({
   protocol: "mqtt",
   host: "",
   port: 1883,
+  websocket_path: "",
   protocol_version: "5.0",
   username: "",
   password: "",
@@ -206,31 +246,63 @@ const formData = reactive<FormData>({
   keep_alive: 60,
   clean_session: true,
   use_tls: false,
+  ssl_secure: true,
+  alpn: "",
+  certificate_type: "ca_signed",
   ca_cert: "",
   client_cert: "",
   client_key: "",
   client_key_password: "",
 });
 
+const isTlsCapableProtocol = computed(() => formData.protocol === "mqtts" || formData.protocol === "wss");
+const showTlsSection = computed(() => isTlsCapableProtocol.value || formData.use_tls);
+const showCertificateFields = computed(() => formData.certificate_type === "self_signed");
+
 // 协议变化时自动更新端口和TLS
-watch(() => formData.protocol, (newProtocol) => {
+watch(() => formData.protocol, (newProtocol, oldProtocol) => {
   switch (newProtocol) {
     case "mqtt":
-      formData.port = 1883;
+      if (oldProtocol === "mqtts" || oldProtocol === "mqtt" || formData.port === 8883) {
+        formData.port = 1883;
+      }
       formData.use_tls = false;
       break;
     case "mqtts":
-      formData.port = 8883;
+      if (oldProtocol === "mqtt" || oldProtocol === "mqtts" || formData.port === 1883) {
+        formData.port = 8883;
+      }
       formData.use_tls = true;
       break;
     case "ws":
-      formData.port = 8083;
+      if (oldProtocol === "wss" || oldProtocol === "ws" || formData.port === 8084) {
+        formData.port = 8083;
+      }
       formData.use_tls = false;
       break;
     case "wss":
-      formData.port = 8084;
+      if (oldProtocol === "ws" || oldProtocol === "wss" || formData.port === 8083) {
+        formData.port = 8084;
+      }
       formData.use_tls = true;
       break;
+  }
+});
+
+watch(() => formData.use_tls, (useTls) => {
+  if (useTls) {
+    if (formData.protocol === "mqtt") {
+      formData.protocol = "mqtts";
+    } else if (formData.protocol === "ws") {
+      formData.protocol = "wss";
+    }
+    return;
+  }
+
+  if (formData.protocol === "mqtts") {
+    formData.protocol = "mqtt";
+  } else if (formData.protocol === "wss") {
+    formData.protocol = "ws";
   }
 });
 
@@ -256,7 +328,9 @@ watch(
         formData.id = props.server.id;
         formData.name = props.server.name;
         formData.host = props.server.host;
+        formData.protocol = props.server.protocol || (props.server.use_tls ? "mqtts" : "mqtt");
         formData.port = props.server.port;
+        formData.websocket_path = props.server.websocket_path || "";
         formData.protocol_version = props.server.protocol_version;
         formData.username = props.server.username || "";
         formData.password = props.server.password || "";
@@ -264,12 +338,13 @@ watch(
         formData.keep_alive = props.server.keep_alive;
         formData.clean_session = props.server.clean_session;
         formData.use_tls = props.server.use_tls;
+        formData.ssl_secure = props.server.ssl_secure ?? true;
+        formData.alpn = props.server.alpn || "";
+        formData.certificate_type = props.server.certificate_type === "self_signed" ? "self_signed" : "ca_signed";
         formData.ca_cert = props.server.ca_cert || "";
         formData.client_cert = props.server.client_cert || "";
         formData.client_key = props.server.client_key || "";
         formData.client_key_password = props.server.client_key_password || "";
-        // 根据 use_tls 推断协议
-        formData.protocol = props.server.use_tls ? "mqtts" : "mqtt";
       } else {
         // 新增模式：重置表单
         formData.id = undefined;
@@ -277,6 +352,7 @@ watch(
         formData.protocol = "mqtt";
         formData.host = "";
         formData.port = 1883;
+        formData.websocket_path = "";
         formData.protocol_version = "5.0";
         formData.username = "";
         formData.password = "";
@@ -284,6 +360,9 @@ watch(
         formData.keep_alive = 60;
         formData.clean_session = true;
         formData.use_tls = false;
+        formData.ssl_secure = true;
+        formData.alpn = "";
+        formData.certificate_type = "ca_signed";
         formData.ca_cert = "";
         formData.client_cert = "";
         formData.client_key = "";
@@ -307,6 +386,8 @@ const handleSave = async () => {
     name: formData.name,
     host: formData.host,
     port: formData.port,
+    protocol: formData.protocol,
+    websocket_path: formData.websocket_path || undefined,
     protocol_version: formData.protocol_version,
     username: formData.username || undefined,
     password: formData.password || undefined,
@@ -314,6 +395,9 @@ const handleSave = async () => {
     keep_alive: formData.keep_alive,
     clean_session: formData.clean_session,
     use_tls: formData.use_tls,
+    ssl_secure: formData.ssl_secure,
+    alpn: formData.alpn.trim() || undefined,
+    certificate_type: formData.certificate_type,
     ca_cert: formData.ca_cert || undefined,
     client_cert: formData.client_cert || undefined,
     client_key: formData.client_key || undefined,
@@ -371,7 +455,6 @@ const handleSave = async () => {
 }
 
 .form-hint {
-  margin-left: 8px;
   font-size: 12px;
   color: var(--app-text-secondary);
 }
@@ -385,5 +468,25 @@ const handleSave = async () => {
 .unit-label {
   font-size: 13px;
   color: var(--app-text-secondary);
+}
+
+.tls-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tls-section__title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-text-primary);
+}
+
+.tls-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
 }
 </style>

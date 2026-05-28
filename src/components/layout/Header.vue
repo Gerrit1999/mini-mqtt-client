@@ -92,8 +92,15 @@ const connecting = ref(false);
 
 // 格式化服务器地址为 协议://host:port 格式
 const formatServerAddress = (server: MqttServer): string => {
-  const protocol = server.use_tls ? "mqtts" : "mqtt";
-  return `${protocol}://${server.host}:${server.port}`;
+  const protocol = server.protocol ?? (server.use_tls ? "mqtts" : "mqtt");
+  const address = `${protocol}://${server.host}:${server.port}`;
+
+  if ((protocol === "ws" || protocol === "wss") && server.websocket_path?.trim()) {
+    const path = server.websocket_path.trim();
+    return path.startsWith("/") ? `${address}${path}` : `${address}/${path}`;
+  }
+
+  return address;
 };
 
 const activeServer = computed(() => serverStore.activeServer);

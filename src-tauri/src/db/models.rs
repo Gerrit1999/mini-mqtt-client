@@ -1,11 +1,23 @@
 use serde::{Deserialize, Serialize};
 
+fn default_ssl_secure() -> bool {
+    true
+}
+
+fn default_certificate_type() -> String {
+    "ca_signed".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MqttServer {
     pub id: Option<i64>,
     pub name: String,
     pub host: String,
     pub port: i32,
+    #[serde(default)]
+    pub protocol: Option<String>,
+    #[serde(default)]
+    pub websocket_path: Option<String>,
     pub protocol_version: String,
     pub username: Option<String>,
     pub password: Option<String>,
@@ -13,6 +25,12 @@ pub struct MqttServer {
     pub keep_alive: i32,
     pub clean_session: bool,
     pub use_tls: bool,
+    #[serde(default = "default_ssl_secure")]
+    pub ssl_secure: bool,
+    #[serde(default)]
+    pub alpn: Option<String>,
+    #[serde(default = "default_certificate_type")]
+    pub certificate_type: String,
     pub ca_cert: Option<String>,
     pub client_cert: Option<String>,
     pub client_key: Option<String>,

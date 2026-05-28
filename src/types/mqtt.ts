@@ -1,11 +1,16 @@
 /**
  * MQTT Server 配置
  */
+export type MqttTransportProtocol = "mqtt" | "mqtts" | "ws" | "wss";
+export type MqttCertificateType = "ca_signed" | "self_signed";
+
 export interface MqttServer {
   id?: number;
   name: string;
   host: string;
   port: number;
+  protocol?: MqttTransportProtocol;
+  websocket_path?: string;
   protocol_version: "3.1.1" | "5.0";
   username?: string;
   password?: string;
@@ -13,6 +18,9 @@ export interface MqttServer {
   keep_alive: number;
   clean_session: boolean;
   use_tls: boolean;
+  ssl_secure?: boolean;
+  alpn?: string;
+  certificate_type?: MqttCertificateType;
   ca_cert?: string;
   client_cert?: string;
   client_key?: string;
@@ -158,6 +166,8 @@ export function createDefaultServer(): MqttServer {
     name: "",
     host: "",
     port: 1883,
+    protocol: "mqtt",
+    websocket_path: "",
     protocol_version: "5.0",
     username: "",
     password: "",
@@ -165,6 +175,9 @@ export function createDefaultServer(): MqttServer {
     keep_alive: 60,
     clean_session: true,
     use_tls: false,
+    ssl_secure: true,
+    alpn: "",
+    certificate_type: "ca_signed",
     ca_cert: "",
     client_cert: "",
     client_key: "",

@@ -25,7 +25,7 @@ tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-rumqttc = { version = "0.24", features = ["use-rustls"] }
+rumqttc = { version = "0.24", features = ["use-rustls", "websocket"] }
 tokio = { version = "1", features = ["full"] }
 thiserror = "2.0"
 chrono = { version = "0.4", features = ["serde"] }

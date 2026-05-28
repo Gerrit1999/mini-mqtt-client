@@ -272,6 +272,8 @@ server:
   host: Host
   hostPlaceholder: "e.g., localhost or 192.168.1.1"
   port: Port
+  websocketPath: Path
+  websocketPathPlaceholder: "e.g., /mqtt"
   clientId: Client ID
   clientIdPlaceholder: Leave empty to auto-generate
   protocol: Protocol Version
@@ -286,6 +288,14 @@ server:
   advanced: Advanced Settings
   tls:
     title: TLS Settings
+    sslSecure: SSL Secure
+    sslSecureHint: Disable to skip server certificate verification
+    alpn: ALPN
+    alpnPlaceholder: "e.g., mqtt, x-amzn-mqtt-ca"
+    certificate: Certificate
+    certificateTypes:
+      caSigned: CA signed server certificate
+      selfSigned: CA or self signed certificates
     caCert: CA Certificate
     caCertPlaceholder: Paste PEM format CA certificate
     clientCert: Client Certificate

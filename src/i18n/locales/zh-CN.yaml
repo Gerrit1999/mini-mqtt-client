@@ -272,6 +272,8 @@ server:
   host: 主机
   hostPlaceholder: 例如：localhost 或 192.168.1.1
   port: 端口
+  websocketPath: 路径
+  websocketPathPlaceholder: 例如：/mqtt
   clientId: Client ID
   clientIdPlaceholder: 留空则自动生成
   protocol: 协议版本
@@ -286,6 +288,14 @@ server:
   advanced: 高级设置
   tls:
     title: TLS 设置
+    sslSecure: SSL Secure
+    sslSecureHint: 关闭后将跳过服务端证书校验
+    alpn: ALPN
+    alpnPlaceholder: 例如：mqtt、x-amzn-mqtt-ca
+    certificate: 证书类型
+    certificateTypes:
+      caSigned: CA 签发服务端证书
+      selfSigned: CA 或自签名证书
     caCert: CA 证书
     caCertPlaceholder: 粘贴 PEM 格式的 CA 证书
     clientCert: 客户端证书
