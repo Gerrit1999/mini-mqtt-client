@@ -114,82 +114,77 @@
         </el-empty>
       </div>
 
-      <FixedSizeList
-        v-else
-        ref="virtualListRef"
-        class-name="message-virtual-window"
-        :data="filteredMessages"
-        :total="filteredMessages.length"
-        :height="virtualListHeight"
-        :item-size="MESSAGE_ITEM_HEIGHT"
-      >
-        <template #default="{ data, index, style }">
-          <div :style="style" class="message-row">
-            <div
-              v-for="msg in [data[index]]"
-              :key="msg.seq ?? msg.id ?? msg.timestamp"
-              class="message-item"
-              :class="[msg.direction, { 'has-error': msg.scriptError }]"
-              @click="showDetail(msg)"
-            >
-              <div class="message-header">
-                <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError }]">
-                  <el-icon v-if="msg.direction === 'publish'"><Top /></el-icon>
-                  <el-icon v-else><Bottom /></el-icon>
-                  {{ msg.direction === "publish" ? "PUB" : "RCV" }}
-                </span>
-                <span
-                  class="msg-topic text-ellipsis"
-                  :style="getTopicColor(msg) ? { color: getTopicColor(msg) } : {}"
+      <div v-else class="message-items">
+        <div
+          v-for="msg in filteredMessages"
+          :key="getMessageKey(msg)"
+          class="message-row"
+        >
+          <div
+            class="message-item"
+            :class="[msg.direction, { 'has-error': msg.scriptError }]"
+            @click="showDetail(msg)"
+          >
+            <div class="message-header">
+              <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError }]">
+                <el-icon v-if="msg.direction === 'publish'"><Top /></el-icon>
+                <el-icon v-else><Bottom /></el-icon>
+                {{ msg.direction === "publish" ? "PUB" : "RCV" }}
+              </span>
+              <span
+                class="msg-topic text-ellipsis"
+                :style="getTopicColor(msg) ? { color: getTopicColor(msg) } : {}"
+              >
+                <span v-if="getTopicColor(msg)" class="topic-color-dot" :style="{ backgroundColor: getTopicColor(msg) }" />
+                <span class="topic-text" v-html="highlightText(msg.topic)" />
+              </span>
+              <div class="msg-meta">
+                <el-tag
+                  v-if="msg.scriptError"
+                  size="small"
+                  effect="plain"
+                  type="danger"
+                  class="error-tag"
                 >
-                  <span v-if="getTopicColor(msg)" class="topic-color-dot" :style="{ backgroundColor: getTopicColor(msg) }" />
-                  <span class="topic-text" v-html="highlightText(msg.topic)" />
-                </span>
-                <div class="msg-meta">
-                  <el-tag
-                    v-if="msg.scriptError"
-                    size="small"
-                    effect="plain"
-                    type="danger"
-                    class="error-tag"
-                  >
-                    {{ $t('script.testError') }}
-                  </el-tag>
-                  <el-tag
-                    size="small"
-                    effect="plain"
-                    :type="getFormatTagType(getMessageFormat(msg))"
-                    class="format-tag"
-                  >
-                    {{ getFormatLabel(getMessageFormat(msg), msg) }}
-                  </el-tag>
-                  <el-tag size="small" effect="plain">Q{{ msg.qos }}</el-tag>
-                  <el-tag v-if="msg.retain" size="small" type="warning" effect="plain">
-                    R
-                  </el-tag>
-                  <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
-                </div>
-              </div>
-              <div v-if="msg.scriptError" class="message-error">
-                <el-icon><WarningFilled /></el-icon>
-                <span>{{ msg.scriptError }}</span>
-              </div>
-              <div class="message-body">
-                <MessagePayload
-                  :payload="msg.payload"
-                  :preview="true"
-                  :payload-type="msg.payload_type"
-                  :format-json="formatJsonPayload"
-                  :highlight-keyword="searchKeyword.trim()"
-                  :search-match-case="searchMatchCase"
-                  :search-whole-word="searchWholeWord"
-                  :search-use-regex="searchUseRegex"
-                />
+                  {{ $t('script.testError') }}
+                </el-tag>
+                <el-tag
+                  size="small"
+                  effect="plain"
+                  :type="getFormatTagType(getMessageFormat(msg))"
+                  class="format-tag"
+                >
+                  {{ getFormatLabel(getMessageFormat(msg), msg) }}
+                </el-tag>
+                <el-tag size="small" effect="plain">Q{{ msg.qos }}</el-tag>
+                <el-tag v-if="msg.retain" size="small" type="warning" effect="plain">
+                  R
+                </el-tag>
+                <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
               </div>
             </div>
+            <div v-if="msg.scriptError" class="message-error">
+              <el-icon><WarningFilled /></el-icon>
+              <span>{{ msg.scriptError }}</span>
+            </div>
+            <div
+              class="message-body"
+              :class="{ 'message-body--expanded': formatJsonPayload && getMessageFormat(msg) === 'json' }"
+            >
+              <MessagePayload
+                :payload="msg.payload"
+                :preview="true"
+                :payload-type="msg.payload_type"
+                :format-json="formatJsonPayload"
+                :highlight-keyword="searchKeyword.trim()"
+                :search-match-case="searchMatchCase"
+                :search-whole-word="searchWholeWord"
+                :search-use-regex="searchUseRegex"
+              />
+            </div>
           </div>
-        </template>
-      </FixedSizeList>
+        </div>
+      </div>
     </div>
 
     <!-- 消息详情对话框 -->
@@ -224,7 +219,12 @@
             {{ formatFullTime(selectedMessage.timestamp) }}
           </el-descriptions-item>
           <el-descriptions-item :label="$t('publish.topic')" :span="3">
-            <code class="topic-code">{{ selectedMessage.topic }}</code>
+            <el-tooltip :content="$t('common.copy')" placement="top">
+              <code
+                class="topic-code topic-code--copyable"
+                @click="copyTopic"
+              >{{ selectedMessage.topic }}</code>
+            </el-tooltip>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -276,7 +276,7 @@ import {
   Promotion,
   WarningFilled,
 } from "@element-plus/icons-vue";
-import { ElMessage, ElMessageBox, FixedSizeList } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useServerStore } from "@/stores/server";
@@ -310,46 +310,13 @@ const textDecoder = new TextDecoder();
 const derivedMessageCache = new WeakMap<MqttMessage, DerivedMessageMeta>();
 
 const listViewport = ref<HTMLElement>();
-const virtualListRef = ref<any>();
 const HISTORY_PAGE_SIZE = 200;
-const MESSAGE_ITEM_HEIGHT = 148;
-const LOAD_MORE_ROW_HEIGHT = 42;
-const virtualListHeight = ref(MESSAGE_ITEM_HEIGHT * 2);
-let viewportResizeObserver: ResizeObserver | null = null;
-
-function resolveElement(target: unknown): HTMLElement | null {
-  if (target instanceof HTMLElement) return target;
-  if (
-    typeof target === "object" &&
-    target !== null &&
-    "value" in target &&
-    (target as { value?: unknown }).value instanceof HTMLElement
-  ) {
-    return (target as { value: HTMLElement }).value;
-  }
-  return null;
-}
 
 function getScrollWindow(): HTMLElement | null {
-  return resolveElement(virtualListRef.value?.windowRef);
-}
-
-function syncVirtualListHeight() {
-  const viewport = listViewport.value;
-  if (!viewport) return;
-
-  const availableHeight =
-    viewport.clientHeight - (showLoadMore.value ? LOAD_MORE_ROW_HEIGHT : 0);
-  virtualListHeight.value = Math.max(MESSAGE_ITEM_HEIGHT, availableHeight);
+  return listViewport.value ?? null;
 }
 
 function scrollToBottom() {
-  const total = filteredMessages.value.length;
-  if (total > 0) {
-    virtualListRef.value?.scrollToItem(total - 1);
-    return;
-  }
-
   const el = getScrollWindow();
   if (el) {
     el.scrollTop = el.scrollHeight;
@@ -371,21 +338,10 @@ function handleMessagesFlushed(event: Event) {
 
 onMounted(() => {
   window.addEventListener("mqtt-messages-flushed", handleMessagesFlushed);
-  viewportResizeObserver = new ResizeObserver(() => {
-    syncVirtualListHeight();
-  });
-  if (listViewport.value) {
-    viewportResizeObserver.observe(listViewport.value);
-  }
-  nextTick(() => {
-    syncVirtualListHeight();
-  });
 });
 
 onUnmounted(() => {
   window.removeEventListener("mqtt-messages-flushed", handleMessagesFlushed);
-  viewportResizeObserver?.disconnect();
-  viewportResizeObserver = null;
 });
 
 // 获取消息的 topic 颜色
@@ -818,7 +774,6 @@ function handleFilterCommand(command: string) {
 async function loadInitialHistory(serverId: number) {
   await messageStore.fetchMessageHistory(serverId, HISTORY_PAGE_SIZE);
   await nextTick();
-  syncVirtualListHeight();
 
   if (appStore.autoScroll) {
     scrollToBottom();
@@ -835,7 +790,6 @@ async function handleLoadMore() {
 
   await messageStore.loadMoreMessageHistory(serverId, HISTORY_PAGE_SIZE);
   await nextTick();
-  syncVirtualListHeight();
 
   if (el) {
     el.scrollTop = previousScrollTop + (el.scrollHeight - previousScrollHeight);
@@ -874,6 +828,16 @@ function copyPayload() {
       : getDerivedMessageMeta(selectedMessage.value).payloadText;
     navigator.clipboard.writeText(payload);
     ElMessage.success(t('success.copied'));
+  }
+}
+
+async function copyTopic() {
+  if (!selectedMessage.value) return;
+  try {
+    await navigator.clipboard.writeText(selectedMessage.value.topic);
+    ElMessage.success(t('success.copied'));
+  } catch {
+    ElMessage.error(t('errors.copyFailed'));
   }
 }
 
@@ -1036,11 +1000,6 @@ watch(
   }
 );
 
-watch(showLoadMore, () => {
-  nextTick(() => {
-    syncVirtualListHeight();
-  });
-});
 </script>
 
 <style scoped lang="scss">
@@ -1103,7 +1062,8 @@ watch(showLoadMore, () => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .load-more-row {
@@ -1113,27 +1073,25 @@ watch(showLoadMore, () => {
   flex-shrink: 0;
 }
 
-:deep(.message-virtual-window) {
+.message-items {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  overflow-x: hidden !important;
-  padding-right: 2px;
 }
 
 .message-row {
   width: 100%;
-  height: 100%;
-  padding: 0 8px 8px;
+  padding: 0 8px 4px;
   box-sizing: border-box;
 }
 
 .message-item {
-  padding: 10px 12px;
+  padding: 7px 10px;
   border-radius: 8px;
   background-color: var(--sidebar-bg);
   border: 1px solid var(--app-border-color);
   cursor: pointer;
   transition: all 0.2s ease;
-  height: 100%;
   box-sizing: border-box;
   overflow: hidden;
 
@@ -1154,8 +1112,8 @@ watch(showLoadMore, () => {
 .message-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
 .msg-direction {
@@ -1164,7 +1122,7 @@ watch(showLoadMore, () => {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  padding: 2px 8px;
+  padding: 2px 7px;
   border-radius: 4px;
   flex-shrink: 0;
 
@@ -1215,7 +1173,7 @@ watch(showLoadMore, () => {
 .msg-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -1229,22 +1187,27 @@ watch(showLoadMore, () => {
 .msg-time {
   font-size: 11px;
   color: var(--app-text-secondary);
-  margin-left: 4px;
+  margin-left: 2px;
 }
 
 .message-body {
-  margin-top: 6px;
-  height: 64px;
+  margin-top: 2px;
+  max-height: 44px;
   overflow: hidden;
+}
+
+.message-body--expanded {
+  max-height: none;
+  overflow: visible;
 }
 
 .message-error {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
-  margin-top: 6px;
-  margin-bottom: 6px;
+  padding: 3px 6px;
+  margin-top: 3px;
+  margin-bottom: 3px;
   background-color: var(--el-color-danger-light-9);
   border-radius: 4px;
   font-size: 12px;
@@ -1318,5 +1281,14 @@ watch(showLoadMore, () => {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 12px;
+}
+
+.topic-code--copyable {
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    background-color: var(--sidebar-hover);
+  }
 }
 </style>

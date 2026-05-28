@@ -1,12 +1,12 @@
 <template>
-  <div class="message-payload" :class="{ preview, expanded: !preview }">
+  <div class="message-payload" :class="{ preview, expanded: !preview, 'full-preview': isFormattedJsonPreview }">
     <!-- JSON 格式 -->
     <div v-if="effectiveFormat === 'json'" class="payload-content json-content">
       <pre
         v-if="shouldHighlight"
-        v-html="highlightText(preview ? displayPayload : displayPayloadWithLineBreaks)"
+        v-html="highlightText(preview ? previewDisplayPayload : detailDisplayPayload)"
       />
-      <pre v-else>{{ preview ? displayPayload : displayPayloadWithLineBreaks }}</pre>
+      <pre v-else>{{ preview ? previewDisplayPayload : detailDisplayPayload }}</pre>
     </div>
 
     <!-- 二进制/HEX 格式 -->
@@ -37,9 +37,9 @@
     <div v-else class="payload-content text-content">
       <pre
         v-if="shouldHighlight"
-        v-html="highlightText(preview ? displayPayload : displayPayloadWithLineBreaks)"
+        v-html="highlightText(preview ? previewDisplayPayload : detailDisplayPayload)"
       />
-      <pre v-else>{{ preview ? displayPayload : displayPayloadWithLineBreaks }}</pre>
+      <pre v-else>{{ preview ? previewDisplayPayload : detailDisplayPayload }}</pre>
     </div>
   </div>
 </template>
@@ -158,8 +158,16 @@ const displayPayload = computed(() => {
   return formattedJsonPayload.value;
 });
 
+const isFormattedJsonPreview = computed(
+  () => Boolean(props.preview) && effectiveFormat.value === "json" && Boolean(props.formatJson)
+);
+
+const previewDisplayPayload = computed(() => {
+  return displayPayload.value;
+});
+
 // 带换行符标记的 payload（用于详情展示）
-const displayPayloadWithLineBreaks = computed(() => {
+const detailDisplayPayload = computed(() => {
   const str = displayPayload.value;
   // 在换行符前添加 ↵ 符号标记原始换行位置
   return str.replace(/\r?\n/g, '↵$&');
@@ -275,7 +283,7 @@ defineExpose({
 .message-payload {
   font-family: "Fira Code", "JetBrains Mono", "Consolas", monospace;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .message-payload.preview {
@@ -289,7 +297,19 @@ defineExpose({
     display: -webkit-box;
     overflow: hidden;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
+  }
+}
+
+.message-payload.preview.full-preview {
+  .payload-content {
+    overflow: visible;
+  }
+
+  pre {
+    display: block;
+    overflow: visible;
+    -webkit-line-clamp: unset;
   }
 }
 
@@ -301,7 +321,7 @@ defineExpose({
 }
 
 .payload-content {
-  padding: 8px 10px;
+  padding: 4px 6px;
   background-color: var(--sidebar-bg);
   border: 1px solid var(--app-border-color);
   border-radius: 6px;

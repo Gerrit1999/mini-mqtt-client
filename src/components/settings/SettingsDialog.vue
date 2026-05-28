@@ -2,17 +2,20 @@
   <el-dialog
     v-model="dialogVisible"
     :title="$t('settings.title')"
-    width="500px"
+    width="640px"
     :close-on-click-modal="false"
+    class="settings-dialog"
     @open="loadSettings"
   >
     <div class="settings-content">
       <!-- 主题设置 -->
       <div class="setting-section">
-        <div class="setting-title">{{ $t('settings.theme.title') }}</div>
-        <div class="setting-desc">{{ $t('settings.theme.desc') }}</div>
-        <el-radio-group 
-          v-model="currentTheme" 
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.theme.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.theme.desc') }}</div>
+        </div>
+        <el-radio-group
+          v-model="currentTheme"
           @change="(val: string | number | boolean | undefined) => handleThemeChange(val as Theme)"
           class="theme-radio-group"
         >
@@ -33,10 +36,12 @@
 
       <!-- 语言设置 -->
       <div class="setting-section">
-        <div class="setting-title">{{ $t('settings.language.title') }}</div>
-        <div class="setting-desc">{{ $t('settings.language.desc') }}</div>
-        <el-radio-group 
-          v-model="currentLocale" 
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.language.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.language.desc') }}</div>
+        </div>
+        <el-radio-group
+          v-model="currentLocale"
           @change="(val: string | number | boolean | undefined) => handleLocaleChange(val as Locale)"
           class="theme-radio-group"
         >
@@ -55,18 +60,22 @@
 
       <!-- 数据存储设置 -->
       <div class="setting-section">
-        <div class="setting-title">{{ $t('settings.storage.title') }}</div>
-        <div class="setting-desc">{{ $t('settings.storage.desc') }}</div>
-        <div class="setting-row">
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.storage.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.storage.desc') }}</div>
+        </div>
+        <div class="path-group">
           <el-tooltip :content="currentDataPath" placement="top">
             <el-input :model-value="currentDataPath" readonly size="small" class="path-input" />
           </el-tooltip>
-          <el-tooltip :content="$t('settings.storage.changeLocation')" placement="top">
-            <el-button size="small" :icon="FolderOpened" @click="handleSelectFolder" />
-          </el-tooltip>
-          <el-tooltip :content="$t('settings.storage.copyPath')" placement="top">
-            <el-button size="small" :icon="CopyDocument" @click="handleCopyPath" />
-          </el-tooltip>
+          <div class="action-group">
+            <el-tooltip :content="$t('settings.storage.changeLocation')" placement="top">
+              <el-button size="small" :icon="FolderOpened" @click="handleSelectFolder" />
+            </el-tooltip>
+            <el-tooltip :content="$t('settings.storage.copyPath')" placement="top">
+              <el-button size="small" :icon="CopyDocument" @click="handleCopyPath" />
+            </el-tooltip>
+          </div>
         </div>
         <el-alert
           v-if="newDataPath"
@@ -83,10 +92,12 @@
 
       <!-- 消息设置 -->
       <div class="setting-section">
-        <div class="setting-title">{{ $t('settings.messages.title') }}</div>
-        <div class="setting-desc">{{ $t('settings.messages.desc') }}</div>
-        <div class="setting-row">
-          <span class="setting-label">{{ $t('settings.messages.limit') }}</span>
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.messages.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.messages.desc') }}</div>
+        </div>
+        <div class="setting-row message-setting-row">
+          <span class="setting-label setting-label--compact">{{ $t('settings.messages.limit') }}</span>
           <el-input-number
             v-model="currentMessageLimit"
             :min="MESSAGE_LIMIT_MIN"
@@ -101,35 +112,41 @@
 
       <!-- 日志设置 -->
       <div class="setting-section">
-        <div class="setting-title">{{ $t('settings.log.title') }}</div>
-        <div class="setting-desc">{{ $t('settings.log.desc') }}</div>
-        <div class="setting-row">
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.log.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.log.desc') }}</div>
+        </div>
+        <div class="path-group">
           <el-tooltip :content="logPath" placement="top">
             <el-input :model-value="logPath" readonly size="small" class="path-input" />
           </el-tooltip>
-          <el-tooltip :content="$t('settings.log.openDir')" placement="top">
-            <el-button size="small" :icon="FolderOpened" @click="handleOpenLogFolder" />
-          </el-tooltip>
-          <el-tooltip :content="$t('settings.log.clear')" placement="top">
-            <el-button size="small" :icon="Delete" type="danger" plain @click="handleClearLogs" />
-          </el-tooltip>
+          <div class="action-group">
+            <el-tooltip :content="$t('settings.log.openDir')" placement="top">
+              <el-button size="small" :icon="FolderOpened" @click="handleOpenLogFolder" />
+            </el-tooltip>
+            <el-tooltip :content="$t('settings.log.clear')" placement="top">
+              <el-button size="small" :icon="Delete" type="danger" plain @click="handleClearLogs" />
+            </el-tooltip>
+          </div>
         </div>
       </div>
 
       <!-- 检查更新 -->
       <div class="setting-section">
-        <div class="setting-title">{{ $t('settings.update.title') }}</div>
-        <div class="setting-desc">{{ $t('settings.update.currentVersion') }}: v{{ currentVersion }}</div>
-        <div class="setting-row">
-          <el-button 
-            size="small" 
-            :icon="Refresh" 
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.update.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.update.currentVersion') }}: v{{ currentVersion }}</div>
+        </div>
+        <div class="update-row">
+          <el-button
+            size="small"
+            :icon="Refresh"
             :loading="checkingUpdate"
             @click="handleCheckUpdate"
           >
             {{ $t('settings.update.check') }}
           </el-button>
-          <template v-if="updateInfo">
+          <div v-if="updateInfo" class="update-status">
             <el-tag v-if="updateInfo.hasUpdate" type="success" effect="plain">
               {{ $t('settings.update.newVersion') }}: {{ updateInfo.latestVersion }}
             </el-tag>
@@ -145,7 +162,7 @@
             >
               {{ $t('settings.update.download') }}
             </el-button>
-          </template>
+          </div>
         </div>
       </div>
     </div>
@@ -453,20 +470,36 @@ async function handleOpenRelease() {
 </script>
 
 <style scoped lang="scss">
+.settings-dialog {
+  :deep(.el-dialog__body) {
+    padding-top: 12px;
+  }
+}
+
 .settings-content {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .setting-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.setting-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .setting-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--app-text-color);
 }
@@ -474,12 +507,14 @@ async function handleOpenRelease() {
 .setting-desc {
   font-size: 12px;
   color: var(--app-text-secondary);
+  line-height: 1.4;
 }
 
 .setting-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .setting-label {
@@ -488,12 +523,27 @@ async function handleOpenRelease() {
   color: var(--app-text-secondary);
 }
 
+.setting-label--compact {
+  min-width: auto;
+}
+
+.message-setting-row {
+  gap: 14px;
+}
+
 .limit-input {
   width: 180px;
 }
 
+.path-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .path-input {
   flex: 1;
+  min-width: 0;
   
   :deep(input) {
     font-family: 'Fira Code', 'Consolas', monospace;
@@ -501,15 +551,46 @@ async function handleOpenRelease() {
   }
 }
 
+.action-group {
+  display: flex;
+  align-items: center;
+  gap: 0px;
+  flex-shrink: 0;
+}
+
 .migrate-alert {
   margin-top: 4px;
 }
 
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.update-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .theme-radio-group {
+  width: 100%;
+
   :deep(.el-radio-button__inner) {
     display: flex;
     align-items: center;
     gap: 4px;
   }
+}
+
+:deep(.el-radio-group) {
+  overflow: hidden;
+}
+
+:deep(.el-dialog__footer .el-button + .el-button) {
+  margin-left: 5px;
 }
 </style>
