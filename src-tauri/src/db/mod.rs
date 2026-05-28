@@ -13,6 +13,9 @@ use tauri::Manager;
 
 /// `CommandTemplate.server_id` for templates visible on every connection (not a real broker id).
 const GLOBAL_TEMPLATE_SERVER_ID: i64 = 0;
+pub const DEFAULT_MESSAGE_LIMIT: usize = 1000;
+pub const MIN_MESSAGE_LIMIT: usize = 100;
+pub const MAX_MESSAGE_LIMIT: usize = 10000;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct AppData {
@@ -42,11 +45,16 @@ pub struct AppData {
 /// 应用配置（用于存储自定义数据路径等）
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct AppConfig {
+    #[serde(default)]
     pub data_path: Option<String>,
+    #[serde(default)]
+    pub message_limit: Option<usize>,
 }
 
 pub struct Storage {
     data: RwLock<AppData>,
+    config: RwLock<AppConfig>,
+    config_path: PathBuf,
     file_path: PathBuf,
 }
 
@@ -59,26 +67,20 @@ impl Storage {
 
         fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
 
-        // 检查是否有自定义配置
         let config_path = app_dir.join("config.yaml");
-        let file_path = if config_path.exists() {
-            if let Ok(content) = fs::read_to_string(&config_path) {
-                if let Ok(config) = serde_yaml::from_str::<AppConfig>(&content) {
-                    if let Some(custom_path) = config.data_path {
-                        let custom_path = PathBuf::from(custom_path);
-                        if custom_path.exists()
-                            || custom_path.parent().map(|p| p.exists()).unwrap_or(false)
-                        {
-                            custom_path
-                        } else {
-                            app_dir.join("data.yaml")
-                        }
-                    } else {
-                        app_dir.join("data.yaml")
-                    }
-                } else {
-                    app_dir.join("data.yaml")
-                }
+        let config = if config_path.exists() {
+            fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|content| serde_yaml::from_str::<AppConfig>(&content).ok())
+                .unwrap_or_default()
+        } else {
+            AppConfig::default()
+        };
+
+        let file_path = if let Some(custom_path) = &config.data_path {
+            let custom_path = PathBuf::from(custom_path);
+            if custom_path.exists() || custom_path.parent().map(|p| p.exists()).unwrap_or(false) {
+                custom_path
             } else {
                 app_dir.join("data.yaml")
             }
@@ -95,6 +97,8 @@ impl Storage {
 
         Ok(Self {
             data: RwLock::new(data),
+            config: RwLock::new(config),
+            config_path,
             file_path,
         })
     }
@@ -104,10 +108,34 @@ impl Storage {
         &self.file_path
     }
 
+    pub fn get_message_limit(&self) -> usize {
+        sanitize_message_limit(self.config.read().message_limit)
+    }
+
+    pub fn set_message_limit(&self, limit: usize) -> Result<(), String> {
+        let mut config = self.config.write();
+        config.message_limit = Some(sanitize_message_limit(Some(limit)));
+        drop(config);
+        self.save_config()
+    }
+
+    pub fn set_data_path(&self, path: String) -> Result<(), String> {
+        let mut config = self.config.write();
+        config.data_path = Some(path);
+        drop(config);
+        self.save_config()
+    }
+
     fn save(&self) -> Result<(), String> {
         let data = self.data.read();
         let content = serde_yaml::to_string(&*data).map_err(|e| e.to_string())?;
         fs::write(&self.file_path, content).map_err(|e| e.to_string())
+    }
+
+    fn save_config(&self) -> Result<(), String> {
+        let config = self.config.read();
+        let content = serde_yaml::to_string(&*config).map_err(|e| e.to_string())?;
+        fs::write(&self.config_path, content).map_err(|e| e.to_string())
     }
 
     // ===== Server 操作 =====
@@ -219,12 +247,13 @@ impl Storage {
     }
 
     // ===== 消息操作 =====
-    pub fn get_messages(&self, server_id: i64, limit: usize) -> Vec<MessageHistory> {
+    pub fn get_messages(&self, server_id: i64, limit: usize, offset: usize) -> Vec<MessageHistory> {
         let data = self.data.read();
         data.messages
             .iter()
             .filter(|m| m.server_id == server_id)
             .rev()
+            .skip(offset)
             .take(limit)
             .cloned()
             .collect()
@@ -234,29 +263,11 @@ impl Storage {
         let mut data = self.data.write();
         data.next_message_id += 1;
         msg.id = Some(data.next_message_id);
-        msg.created_at = Some(chrono::Utc::now().to_rfc3339());
+        if msg.created_at.is_none() {
+            msg.created_at = Some(chrono::Utc::now().to_rfc3339());
+        }
         let result = msg.clone();
         data.messages.push(msg);
-
-        // 限制消息数量，每个server最多保存1000条
-        let server_id = result.server_id;
-        let count = data
-            .messages
-            .iter()
-            .filter(|m| m.server_id == server_id)
-            .count();
-        if count > 1000 {
-            let to_remove = count - 1000;
-            let mut removed = 0;
-            data.messages.retain(|m| {
-                if m.server_id == server_id && removed < to_remove {
-                    removed += 1;
-                    false
-                } else {
-                    true
-                }
-            });
-        }
 
         drop(data);
         self.save()?;
@@ -551,4 +562,10 @@ impl Storage {
         drop(data);
         self.save()
     }
+}
+
+fn sanitize_message_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_MESSAGE_LIMIT)
+        .clamp(MIN_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT)
 }

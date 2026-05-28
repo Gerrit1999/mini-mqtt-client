@@ -4,8 +4,14 @@
       <span class="panel-title">
         <el-icon><ChatDotRound /></el-icon>
         {{ $t('messages.title') }}
-        <el-tag size="small" type="info" effect="plain" v-if="messages.length > 0">
-          {{ messages.length }}
+        <el-tag
+          size="small"
+          type="info"
+          effect="plain"
+          v-if="messages.length > 0 || receivedCount > 0"
+          :title="$t('messages.countSummary')"
+        >
+          {{ messages.length }} / {{ receivedCount }}
         </el-tag>
       </span>
       <div class="header-actions">
@@ -90,86 +96,100 @@
       </div>
     </div>
 
-    <div class="message-scroll-wrapper">
-      <div class="message-container" ref="messageContainer" @scroll="handleScroll">
-        <div
-          v-for="msg in filteredMessages"
-          :key="msg.seq ?? msg.id ?? msg.timestamp"
-          class="message-item"
-          :class="[msg.direction, { 'has-error': msg.scriptError }]"
-          @click="showDetail(msg)"
+    <div class="message-scroll-wrapper" ref="listViewport">
+      <div v-if="showLoadMore" class="load-more-row">
+        <el-button
+          size="small"
+          text
+          :loading="messageStore.loadingMore"
+          :disabled="messageStore.loading || messageStore.loadingMore"
+          @click="handleLoadMore"
         >
-          <div class="message-header">
-            <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError }]">
-              <el-icon v-if="msg.direction === 'publish'"><Top /></el-icon>
-              <el-icon v-else><Bottom /></el-icon>
-              {{ msg.direction === "publish" ? "PUB" : "RCV" }}
-            </span>
-            <span
-              class="msg-topic text-ellipsis"
-              :style="getTopicColor(msg) ? { color: getTopicColor(msg) } : {}"
+          {{ messageStore.loading ? $t('messages.loadingHistory') : $t('messages.loadMore') }}
+        </el-button>
+      </div>
+
+      <div v-if="filteredMessages.length === 0" class="empty-state">
+        <el-empty :description="$t('messages.noMessages')" :image-size="60">
+        </el-empty>
+      </div>
+
+      <FixedSizeList
+        v-else
+        ref="virtualListRef"
+        class-name="message-virtual-window"
+        :data="filteredMessages"
+        :total="filteredMessages.length"
+        :height="virtualListHeight"
+        :item-size="MESSAGE_ITEM_HEIGHT"
+      >
+        <template #default="{ data, index, style }">
+          <div :style="style" class="message-row">
+            <div
+              v-for="msg in [data[index]]"
+              :key="msg.seq ?? msg.id ?? msg.timestamp"
+              class="message-item"
+              :class="[msg.direction, { 'has-error': msg.scriptError }]"
+              @click="showDetail(msg)"
             >
-              <span v-if="getTopicColor(msg)" class="topic-color-dot" :style="{ backgroundColor: getTopicColor(msg) }" />
-              <span class="topic-text" v-html="highlightText(msg.topic)" />
-            </span>
-            <div class="msg-meta">
-              <el-tag
-                v-if="msg.scriptError"
-                size="small"
-                effect="plain"
-                type="danger"
-                class="error-tag"
-              >
-                {{ $t('script.testError') }}
-              </el-tag>
-              <el-tag
-                size="small"
-                effect="plain"
-                :type="getFormatTagType(getMessageFormat(msg))"
-                class="format-tag"
-              >
-                {{ getFormatLabel(getMessageFormat(msg), msg) }}
-              </el-tag>
-              <el-tag size="small" effect="plain">Q{{ msg.qos }}</el-tag>
-              <el-tag v-if="msg.retain" size="small" type="warning" effect="plain">
-                R
-              </el-tag>
-              <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
+              <div class="message-header">
+                <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError }]">
+                  <el-icon v-if="msg.direction === 'publish'"><Top /></el-icon>
+                  <el-icon v-else><Bottom /></el-icon>
+                  {{ msg.direction === "publish" ? "PUB" : "RCV" }}
+                </span>
+                <span
+                  class="msg-topic text-ellipsis"
+                  :style="getTopicColor(msg) ? { color: getTopicColor(msg) } : {}"
+                >
+                  <span v-if="getTopicColor(msg)" class="topic-color-dot" :style="{ backgroundColor: getTopicColor(msg) }" />
+                  <span class="topic-text" v-html="highlightText(msg.topic)" />
+                </span>
+                <div class="msg-meta">
+                  <el-tag
+                    v-if="msg.scriptError"
+                    size="small"
+                    effect="plain"
+                    type="danger"
+                    class="error-tag"
+                  >
+                    {{ $t('script.testError') }}
+                  </el-tag>
+                  <el-tag
+                    size="small"
+                    effect="plain"
+                    :type="getFormatTagType(getMessageFormat(msg))"
+                    class="format-tag"
+                  >
+                    {{ getFormatLabel(getMessageFormat(msg), msg) }}
+                  </el-tag>
+                  <el-tag size="small" effect="plain">Q{{ msg.qos }}</el-tag>
+                  <el-tag v-if="msg.retain" size="small" type="warning" effect="plain">
+                    R
+                  </el-tag>
+                  <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
+                </div>
+              </div>
+              <div v-if="msg.scriptError" class="message-error">
+                <el-icon><WarningFilled /></el-icon>
+                <span>{{ msg.scriptError }}</span>
+              </div>
+              <div class="message-body">
+                <MessagePayload
+                  :payload="msg.payload"
+                  :preview="true"
+                  :payload-type="msg.payload_type"
+                  :format-json="formatJsonPayload"
+                  :highlight-keyword="searchKeyword.trim()"
+                  :search-match-case="searchMatchCase"
+                  :search-whole-word="searchWholeWord"
+                  :search-use-regex="searchUseRegex"
+                />
+              </div>
             </div>
           </div>
-          <div v-if="msg.scriptError" class="message-error">
-            <el-icon><WarningFilled /></el-icon>
-            <span>{{ msg.scriptError }}</span>
-          </div>
-          <div class="message-body">
-            <MessagePayload
-              :payload="msg.payload"
-              :preview="true"
-              :payload-type="msg.payload_type"
-              :format-json="formatJsonPayload"
-              :highlight-keyword="searchKeyword.trim()"
-              :search-match-case="searchMatchCase"
-              :search-whole-word="searchWholeWord"
-              :search-use-regex="searchUseRegex"
-            />
-          </div>
-        </div>
-
-        <div v-if="filteredMessages.length === 0" class="empty-state">
-          <el-empty :description="$t('messages.noMessages')" :image-size="60">
-          </el-empty>
-        </div>
-      </div>
-
-      <!-- 自定义滚动条 -->
-      <div
-        v-show="showCustomScrollbar"
-        class="custom-scrollbar"
-        ref="customScrollbar"
-        @mousedown="handleScrollbarMouseDown"
-      >
-        <div class="custom-scrollbar-thumb" :style="scrollbarThumbStyle"></div>
-      </div>
+        </template>
+      </FixedSizeList>
     </div>
 
     <!-- 消息详情对话框 -->
@@ -242,7 +262,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   ChatDotRound,
@@ -256,95 +276,84 @@ import {
   Promotion,
   WarningFilled,
 } from "@element-plus/icons-vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage, ElMessageBox, FixedSizeList } from "element-plus";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useServerStore } from "@/stores/server";
 import { useMqttStore } from "@/stores/mqtt";
+import { useMessageStore } from "@/stores/message";
 import { useAppStore } from "@/stores/app";
 import { useSubscriptionStore } from "@/stores/subscription";
 import MessagePayload from "./MessagePayload.vue";
-import type { MqttMessage } from "@/types/mqtt";
+import type { MessageHistory, MqttMessage } from "@/types/mqtt";
 
 const { t } = useI18n();
 
 type PayloadFormat = "json" | "binary" | "text";
 type DirectionFilter = "all" | "publish" | "receive";
 type ExportFormat = "json" | "csv";
+interface DerivedMessageMeta {
+  key: string;
+  payloadText: string;
+  payloadHex?: string;
+  format: PayloadFormat;
+  timestampValue: number;
+}
 
 const serverStore = useServerStore();
 const mqttStore = useMqttStore();
+const messageStore = useMessageStore();
 const appStore = useAppStore();
 const subscriptionStore = useSubscriptionStore();
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+const derivedMessageCache = new WeakMap<MqttMessage, DerivedMessageMeta>();
 
-const messageContainer = ref<HTMLElement>();
-const customScrollbar = ref<HTMLElement>();
+const listViewport = ref<HTMLElement>();
+const virtualListRef = ref<any>();
+const HISTORY_PAGE_SIZE = 200;
+const MESSAGE_ITEM_HEIGHT = 148;
+const LOAD_MORE_ROW_HEIGHT = 42;
+const virtualListHeight = ref(MESSAGE_ITEM_HEIGHT * 2);
+let viewportResizeObserver: ResizeObserver | null = null;
 
-// 自定义滚动条状态
-const scrollbarThumbTop = ref(0);
-const scrollbarThumbHeight = ref(0);
-const showCustomScrollbar = ref(false);
-
-const scrollbarThumbStyle = computed(() => {
-  return {
-    top: `${scrollbarThumbTop.value}px`,
-    height: `${scrollbarThumbHeight.value}px`,
-  };
-});
-
-function updateScrollbar() {
-  const el = messageContainer.value;
-  if (!el) return;
-
-  const hasScrollbar = el.scrollHeight > el.clientHeight;
-  showCustomScrollbar.value = hasScrollbar;
-
-  if (hasScrollbar) {
-    const ratio = el.clientHeight / el.scrollHeight;
-    scrollbarThumbHeight.value = Math.max(30, el.clientHeight * ratio);
-    const maxScrollTop = el.scrollHeight - el.clientHeight;
-    const maxThumbTop = el.clientHeight - scrollbarThumbHeight.value;
-    const scrollRatio = maxScrollTop > 0 ? el.scrollTop / maxScrollTop : 0;
-    scrollbarThumbTop.value = scrollRatio * maxThumbTop;
+function resolveElement(target: unknown): HTMLElement | null {
+  if (target instanceof HTMLElement) return target;
+  if (
+    typeof target === "object" &&
+    target !== null &&
+    "value" in target &&
+    (target as { value?: unknown }).value instanceof HTMLElement
+  ) {
+    return (target as { value: HTMLElement }).value;
   }
+  return null;
 }
 
-function handleScroll() {
-  updateScrollbar();
+function getScrollWindow(): HTMLElement | null {
+  return resolveElement(virtualListRef.value?.windowRef);
 }
 
-let scrollbarDragStartY = 0;
-let scrollbarDragStartTop = 0;
+function syncVirtualListHeight() {
+  const viewport = listViewport.value;
+  if (!viewport) return;
 
-function handleScrollbarMouseDown(event: MouseEvent) {
-  event.preventDefault();
-  const el = messageContainer.value;
-  if (!el) return;
-
-  scrollbarDragStartY = event.clientY;
-  scrollbarDragStartTop = scrollbarThumbTop.value;
-
-  document.addEventListener("mousemove", handleScrollbarMouseMove);
-  document.addEventListener("mouseup", handleScrollbarMouseUp);
+  const availableHeight =
+    viewport.clientHeight - (showLoadMore.value ? LOAD_MORE_ROW_HEIGHT : 0);
+  virtualListHeight.value = Math.max(MESSAGE_ITEM_HEIGHT, availableHeight);
 }
 
-function handleScrollbarMouseMove(event: MouseEvent) {
-  const el = messageContainer.value;
-  if (!el) return;
+function scrollToBottom() {
+  const total = filteredMessages.value.length;
+  if (total > 0) {
+    virtualListRef.value?.scrollToItem(total - 1);
+    return;
+  }
 
-  const deltaY = event.clientY - scrollbarDragStartY;
-  const containerHeight = el.clientHeight;
-  const newThumbTop = scrollbarDragStartTop + deltaY;
-  const maxThumbTop = containerHeight - scrollbarThumbHeight.value;
-  const clampedThumbTop = Math.max(0, Math.min(newThumbTop, maxThumbTop));
-
-  const scrollRatio = maxThumbTop > 0 ? clampedThumbTop / maxThumbTop : 0;
-  el.scrollTop = scrollRatio * (el.scrollHeight - el.clientHeight);
-}
-
-function handleScrollbarMouseUp() {
-  document.removeEventListener("mousemove", handleScrollbarMouseMove);
-  document.removeEventListener("mouseup", handleScrollbarMouseUp);
+  const el = getScrollWindow();
+  if (el) {
+    el.scrollTop = el.scrollHeight;
+  }
 }
 
 // 自动滚动到底部（监听 mqtt.ts 派发的原生事件，确保在 DOM 更新后触发）
@@ -355,23 +364,28 @@ function handleMessagesFlushed(event: Event) {
   if (!customEvent.detail.serverIds.includes(serverId)) return;
 
   nextTick(() => {
-    updateScrollbar();
     if (!appStore.autoScroll) return;
-    const el = messageContainer.value;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    scrollToBottom();
   });
 }
 
 onMounted(() => {
   window.addEventListener("mqtt-messages-flushed", handleMessagesFlushed);
-  updateScrollbar();
+  viewportResizeObserver = new ResizeObserver(() => {
+    syncVirtualListHeight();
+  });
+  if (listViewport.value) {
+    viewportResizeObserver.observe(listViewport.value);
+  }
+  nextTick(() => {
+    syncVirtualListHeight();
+  });
 });
 
 onUnmounted(() => {
   window.removeEventListener("mqtt-messages-flushed", handleMessagesFlushed);
-  document.removeEventListener("mousemove", handleScrollbarMouseMove);
-  document.removeEventListener("mouseup", handleScrollbarMouseUp);
+  viewportResizeObserver?.disconnect();
+  viewportResizeObserver = null;
 });
 
 // 获取消息的 topic 颜色
@@ -395,11 +409,169 @@ const formatJsonPayload = ref(false);
 const showDetailDialog = ref(false);
 const selectedMessage = ref<MqttMessage | null>(null);
 
-// 从 MQTT Store 获取消息
+function mapPayloadType(
+  payloadFormat?: MessageHistory["payload_format"]
+): MqttMessage["payload_type"] | undefined {
+  if (payloadFormat === "json" || payloadFormat === "hex" || payloadFormat === "text") {
+    return payloadFormat;
+  }
+  return undefined;
+}
+
+function historyPayloadToBytes(
+  payload?: string,
+  payloadFormat?: MessageHistory["payload_format"]
+): Uint8Array | undefined {
+  if (payload === undefined) return undefined;
+  if (payloadFormat !== "hex") {
+    return textEncoder.encode(payload);
+  }
+
+  const cleanHex = payload.replace(/\s/g, "");
+  if (cleanHex.length === 0 || cleanHex.length % 2 !== 0 || /[^0-9a-fA-F]/.test(cleanHex)) {
+    return textEncoder.encode(payload);
+  }
+
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < cleanHex.length; i += 2) {
+    bytes[i / 2] = parseInt(cleanHex.slice(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+function historyToRealtimeMessage(message: MessageHistory): MqttMessage {
+  return {
+    id: message.id,
+    server_id: message.server_id,
+    direction: message.direction as "publish" | "receive",
+    topic: message.topic,
+    payload: historyPayloadToBytes(message.payload, message.payload_format),
+    qos: message.qos as 0 | 1 | 2,
+    retain: message.retain,
+    timestamp: message.created_at,
+    payload_type: mapPayloadType(message.payload_format),
+  };
+}
+
+function getMessageKey(msg: MqttMessage): string {
+  if (msg.id !== undefined) return `id:${msg.id}`;
+  if (msg.seq !== undefined) return `seq:${msg.seq}`;
+  return `fallback:${msg.direction}:${msg.topic}:${msg.timestamp ?? ""}:${msg.qos}:${msg.retain}`;
+}
+
+function payloadToBytes(payload: string | Uint8Array | undefined): Uint8Array {
+  if (!payload) return new Uint8Array();
+  if (payload instanceof Uint8Array) return payload;
+  return textEncoder.encode(payload);
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
+    .join(" ");
+}
+
+function buildDerivedMessageMeta(msg: MqttMessage): DerivedMessageMeta {
+  const payloadBytes = payloadToBytes(msg.payload);
+  const payloadText =
+    msg.payload instanceof Uint8Array ? textDecoder.decode(msg.payload) : String(msg.payload ?? "");
+
+  let format: PayloadFormat;
+  if (msg.payload_type === "hex") {
+    format = "binary";
+  } else if (msg.payload_type === "json") {
+    format = "json";
+  } else if (msg.payload_type === "text") {
+    format = "text";
+  } else {
+    format = detectPayloadFormat(payloadText, payloadBytes);
+  }
+
+  return {
+    key: getMessageKey(msg),
+    payloadText,
+    format,
+    timestampValue: msg.timestamp ? Date.parse(msg.timestamp) : NaN,
+  };
+}
+
+function getDerivedMessageMeta(msg: MqttMessage): DerivedMessageMeta {
+  const cached = derivedMessageCache.get(msg);
+  if (cached) return cached;
+
+  const meta = buildDerivedMessageMeta(msg);
+  derivedMessageCache.set(msg, meta);
+  return meta;
+}
+
+function getDerivedPayloadHex(msg: MqttMessage): string {
+  const meta = getDerivedMessageMeta(msg);
+  if (meta.payloadHex !== undefined) {
+    return meta.payloadHex;
+  }
+
+  meta.payloadHex = bytesToHex(payloadToBytes(msg.payload));
+  return meta.payloadHex;
+}
+
+function compareMessages(a: MqttMessage, b: MqttMessage): number {
+  const timeA = getDerivedMessageMeta(a).timestampValue;
+  const timeB = getDerivedMessageMeta(b).timestampValue;
+
+  if (Number.isFinite(timeA) && Number.isFinite(timeB) && timeA !== timeB) {
+    return timeA - timeB;
+  }
+
+  const seqA = a.seq ?? Number.MAX_SAFE_INTEGER;
+  const seqB = b.seq ?? Number.MAX_SAFE_INTEGER;
+  if (seqA !== seqB) {
+    return seqA - seqB;
+  }
+
+  const idA = a.id ?? Number.MAX_SAFE_INTEGER;
+  const idB = b.id ?? Number.MAX_SAFE_INTEGER;
+  return idA - idB;
+}
+
+const historyMessages = computed(() => {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return [];
+  return messageStore.getMessages(serverId).map(historyToRealtimeMessage);
+});
+
+const hasMoreHistory = computed(() => {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return false;
+  return messageStore.getHasMoreHistory(serverId);
+});
+
+const showLoadMore = computed(
+  () => messageStore.loading || messageStore.loadingMore || hasMoreHistory.value
+);
+
+const receivedCount = computed(() => {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return 0;
+  return mqttStore.getReceivedCount(serverId);
+});
+
+function mergeMessages(history: MqttMessage[], realtime: MqttMessage[]): MqttMessage[] {
+  const mergedMap = new Map<string, MqttMessage>();
+  for (const msg of history) {
+    mergedMap.set(getDerivedMessageMeta(msg).key, msg);
+  }
+  for (const msg of realtime) {
+    mergedMap.set(getDerivedMessageMeta(msg).key, msg);
+  }
+
+  return Array.from(mergedMap.values()).sort(compareMessages);
+}
+
+// 从历史 + 实时流合并消息
 const messages = computed(() => {
   const serverId = serverStore.activeServerId;
   if (!serverId) return [];
-  return mqttStore.getServerMessages(serverId);
+  return mergeMessages(historyMessages.value, mqttStore.getServerMessages(serverId));
 });
 
 // 从消息中提取所有唯一 Topic 并排序
@@ -413,9 +585,11 @@ const topics = computed(() => {
   return Array.from(uniqueTopics).sort();
 });
 
-// 过滤后的消息
-const filteredMessages = computed(() => {
-  let result = messages.value;
+const selectedTopicSet = computed(() => new Set(selectedTopics.value));
+const trimmedSearchKeyword = computed(() => searchKeyword.value.trim());
+
+function applyMessageFilters(source: MqttMessage[]): MqttMessage[] {
+  let result = source;
 
   // 方向过滤
   if (directionFilter.value !== "all") {
@@ -423,29 +597,30 @@ const filteredMessages = computed(() => {
   }
 
   // Topic 多选筛选
-  if (selectedTopics.value.length > 0) {
-    result = result.filter((m) => selectedTopics.value.includes(m.topic));
+  if (selectedTopicSet.value.size > 0) {
+    result = result.filter((m) => selectedTopicSet.value.has(m.topic));
   }
 
   // 关键词搜索
-  if (searchKeyword.value.trim()) {
+  if (trimmedSearchKeyword.value) {
     const regex = searchRegex.value;
     if (!regex) return [];
 
     result = result.filter((m) => {
-      const payloadStr = getPayloadString(m.payload);
-      // 同时搜索 HEX 表示（支持二进制消息搜索）
-      const hexStr = getPayloadHexString(m.payload);
+      const meta = getDerivedMessageMeta(m);
       return (
         matchesSearchField(m.topic, regex) ||
-        matchesSearchField(payloadStr, regex) ||
-        matchesSearchField(hexStr, regex)
+        matchesSearchField(meta.payloadText, regex) ||
+        matchesSearchField(getDerivedPayloadHex(m), regex)
       );
     });
   }
 
   return result;
-});
+}
+
+// 过滤后的消息
+const filteredMessages = computed(() => applyMessageFilters(messages.value));
 
 // 过滤标签
 const filterLabel = computed(() => {
@@ -499,7 +674,7 @@ function buildSearchRegex(
 }
 
 const searchRegex = computed(() =>
-  buildSearchRegex(searchKeyword.value.trim(), {
+  buildSearchRegex(trimmedSearchKeyword.value, {
     matchCase: searchMatchCase.value,
     wholeWord: searchWholeWord.value,
     useRegex: searchUseRegex.value,
@@ -508,7 +683,7 @@ const searchRegex = computed(() =>
 
 const isRegexInvalid = computed(
   () =>
-    Boolean(searchKeyword.value.trim()) &&
+    Boolean(trimmedSearchKeyword.value) &&
     searchUseRegex.value &&
     !searchRegex.value
 );
@@ -521,7 +696,7 @@ function matchesSearchField(value: string, regex: RegExp): boolean {
 function highlightText(text: string): string {
   const source = String(text ?? "");
   const regex = searchRegex.value;
-  if (!searchKeyword.value.trim() || !regex) return escapeHtml(source);
+  if (!trimmedSearchKeyword.value || !regex) return escapeHtml(source);
 
   const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
   let highlighted = "";
@@ -545,31 +720,15 @@ function highlightText(text: string): string {
   return highlighted;
 }
 
-// 获取 payload 字符串
-function getPayloadString(payload: string | Uint8Array | undefined): string {
-  if (!payload) return "";
-  if (payload instanceof Uint8Array) {
-    return new TextDecoder().decode(payload);
-  }
-  return String(payload);
-}
-
-// 获取 payload 的 HEX 字符串（用于二进制消息搜索）
-function getPayloadHexString(payload: string | Uint8Array | undefined): string {
-  if (!payload) return "";
-  const bytes = payload instanceof Uint8Array ? payload : new TextEncoder().encode(payload);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
-    .join(" ");
-}
-
 // 检测 payload 格式（自动检测，用于接收的消息）
-function detectPayloadFormat(payload: string | Uint8Array | undefined): PayloadFormat {
+function detectPayloadFormat(
+  payload: string | Uint8Array | undefined,
+  bytesArg?: Uint8Array
+): PayloadFormat {
   if (!payload) return "text";
 
-  const str = getPayloadString(payload);
-  const bytes =
-    payload instanceof Uint8Array ? payload : new TextEncoder().encode(payload);
+  const str = typeof payload === "string" ? payload : textDecoder.decode(payload);
+  const bytes = bytesArg ?? payloadToBytes(payload);
 
   // 尝试检测 JSON
   if (str.trim()) {
@@ -605,15 +764,7 @@ function detectPayloadFormat(payload: string | Uint8Array | undefined): PayloadF
 
 // 获取消息的显示格式（优先使用保存的类型，否则自动检测）
 function getMessageFormat(msg: MqttMessage): PayloadFormat {
-  // 如果消息有保存的 payload_type，使用它
-  if (msg.payload_type) {
-    // hex 类型映射为 binary 显示
-    if (msg.payload_type === "hex") return "binary";
-    if (msg.payload_type === "json") return "json";
-    return "text";
-  }
-  // 否则自动检测
-  return detectPayloadFormat(msg.payload);
+  return getDerivedMessageMeta(msg).format;
 }
 
 // 获取格式标签类型
@@ -664,6 +815,33 @@ function handleFilterCommand(command: string) {
   directionFilter.value = command as DirectionFilter;
 }
 
+async function loadInitialHistory(serverId: number) {
+  await messageStore.fetchMessageHistory(serverId, HISTORY_PAGE_SIZE);
+  await nextTick();
+  syncVirtualListHeight();
+
+  if (appStore.autoScroll) {
+    scrollToBottom();
+  }
+}
+
+async function handleLoadMore() {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return;
+
+  const el = getScrollWindow();
+  const previousScrollHeight = el?.scrollHeight ?? 0;
+  const previousScrollTop = el?.scrollTop ?? 0;
+
+  await messageStore.loadMoreMessageHistory(serverId, HISTORY_PAGE_SIZE);
+  await nextTick();
+  syncVirtualListHeight();
+
+  if (el) {
+    el.scrollTop = previousScrollTop + (el.scrollHeight - previousScrollHeight);
+  }
+}
+
 const handleClear = async () => {
   const serverId = serverStore.activeServerId;
   if (!serverId) return;
@@ -674,6 +852,7 @@ const handleClear = async () => {
       confirmButtonText: t('common.confirm'),
       cancelButtonText: t('common.cancel'),
     });
+    await messageStore.clearHistory(serverId);
     mqttStore.clearMessages(serverId);
     ElMessage.success(t('success.deleted'));
   } catch {
@@ -691,8 +870,8 @@ function copyPayload() {
     const format = getMessageFormat(selectedMessage.value);
     // 二进制数据复制为 HEX 格式
     const payload = format === "binary" 
-      ? getPayloadHexString(selectedMessage.value.payload)
-      : getPayloadString(selectedMessage.value.payload);
+      ? getDerivedPayloadHex(selectedMessage.value)
+      : getDerivedMessageMeta(selectedMessage.value).payloadText;
     navigator.clipboard.writeText(payload);
     ElMessage.success(t('success.copied'));
   }
@@ -703,8 +882,8 @@ function copyToPublish() {
     const format = getMessageFormat(selectedMessage.value);
     // 二进制数据使用 HEX 格式复制到发布面板
     const payload = format === "binary" 
-      ? getPayloadHexString(selectedMessage.value.payload)
-      : getPayloadString(selectedMessage.value.payload);
+      ? getDerivedPayloadHex(selectedMessage.value)
+      : getDerivedMessageMeta(selectedMessage.value).payloadText;
     appStore.setCopyToPublish({
       topic: selectedMessage.value.topic,
       payload: payload,
@@ -731,7 +910,8 @@ interface ExportMessageItem {
 }
 
 function toExportMessage(msg: MqttMessage): ExportMessageItem {
-  const format = getMessageFormat(msg);
+  const meta = getDerivedMessageMeta(msg);
+  const format = meta.format;
   const item: ExportMessageItem = {
     timestamp: msg.timestamp ?? "",
     direction: msg.direction,
@@ -739,11 +919,11 @@ function toExportMessage(msg: MqttMessage): ExportMessageItem {
     qos: msg.qos,
     retain: msg.retain,
     payloadType: format,
-    payloadText: getPayloadString(msg.payload),
+    payloadText: meta.payloadText,
     scriptError: msg.scriptError,
   };
   if (format === "binary") {
-    item.payloadHex = getPayloadHexString(msg.payload);
+    item.payloadHex = getDerivedPayloadHex(msg);
   }
   return item;
 }
@@ -815,8 +995,12 @@ async function exportAsCsv(items: ExportMessageItem[]): Promise<string | null> {
 }
 
 async function handleExportCommand(command: string): Promise<void> {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return;
+
   const format = command as ExportFormat;
-  const exportItems = filteredMessages.value.map(toExportMessage);
+  const fullHistory = await messageStore.fetchAllMessageHistory(serverId);
+  const exportItems = applyMessageFilters(fullHistory.map(historyToRealtimeMessage)).map(toExportMessage);
 
   if (exportItems.length === 0) {
     ElMessage.warning(t("messages.exportEmpty"));
@@ -832,6 +1016,31 @@ async function handleExportCommand(command: string): Promise<void> {
     ElMessage.error(`${t("errors.saveFailed")}: ${error}`);
   }
 }
+
+watch(
+  () => serverStore.activeServerId,
+  async (serverId) => {
+    selectedMessage.value = null;
+    if (!serverId) return;
+    await loadInitialHistory(serverId);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => appStore.messageLimit,
+  async () => {
+    const serverId = serverStore.activeServerId;
+    if (!serverId) return;
+    await loadInitialHistory(serverId);
+  }
+);
+
+watch(showLoadMore, () => {
+  nextTick(() => {
+    syncVirtualListHeight();
+  });
+});
 </script>
 
 <style scoped lang="scss">
@@ -892,53 +1101,29 @@ async function handleExportCommand(command: string): Promise<void> {
   flex: 1;
   position: relative;
   display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
 }
 
-.message-container {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-  padding-right: 14px; // 为自定义滚动条预留空间
-  min-height: 0;
-
-  // 完全隐藏原生滚动条，使用自定义滚动条替代
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 10px;
+  flex-shrink: 0;
 }
 
-.custom-scrollbar {
-  position: absolute;
-  right: 4px;
-  top: 0;
-  width: 12px;
+:deep(.message-virtual-window) {
+  min-height: 0;
+  overflow-x: hidden !important;
+  padding-right: 2px;
+}
+
+.message-row {
+  width: 100%;
   height: 100%;
-  z-index: 10;
-  pointer-events: none;
-  background: transparent;
-
-  .custom-scrollbar-thumb {
-    position: absolute;
-    left: 2px;
-    width: 8px;
-    background-color: var(--app-text-secondary);
-    border-radius: 4px;
-    pointer-events: auto;
-    cursor: pointer;
-    opacity: 0.6;
-    transition: opacity 0.2s ease, width 0.2s ease, left 0.2s ease;
-
-    &:hover {
-      opacity: 0.9;
-      left: 0;
-      width: 12px;
-      background-color: var(--app-text-color);
-    }
-  }
+  padding: 0 8px 8px;
+  box-sizing: border-box;
 }
 
 .message-item {
@@ -948,7 +1133,9 @@ async function handleExportCommand(command: string): Promise<void> {
   border: 1px solid var(--app-border-color);
   cursor: pointer;
   transition: all 0.2s ease;
-  margin-bottom: 8px;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 
   &:hover {
     background-color: var(--sidebar-hover);
@@ -1047,6 +1234,8 @@ async function handleExportCommand(command: string): Promise<void> {
 
 .message-body {
   margin-top: 6px;
+  height: 64px;
+  overflow: hidden;
 }
 
 .message-error {
@@ -1090,6 +1279,7 @@ async function handleExportCommand(command: string): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 0;
 }
 
 // 消息详情弹窗样式

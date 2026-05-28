@@ -92,6 +92,10 @@ settings:
     changeOnlyBtn: Change Path Only
     migrateSuccess: Data migration complete, please restart the application
     changeSuccess: Storage location changed, please restart the application
+  messages:
+    title: Messages
+    desc: Configure how many messages each connection keeps in the UI; exports still include the full local history
+    limit: Message Limit
   log:
     title: Logs
     desc: Error logs are rotated daily, keeping up to 10 log files
@@ -148,6 +152,9 @@ messages:
   copied: Message copied
   formatJson: Format JSON
   autoScroll: Auto scroll to bottom
+  countSummary: Current retained / cumulative received
+  loadMore: Load older messages
+  loadingHistory: Loading message history
 
 template:
   title: Command Templates

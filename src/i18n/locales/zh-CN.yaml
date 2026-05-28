@@ -92,6 +92,10 @@ settings:
     changeOnlyBtn: 仅更改路径
     migrateSuccess: 数据迁移完成，请重启应用
     changeSuccess: 存储位置已更改，请重启应用
+  messages:
+    title: 消息
+    desc: 配置每个连接在界面中当前保留的最大消息数量，导出会包含全部本地历史
+    limit: 消息上限
   log:
     title: 日志
     desc: 错误日志按天分割，最多保留 10 个日志文件
@@ -148,6 +152,9 @@ messages:
   copied: 消息已复制
   formatJson: JSON格式化
   autoScroll: 自动滚动到底部
+  countSummary: 当前保留数 / 累计接收数
+  loadMore: 加载更早消息
+  loadingHistory: 正在加载历史消息
 
 template:
   title: 命令模板

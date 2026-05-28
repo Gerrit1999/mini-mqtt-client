@@ -1,9 +1,39 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
-use crate::db::Storage;
+use crate::db::{Storage, MAX_MESSAGE_LIMIT, MIN_MESSAGE_LIMIT};
+
+#[derive(Debug, serde::Serialize)]
+pub struct AppSettings {
+    pub message_limit: usize,
+}
+
+#[tauri::command]
+pub fn get_app_settings(storage: tauri::State<Storage>) -> Result<AppSettings, String> {
+    Ok(AppSettings {
+        message_limit: storage.get_message_limit(),
+    })
+}
+
+#[tauri::command]
+pub fn update_message_limit(
+    storage: tauri::State<Storage>,
+    message_limit: usize,
+) -> Result<AppSettings, String> {
+    if !(MIN_MESSAGE_LIMIT..=MAX_MESSAGE_LIMIT).contains(&message_limit) {
+        return Err(format!(
+            "Message limit must be between {} and {}",
+            MIN_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT
+        ));
+    }
+
+    storage.set_message_limit(message_limit)?;
+
+    Ok(AppSettings {
+        message_limit: storage.get_message_limit(),
+    })
+}
 
 /// 获取当前数据存储路径
 #[tauri::command]
@@ -14,7 +44,6 @@ pub fn get_data_path(storage: tauri::State<Storage>) -> Result<String, String> {
 /// 迁移数据到新路径
 #[tauri::command]
 pub fn migrate_data_path(
-    app_handle: AppHandle,
     storage: tauri::State<Storage>,
     new_path: String,
     migrate: bool,
@@ -40,22 +69,7 @@ pub fn migrate_data_path(
         }
     }
 
-    // 保存新路径配置（使用单独的配置文件）
-    let config_path = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("config.yaml");
-
-    let mut config_map: HashMap<String, String> = HashMap::new();
-    config_map.insert(
-        "data_path".to_string(),
-        new_path.to_string_lossy().to_string(),
-    );
-
-    let config = serde_yaml::to_string(&config_map).map_err(|e| e.to_string())?;
-
-    fs::write(&config_path, config).map_err(|e| format!("Failed to save config: {}", e))?;
+    storage.set_data_path(new_path.to_string_lossy().to_string())?;
 
     Ok(())
 }

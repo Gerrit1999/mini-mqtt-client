@@ -36,6 +36,12 @@ vi.mock("@/i18n", () => ({
   },
 }));
 
+vi.mock("@/stores/app", () => ({
+  useAppStore: () => ({
+    messageLimit: 1000,
+  }),
+}));
+
 vi.mock("@/utils/scriptEngine", () => ({
   ScriptEngine: {
     executeAfterReceive: vi.fn((_scripts: any[], payload: string) =>
@@ -334,6 +340,31 @@ describe("useMqttStore", () => {
       const messages2 = store.getServerMessages(1);
       // 全局排序：A(seq 最小) < B(seq 中等) < C(seq 最大)
       expect(messages2.map((m) => m.topic)).toEqual(["topic/A", "topic/B", "topic/C"]);
+    });
+  });
+
+  describe("累计接收计数", () => {
+    it("达到保留上限后仍应继续累计接收数", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+
+      for (let i = 0; i < 1002; i++) {
+        await mqttMessageListener!({
+          payload: {
+            server_id: 1,
+            topic: `topic/${i}`,
+            payload: [65],
+            qos: 0,
+            retain: false,
+            timestamp: `2024-01-01T00:00:${String(i % 60).padStart(2, "0")}Z`,
+          },
+        });
+      }
+
+      vi.advanceTimersByTime(100);
+
+      expect(store.getServerMessages(1)).toHaveLength(1000);
+      expect(store.getReceivedCount(1)).toBe(1002);
     });
   });
 });

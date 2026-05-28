@@ -81,6 +81,24 @@
         </el-alert>
       </div>
 
+      <!-- 消息设置 -->
+      <div class="setting-section">
+        <div class="setting-title">{{ $t('settings.messages.title') }}</div>
+        <div class="setting-desc">{{ $t('settings.messages.desc') }}</div>
+        <div class="setting-row">
+          <span class="setting-label">{{ $t('settings.messages.limit') }}</span>
+          <el-input-number
+            v-model="currentMessageLimit"
+            :min="MESSAGE_LIMIT_MIN"
+            :max="MESSAGE_LIMIT_MAX"
+            :step="100"
+            :controls-position="'right'"
+            size="small"
+            class="limit-input"
+          />
+        </div>
+      </div>
+
       <!-- 日志设置 -->
       <div class="setting-section">
         <div class="setting-title">{{ $t('settings.log.title') }}</div>
@@ -155,8 +173,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir, openUrl } from '@tauri-apps/plugin-opener'
 import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore, type Theme, type Locale } from '@/stores/app'
+import { useMqttStore } from '@/stores/mqtt'
+import { useMessageStore } from '@/stores/message'
 
 const GITHUB_REPO = 'dreamlonglll/mini-mqtt-client'
+const MESSAGE_LIMIT_MIN = 100
+const MESSAGE_LIMIT_MAX = 10000
 
 const props = defineProps<{
   visible: boolean
@@ -167,6 +189,8 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const mqttStore = useMqttStore()
+const messageStore = useMessageStore()
 const { t } = useI18n()
 
 const dialogVisible = computed({
@@ -180,6 +204,8 @@ const currentTheme = ref<Theme>('light')
 const originalTheme = ref<Theme>('light')
 const currentLocale = ref<Locale>('auto')
 const originalLocale = ref<Locale>('auto')
+const currentMessageLimit = ref(1000)
+const originalMessageLimit = ref(1000)
 const currentDataPath = ref('')
 const newDataPath = ref('')
 const logPath = ref('')
@@ -191,6 +217,7 @@ const updateInfo = ref<{ hasUpdate: boolean; latestVersion: string } | null>(nul
 const hasChanges = computed(() => {
   return currentTheme.value !== originalTheme.value || 
          currentLocale.value !== originalLocale.value ||
+         currentMessageLimit.value !== originalMessageLimit.value ||
          newDataPath.value !== ''
 })
 
@@ -200,6 +227,8 @@ async function loadSettings() {
   originalTheme.value = appStore.theme
   currentLocale.value = appStore.locale
   originalLocale.value = appStore.locale
+  currentMessageLimit.value = appStore.messageLimit
+  originalMessageLimit.value = appStore.messageLimit
   newDataPath.value = ''
   updateInfo.value = null
   
@@ -213,6 +242,15 @@ async function loadSettings() {
     currentDataPath.value = await invoke<string>('get_data_path')
   } catch (e) {
     console.error('获取数据路径失败:', e)
+  }
+
+  try {
+    const settings = await invoke<{ message_limit: number }>('get_app_settings')
+    currentMessageLimit.value = settings.message_limit
+    originalMessageLimit.value = settings.message_limit
+    appStore.setMessageLimit(settings.message_limit)
+  } catch (e) {
+    console.error('获取应用设置失败:', e)
   }
   
   try {
@@ -329,6 +367,16 @@ async function handleSave() {
         ElMessage.success(t('settings.storage.changeSuccess'))
       }
     }
+
+    if (currentMessageLimit.value !== originalMessageLimit.value) {
+      const settings = await invoke<{ message_limit: number }>('update_message_limit', {
+        messageLimit: currentMessageLimit.value,
+      })
+      appStore.setMessageLimit(settings.message_limit)
+      mqttStore.applyMessageLimit()
+      messageStore.applyMessageLimit()
+      originalMessageLimit.value = settings.message_limit
+    }
     
     dialogVisible.value = false
   } catch (e: any) {
@@ -432,6 +480,16 @@ async function handleOpenRelease() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.setting-label {
+  min-width: 110px;
+  font-size: 12px;
+  color: var(--app-text-secondary);
+}
+
+.limit-input {
+  width: 180px;
 }
 
 .path-input {

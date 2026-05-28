@@ -121,6 +121,8 @@ onMounted(() => {
   appStore.initTheme();
   // 初始化语言
   appStore.initLocale();
+  // 初始化应用设置
+  appStore.initAppSettings();
   // 初始化自动滚动设置
   appStore.initAutoScroll();
   // 初始化 MQTT 事件监听

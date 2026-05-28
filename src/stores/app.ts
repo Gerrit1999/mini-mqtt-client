@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { getCurrentWindow, type Theme as TauriTheme } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import i18n, { getActualLocale, type Locale, type ActualLocale } from "@/i18n";
 
 export type Theme = "light" | "dark" | "auto";
@@ -15,6 +16,10 @@ export interface UpdateInfo {
   hasUpdate: boolean;
   latestVersion: string;
   currentVersion: string;
+}
+
+export interface AppSettings {
+  message_limit: number;
 }
 
 // 复制到发布面板的消息数据
@@ -48,6 +53,9 @@ export const useAppStore = defineStore("app", () => {
 
   // 消息列表自动滚动到底部
   const autoScroll = ref(true);
+
+  // 每个 server 保留的消息上限
+  const messageLimit = ref(1000);
 
   // 版本更新信息
   const updateInfo = ref<UpdateInfo | null>(null);
@@ -215,6 +223,20 @@ export const useAppStore = defineStore("app", () => {
     saveAutoScroll();
   };
 
+  const initAppSettings = async () => {
+    try {
+      const settings = await invoke<AppSettings>("get_app_settings");
+      messageLimit.value = settings.message_limit;
+    } catch (error) {
+      console.warn("Failed to load app settings:", error);
+      messageLimit.value = 1000;
+    }
+  };
+
+  const setMessageLimit = (value: number) => {
+    messageLimit.value = value;
+  };
+
   // 设置当前视图
   const setCurrentView = (view: ViewType) => {
     currentView.value = view;
@@ -289,6 +311,7 @@ export const useAppStore = defineStore("app", () => {
     currentView,
     copyToPublishData,
     autoScroll,
+    messageLimit,
     updateInfo,
     checkingUpdate,
     toggleTheme,
@@ -303,6 +326,8 @@ export const useAppStore = defineStore("app", () => {
     clearCopyToPublish,
     setAutoScroll,
     initAutoScroll,
+    initAppSettings,
+    setMessageLimit,
     checkUpdate,
     clearUpdateInfo,
     cleanup,

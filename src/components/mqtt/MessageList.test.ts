@@ -4,23 +4,31 @@ import { createPinia, setActivePinia } from "pinia";
 import MessageList from "./MessageList.vue";
 import ElementPlus from "element-plus";
 import { createI18n } from "vue-i18n";
-import type { MqttMessage } from "@/types/mqtt";
+import type { MessageHistory, MqttMessage } from "@/types/mqtt";
 
 // Mock Tauri APIs
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
+const mockSave = vi.fn();
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: vi.fn(),
+  save: mockSave,
 }));
 
+const mockWriteTextFile = vi.fn();
 vi.mock("@tauri-apps/plugin-fs", () => ({
-  writeTextFile: vi.fn(),
+  writeTextFile: mockWriteTextFile,
 }));
 
 // Mock stores
 const mockMessages = vi.fn(() => [] as MqttMessage[]);
+const mockHistoryMessages = vi.fn<() => MessageHistory[]>(() => []);
+const mockFetchMessageHistory = vi.fn(() => Promise.resolve());
+const mockFetchAllMessageHistory = vi.fn(() => Promise.resolve([] as MessageHistory[]));
+const mockLoadMoreMessageHistory = vi.fn(() => Promise.resolve());
+const mockClearHistory = vi.fn(() => Promise.resolve());
+const mockGetHasMoreHistory = vi.fn(() => false);
 
 vi.mock("@/stores/server", () => ({
   useServerStore: () => ({
@@ -31,13 +39,28 @@ vi.mock("@/stores/server", () => ({
 vi.mock("@/stores/mqtt", () => ({
   useMqttStore: () => ({
     getServerMessages: mockMessages,
+    getReceivedCount: vi.fn(() => 0),
     clearMessages: vi.fn(),
+  }),
+}));
+
+vi.mock("@/stores/message", () => ({
+  useMessageStore: () => ({
+    loading: false,
+    loadingMore: false,
+    fetchMessageHistory: mockFetchMessageHistory,
+    fetchAllMessageHistory: mockFetchAllMessageHistory,
+    loadMoreMessageHistory: mockLoadMoreMessageHistory,
+    clearHistory: mockClearHistory,
+    getMessages: mockHistoryMessages,
+    getHasMoreHistory: mockGetHasMoreHistory,
   }),
 }));
 
 vi.mock("@/stores/app", () => ({
   useAppStore: () => ({
     autoScroll: true,
+    messageLimit: 1000,
     setAutoScroll: vi.fn(),
     setCopyToPublish: vi.fn(),
     getDateLocale: () => "zh-CN",
@@ -71,6 +94,7 @@ function createTestI18n() {
           viewPayload: "查看消息内容",
           formatJson: "JSON格式化",
           autoScroll: "自动滚动到底部",
+          countSummary: "当前保留数 / 累计接收数",
           clearConfirm: "确定要清空所有消息吗？",
           clearTitle: "清空消息",
           search: {
@@ -79,6 +103,8 @@ function createTestI18n() {
             useRegex: "使用正则表达式",
             invalidRegex: "正则表达式无效",
           },
+          loadMore: "加载更早消息",
+          loadingHistory: "正在加载历史消息",
           direction: {
             received: "接收",
             sent: "发送",
@@ -184,6 +210,10 @@ describe("MessageList Topic 筛选", () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     mockMessages.mockReturnValue([]);
+    mockHistoryMessages.mockReturnValue([]);
+    mockFetchAllMessageHistory.mockResolvedValue([]);
+    mockSave.mockResolvedValue(null);
+    mockWriteTextFile.mockResolvedValue(undefined);
   });
 
   function createWrapper() {
@@ -197,6 +227,14 @@ describe("MessageList Topic 筛选", () => {
   }
 
   describe("topics computed", () => {
+    it("挂载时应加载第一页历史消息", async () => {
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      expect(mockFetchMessageHistory).toHaveBeenCalledWith(1, 200);
+      wrapper.unmount();
+    });
+
     it("应从消息中提取唯一 Topic 并排序", async () => {
       mockMessages.mockReturnValue(createTestMessages());
       const wrapper = createWrapper();
@@ -206,6 +244,34 @@ describe("MessageList Topic 筛选", () => {
       expect(vm.topics).toEqual([
         "device/001/command",
         "device/002/status",
+        "sensor/temp",
+      ]);
+    });
+
+    it("应合并历史消息与实时消息", async () => {
+      mockHistoryMessages.mockReturnValue([
+        {
+          id: 11,
+          server_id: 1,
+          direction: "publish",
+          topic: "history/topic",
+          payload: "legacy",
+          payload_format: "text",
+          qos: 0,
+          retain: false,
+          created_at: "2024-01-01T00:00:00Z",
+        },
+      ]);
+      mockMessages.mockReturnValue(createTestMessages());
+
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      expect(vm.topics).toEqual([
+        "device/001/command",
+        "device/002/status",
+        "history/topic",
         "sensor/temp",
       ]);
     });
@@ -352,6 +418,39 @@ describe("MessageList Topic 筛选", () => {
 
       const vm = wrapper.vm as any;
       expect(vm.topics).toEqual(["topic/A", "topic/B"]);
+    });
+  });
+
+  describe("导出", () => {
+    it("应导出完整本地历史，而不是当前保留窗口", async () => {
+      mockHistoryMessages.mockReturnValue([]);
+      mockFetchAllMessageHistory.mockResolvedValue([
+        {
+          id: 101,
+          server_id: 1,
+          direction: "receive",
+          topic: "history/topic",
+          payload: "from-history",
+          payload_format: "text",
+          qos: 0,
+          retain: false,
+          created_at: "2024-01-01T00:00:00Z",
+        },
+      ]);
+      mockSave.mockResolvedValue("/tmp/messages.json");
+
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      await vm.handleExportCommand("json");
+
+      expect(mockFetchAllMessageHistory).toHaveBeenCalledWith(1);
+      expect(mockWriteTextFile).toHaveBeenCalledTimes(1);
+
+      const [savedPath, content] = mockWriteTextFile.mock.calls[0];
+      expect(savedPath).toBe("/tmp/messages.json");
+      expect(content).toContain('"topic": "history/topic"');
     });
   });
 });

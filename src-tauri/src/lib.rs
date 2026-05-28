@@ -61,6 +61,7 @@ pub fn run() {
             update_subscription,
             // 消息命令
             publish_message,
+            save_received_message,
             get_message_history,
             clear_message_history,
             // 模板命令
@@ -75,6 +76,8 @@ pub fn run() {
             import_templates,
             duplicate_template,
             // 设置命令
+            get_app_settings,
+            update_message_limit,
             get_data_path,
             migrate_data_path,
             select_data_folder,

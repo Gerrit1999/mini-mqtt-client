@@ -392,7 +392,7 @@ async function doPublishCore(): Promise<void> {
   }
 
   // 调用 messageStore 发布消息（保存到数据库）
-  await messageStore.publishMessage(serverId, {
+  const history = await messageStore.publishMessage(serverId, {
     topic: processedTopic,
     payload: processedPayload,
     qos: publishData.qos,
@@ -402,11 +402,13 @@ async function doPublishCore(): Promise<void> {
 
   // 同时添加到 mqttStore 的消息列表（用于实时显示）
   mqttStore.addPublishMessage(serverId, {
+    id: history?.id,
     topic: processedTopic,
     payload: processedPayload,
     qos: publishData.qos as 0 | 1 | 2,
     retain: publishData.retain,
     payload_type: payloadFormat.value,
+    timestamp: history?.created_at,
     seq,
   });
 }

@@ -280,9 +280,16 @@ defineExpose({
 
 .message-payload.preview {
   .payload-content {
-    // 移除高度限制，始终显示完整内容
-    max-height: none;
-    overflow: visible;
+    max-height: 100%;
+    overflow: hidden;
+  }
+
+  pre,
+  .hex-preview-simple {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
   }
 }
 

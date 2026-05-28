@@ -8,6 +8,7 @@ import { ScriptEngine } from "@/utils/scriptEngine";
 import type { Script } from "@/stores/script";
 import { handleScriptError } from "@/utils/errorHandler";
 import i18n from "@/i18n";
+import { useAppStore } from "@/stores/app";
 
 interface ConnectionState {
   server_id: number;
@@ -36,10 +37,15 @@ interface EnvCache {
   timestamp: number;
 }
 
+type StoredPayloadFormat = "json" | "text" | "hex";
+
 // 脚本缓存有效期（毫秒）
 const SCRIPT_CACHE_TTL = 5000;
 
 export const useMqttStore = defineStore("mqtt", () => {
+  const appStore = useAppStore();
+  const textEncoder = new TextEncoder();
+  const strictTextDecoder = new TextDecoder("utf-8", { fatal: true });
   // 连接状态
   const connectionStates = ref<
     Map<number, { status: ConnectionStatus; error?: string }>
@@ -47,6 +53,9 @@ export const useMqttStore = defineStore("mqtt", () => {
 
   // 按 serverId 分组存储消息（使用 shallowRef 减少深度响应式开销）
   const messagesByServer = shallowRef<Map<number, MqttMessage[]>>(new Map());
+
+  // 每个 server 的累计接收计数（不受消息保留上限影响）
+  const receivedCountByServer = ref<Map<number, number>>(new Map());
 
   // 订阅列表（按 server_id 分组）
   const subscriptions = ref<Map<number, Set<string>>>(new Map());
@@ -128,6 +137,64 @@ export const useMqttStore = defineStore("mqtt", () => {
     }
   }
 
+  function incrementReceivedCount(serverId: number, amount: number = 1) {
+    const nextMap = new Map(receivedCountByServer.value);
+    nextMap.set(serverId, (nextMap.get(serverId) ?? 0) + amount);
+    receivedCountByServer.value = nextMap;
+  }
+
+  function bytesToHex(payload: Uint8Array): string {
+    return Array.from(payload)
+      .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
+      .join("");
+  }
+
+  function detectStoredPayloadFormat(
+    payloadBytes: Uint8Array
+  ): { payload: string; format: StoredPayloadFormat } {
+    if (payloadBytes.length === 0) {
+      return { payload: "", format: "text" };
+    }
+
+    let decoded: string | null = null;
+    try {
+      decoded = strictTextDecoder.decode(payloadBytes);
+    } catch {
+      decoded = null;
+    }
+
+    if (decoded !== null) {
+      let nonPrintableCount = 0;
+      for (const byte of payloadBytes) {
+        if ((byte < 32 || byte > 126) && byte !== 9 && byte !== 10 && byte !== 13) {
+          nonPrintableCount++;
+        }
+      }
+
+      if (nonPrintableCount / payloadBytes.length > 0.1) {
+        return { payload: bytesToHex(payloadBytes), format: "hex" };
+      }
+
+      const trimmed = decoded.trim();
+      if (
+        trimmed &&
+        ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+          (trimmed.startsWith("[") && trimmed.endsWith("]")))
+      ) {
+        try {
+          JSON.parse(trimmed);
+          return { payload: decoded, format: "json" };
+        } catch {
+          // fall through to plain text
+        }
+      }
+
+      return { payload: decoded, format: "text" };
+    }
+
+    return { payload: bytesToHex(payloadBytes), format: "hex" };
+  }
+
   // 批量处理消息队列
   function flushMessageQueue() {
     if (messageQueue.length === 0) return;
@@ -146,10 +213,13 @@ export const useMqttStore = defineStore("mqtt", () => {
     // 合并到现有消息（新消息与已有消息一起按 seq 全局排序）
     for (const [serverId, newMessages] of messagesByServerId) {
       const existing = newMap.get(serverId) || [];
-      const merged = [...newMessages, ...existing];
-      merged.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      const merged = existing.concat(newMessages);
+      const messageLimit = appStore.messageLimit;
       // 限制每个 server 的消息数量
-      newMap.set(serverId, merged.length > 1000 ? merged.slice(0, 1000) : merged);
+      newMap.set(
+        serverId,
+        merged.length > messageLimit ? merged.slice(-messageLimit) : merged
+      );
     }
 
     messagesByServer.value = newMap;
@@ -200,6 +270,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     await listen<ReceivedMessage>("mqtt-message", async (event) => {
       const msg = event.payload;
       const seq = nextSeq++; // 在异步处理前分配序列号
+      incrementReceivedCount(msg.server_id);
       let payloadBytes = new Uint8Array(msg.payload);
       let scriptError: string | undefined = undefined;
 
@@ -238,6 +309,21 @@ export const useMqttStore = defineStore("mqtt", () => {
         scriptError: scriptError,
         seq,
       });
+
+      const storedMessage = detectStoredPayloadFormat(payloadBytes);
+      try {
+        await invoke("save_received_message", {
+          serverId: msg.server_id,
+          topic: msg.topic,
+          payload: storedMessage.payload,
+          payloadFormat: storedMessage.format,
+          qos: msg.qos,
+          retain: msg.retain,
+          timestamp: msg.timestamp,
+        });
+      } catch (error) {
+        console.warn("Failed to persist received message:", error);
+      }
     });
   };
 
@@ -266,7 +352,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     const seq = nextSeq++; // 在异步调用前分配序列号
     const payloadBytes =
       typeof payload === "string"
-        ? Array.from(new TextEncoder().encode(payload))
+        ? Array.from(textEncoder.encode(payload))
         : Array.from(payload);
 
     await invoke("mqtt_publish", {
@@ -283,7 +369,7 @@ export const useMqttStore = defineStore("mqtt", () => {
       direction: "publish",
       topic,
       payload:
-        typeof payload === "string" ? new TextEncoder().encode(payload) : payload,
+        typeof payload === "string" ? textEncoder.encode(payload) : payload,
       qos,
       retain,
       timestamp: new Date().toISOString(),
@@ -326,15 +412,35 @@ export const useMqttStore = defineStore("mqtt", () => {
     return messagesByServer.value.get(serverId) || [];
   };
 
+  const getReceivedCount = (serverId: number): number => {
+    return receivedCountByServer.value.get(serverId) || 0;
+  };
+
+  const applyMessageLimit = () => {
+    const limit = appStore.messageLimit;
+    const newMap = new Map<number, MqttMessage[]>();
+    for (const [serverId, serverMessages] of messagesByServer.value.entries()) {
+      newMap.set(
+        serverId,
+        serverMessages.length > limit ? serverMessages.slice(-limit) : serverMessages
+      );
+    }
+    messagesByServer.value = newMap;
+  };
+
   // 清空消息
   const clearMessages = (serverId?: number) => {
     const newMap = new Map(messagesByServer.value);
+    const newCountMap = new Map(receivedCountByServer.value);
     if (serverId) {
       newMap.delete(serverId);
+      newCountMap.delete(serverId);
     } else {
       newMap.clear();
+      newCountMap.clear();
     }
     messagesByServer.value = newMap;
+    receivedCountByServer.value = newCountMap;
   };
 
   // 将 HEX 字符串转换为字节数组
@@ -351,12 +457,14 @@ export const useMqttStore = defineStore("mqtt", () => {
   const addPublishMessage = (
     serverId: number,
     msg: {
+      id?: number;
       topic: string;
       payload: string;
       qos: 0 | 1 | 2;
       retain: boolean;
       scriptError?: string;
       payload_type?: "json" | "hex" | "text";
+      timestamp?: string;
       seq?: number;
     }
   ) => {
@@ -367,18 +475,19 @@ export const useMqttStore = defineStore("mqtt", () => {
       payloadBytes = hexToBytes(msg.payload);
     } else {
       // 其他格式：直接用 TextEncoder 编码
-      payloadBytes = new TextEncoder().encode(msg.payload);
+      payloadBytes = textEncoder.encode(msg.payload);
     }
 
     // 使用批处理队列
     queueMessage({
+      id: msg.id,
       server_id: serverId,
       direction: "publish",
       topic: msg.topic,
       payload: payloadBytes,
       qos: msg.qos,
       retain: msg.retain,
-      timestamp: new Date().toISOString(),
+      timestamp: msg.timestamp ?? new Date().toISOString(),
       scriptError: msg.scriptError,
       payload_type: msg.payload_type,
       seq: msg.seq,
@@ -391,6 +500,7 @@ export const useMqttStore = defineStore("mqtt", () => {
   return {
     connectionStates,
     messagesByServer,
+    receivedCountByServer,
     subscriptions,
     initListeners,
     connect,
@@ -401,6 +511,8 @@ export const useMqttStore = defineStore("mqtt", () => {
     getConnectionStatus,
     getConnectionError,
     getServerMessages,
+    getReceivedCount,
+    applyMessageLimit,
     clearMessages,
     addPublishMessage,
     reserveSeq,

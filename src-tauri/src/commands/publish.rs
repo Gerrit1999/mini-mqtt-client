@@ -46,12 +46,43 @@ pub async fn publish_message(
 }
 
 #[tauri::command]
+pub async fn save_received_message(
+    storage: State<'_, Storage>,
+    server_id: i64,
+    topic: String,
+    payload: String,
+    payload_format: String,
+    qos: i32,
+    retain: bool,
+    timestamp: Option<String>,
+) -> Result<MessageHistory, String> {
+    let history = MessageHistory {
+        id: None,
+        server_id,
+        topic,
+        payload: Some(payload),
+        payload_format: Some(payload_format),
+        direction: "receive".to_string(),
+        qos,
+        retain,
+        created_at: timestamp,
+    };
+
+    storage.create_message(history)
+}
+
+#[tauri::command]
 pub async fn get_message_history(
     storage: State<'_, Storage>,
     server_id: i64,
     limit: Option<usize>,
+    offset: Option<usize>,
 ) -> Result<Vec<MessageHistory>, String> {
-    Ok(storage.get_messages(server_id, limit.unwrap_or(100)))
+    Ok(storage.get_messages(
+        server_id,
+        limit.unwrap_or(100),
+        offset.unwrap_or(0),
+    ))
 }
 
 #[tauri::command]
