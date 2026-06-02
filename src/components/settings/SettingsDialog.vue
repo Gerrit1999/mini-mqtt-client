@@ -110,6 +110,27 @@
         </div>
       </div>
 
+      <!-- MQTT 设置 -->
+      <div class="setting-section">
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.mqtt.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.mqtt.desc') }}</div>
+        </div>
+        <div class="setting-row message-setting-row">
+          <span class="setting-label setting-label--compact">{{ $t('settings.mqtt.packetSizeLimit') }}</span>
+          <el-input-number
+            v-model="currentMqttPacketSizeLimitKb"
+            :min="MQTT_PACKET_SIZE_LIMIT_MIN"
+            :max="MQTT_PACKET_SIZE_LIMIT_MAX"
+            :step="256"
+            :controls-position="'right'"
+            size="small"
+            class="limit-input"
+          />
+          <span class="setting-unit">KB</span>
+        </div>
+      </div>
+
       <!-- 日志设置 -->
       <div class="setting-section">
         <div class="setting-header">
@@ -196,6 +217,8 @@ import { useMessageStore } from '@/stores/message'
 const GITHUB_REPO = 'dreamlonglll/mini-mqtt-client'
 const MESSAGE_LIMIT_MIN = 100
 const MESSAGE_LIMIT_MAX = 10000
+const MQTT_PACKET_SIZE_LIMIT_MIN = 10
+const MQTT_PACKET_SIZE_LIMIT_MAX = 102400
 
 const props = defineProps<{
   visible: boolean
@@ -223,6 +246,8 @@ const currentLocale = ref<Locale>('auto')
 const originalLocale = ref<Locale>('auto')
 const currentMessageLimit = ref(1000)
 const originalMessageLimit = ref(1000)
+const currentMqttPacketSizeLimitKb = ref(1024)
+const originalMqttPacketSizeLimitKb = ref(1024)
 const currentDataPath = ref('')
 const newDataPath = ref('')
 const logPath = ref('')
@@ -235,6 +260,7 @@ const hasChanges = computed(() => {
   return currentTheme.value !== originalTheme.value || 
          currentLocale.value !== originalLocale.value ||
          currentMessageLimit.value !== originalMessageLimit.value ||
+         currentMqttPacketSizeLimitKb.value !== originalMqttPacketSizeLimitKb.value ||
          newDataPath.value !== ''
 })
 
@@ -246,6 +272,8 @@ async function loadSettings() {
   originalLocale.value = appStore.locale
   currentMessageLimit.value = appStore.messageLimit
   originalMessageLimit.value = appStore.messageLimit
+  currentMqttPacketSizeLimitKb.value = appStore.mqttPacketSizeLimitKb
+  originalMqttPacketSizeLimitKb.value = appStore.mqttPacketSizeLimitKb
   newDataPath.value = ''
   updateInfo.value = null
   
@@ -262,10 +290,13 @@ async function loadSettings() {
   }
 
   try {
-    const settings = await invoke<{ message_limit: number }>('get_app_settings')
+    const settings = await invoke<{ message_limit: number; mqtt_packet_size_limit_kb: number }>('get_app_settings')
     currentMessageLimit.value = settings.message_limit
     originalMessageLimit.value = settings.message_limit
+    currentMqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb
+    originalMqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb
     appStore.setMessageLimit(settings.message_limit)
+    appStore.setMqttPacketSizeLimitKb(settings.mqtt_packet_size_limit_kb)
   } catch (e) {
     console.error('获取应用设置失败:', e)
   }
@@ -393,6 +424,17 @@ async function handleSave() {
       mqttStore.applyMessageLimit()
       messageStore.applyMessageLimit()
       originalMessageLimit.value = settings.message_limit
+    }
+
+    if (currentMqttPacketSizeLimitKb.value !== originalMqttPacketSizeLimitKb.value) {
+      const settings = await invoke<{ message_limit: number; mqtt_packet_size_limit_kb: number }>(
+        'update_mqtt_packet_size_limit',
+        {
+          mqttPacketSizeLimitKb: currentMqttPacketSizeLimitKb.value,
+        }
+      )
+      appStore.setMqttPacketSizeLimitKb(settings.mqtt_packet_size_limit_kb)
+      originalMqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb
     }
     
     dialogVisible.value = false
@@ -533,6 +575,11 @@ async function handleOpenRelease() {
 
 .limit-input {
   width: 180px;
+}
+
+.setting-unit {
+  font-size: 12px;
+  color: var(--app-text-secondary);
 }
 
 .path-group {

@@ -16,6 +16,9 @@ const GLOBAL_TEMPLATE_SERVER_ID: i64 = 0;
 pub const DEFAULT_MESSAGE_LIMIT: usize = 1000;
 pub const MIN_MESSAGE_LIMIT: usize = 100;
 pub const MAX_MESSAGE_LIMIT: usize = 10000;
+pub const DEFAULT_MQTT_PACKET_SIZE_LIMIT_KB: usize = 1024;
+pub const MIN_MQTT_PACKET_SIZE_LIMIT_KB: usize = 10;
+pub const MAX_MQTT_PACKET_SIZE_LIMIT_KB: usize = 102400;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct AppData {
@@ -49,6 +52,8 @@ pub struct AppConfig {
     pub data_path: Option<String>,
     #[serde(default)]
     pub message_limit: Option<usize>,
+    #[serde(default)]
+    pub mqtt_packet_size_limit_kb: Option<usize>,
 }
 
 pub struct Storage {
@@ -115,6 +120,21 @@ impl Storage {
     pub fn set_message_limit(&self, limit: usize) -> Result<(), String> {
         let mut config = self.config.write();
         config.message_limit = Some(sanitize_message_limit(Some(limit)));
+        drop(config);
+        self.save_config()
+    }
+
+    pub fn get_mqtt_packet_size_limit_kb(&self) -> usize {
+        sanitize_mqtt_packet_size_limit_kb(self.config.read().mqtt_packet_size_limit_kb)
+    }
+
+    pub fn get_mqtt_packet_size_limit_bytes(&self) -> usize {
+        self.get_mqtt_packet_size_limit_kb() * 1024
+    }
+
+    pub fn set_mqtt_packet_size_limit_kb(&self, limit: usize) -> Result<(), String> {
+        let mut config = self.config.write();
+        config.mqtt_packet_size_limit_kb = Some(sanitize_mqtt_packet_size_limit_kb(Some(limit)));
         drop(config);
         self.save_config()
     }
@@ -568,4 +588,10 @@ fn sanitize_message_limit(limit: Option<usize>) -> usize {
     limit
         .unwrap_or(DEFAULT_MESSAGE_LIMIT)
         .clamp(MIN_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT)
+}
+
+fn sanitize_mqtt_packet_size_limit_kb(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_MQTT_PACKET_SIZE_LIMIT_KB)
+        .clamp(MIN_MQTT_PACKET_SIZE_LIMIT_KB, MAX_MQTT_PACKET_SIZE_LIMIT_KB)
 }

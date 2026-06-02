@@ -111,7 +111,11 @@ impl MqttManager {
         }
     }
 
-    pub async fn connect(&self, server: MqttServer) -> Result<(), String> {
+    pub async fn connect(
+        &self,
+        server: MqttServer,
+        packet_size_limit: usize,
+    ) -> Result<(), String> {
         let server_id = server.id.ok_or("Server ID is required")?;
 
         // 如果已连接，先断开
@@ -134,6 +138,7 @@ impl MqttManager {
         let mut options = MqttOptions::new(client_id, broker_addr, server.port as u16);
         options.set_keep_alive(Duration::from_secs(server.keep_alive as u64));
         options.set_clean_session(server.clean_session);
+        options.set_max_packet_size(packet_size_limit, packet_size_limit);
 
         if let (Some(username), Some(password)) =
             (server.username.as_ref(), server.password.as_ref())

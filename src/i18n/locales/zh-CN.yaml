@@ -96,6 +96,10 @@ settings:
     title: 消息
     desc: 配置每个连接在界面中当前保留的最大消息数量，导出会包含全部本地历史
     limit: 消息上限
+  mqtt:
+    title: MQTT
+    desc: 配置 MQTT 收发包大小上限，保存后对新连接生效
+    packetSizeLimit: 包大小上限
   log:
     title: 日志
     desc: 错误日志按天分割，最多保留 10 个日志文件

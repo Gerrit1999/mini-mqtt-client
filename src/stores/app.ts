@@ -20,6 +20,7 @@ export interface UpdateInfo {
 
 export interface AppSettings {
   message_limit: number;
+  mqtt_packet_size_limit_kb: number;
 }
 
 // 复制到发布面板的消息数据
@@ -56,6 +57,9 @@ export const useAppStore = defineStore("app", () => {
 
   // 每个 server 保留的消息上限
   const messageLimit = ref(1000);
+
+  // MQTT 收发包大小上限（KB）
+  const mqttPacketSizeLimitKb = ref(1024);
 
   // 版本更新信息
   const updateInfo = ref<UpdateInfo | null>(null);
@@ -227,14 +231,20 @@ export const useAppStore = defineStore("app", () => {
     try {
       const settings = await invoke<AppSettings>("get_app_settings");
       messageLimit.value = settings.message_limit;
+      mqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb;
     } catch (error) {
       console.warn("Failed to load app settings:", error);
       messageLimit.value = 1000;
+      mqttPacketSizeLimitKb.value = 1024;
     }
   };
 
   const setMessageLimit = (value: number) => {
     messageLimit.value = value;
+  };
+
+  const setMqttPacketSizeLimitKb = (value: number) => {
+    mqttPacketSizeLimitKb.value = value;
   };
 
   // 设置当前视图
@@ -312,6 +322,7 @@ export const useAppStore = defineStore("app", () => {
     copyToPublishData,
     autoScroll,
     messageLimit,
+    mqttPacketSizeLimitKb,
     updateInfo,
     checkingUpdate,
     toggleTheme,
@@ -328,6 +339,7 @@ export const useAppStore = defineStore("app", () => {
     initAutoScroll,
     initAppSettings,
     setMessageLimit,
+    setMqttPacketSizeLimitKb,
     checkUpdate,
     clearUpdateInfo,
     cleanup,

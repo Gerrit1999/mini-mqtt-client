@@ -2,17 +2,22 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-use crate::db::{Storage, MAX_MESSAGE_LIMIT, MIN_MESSAGE_LIMIT};
+use crate::db::{
+    Storage, MAX_MESSAGE_LIMIT, MAX_MQTT_PACKET_SIZE_LIMIT_KB, MIN_MESSAGE_LIMIT,
+    MIN_MQTT_PACKET_SIZE_LIMIT_KB,
+};
 
 #[derive(Debug, serde::Serialize)]
 pub struct AppSettings {
     pub message_limit: usize,
+    pub mqtt_packet_size_limit_kb: usize,
 }
 
 #[tauri::command]
 pub fn get_app_settings(storage: tauri::State<Storage>) -> Result<AppSettings, String> {
     Ok(AppSettings {
         message_limit: storage.get_message_limit(),
+        mqtt_packet_size_limit_kb: storage.get_mqtt_packet_size_limit_kb(),
     })
 }
 
@@ -32,6 +37,29 @@ pub fn update_message_limit(
 
     Ok(AppSettings {
         message_limit: storage.get_message_limit(),
+        mqtt_packet_size_limit_kb: storage.get_mqtt_packet_size_limit_kb(),
+    })
+}
+
+#[tauri::command]
+pub fn update_mqtt_packet_size_limit(
+    storage: tauri::State<Storage>,
+    mqtt_packet_size_limit_kb: usize,
+) -> Result<AppSettings, String> {
+    if !(MIN_MQTT_PACKET_SIZE_LIMIT_KB..=MAX_MQTT_PACKET_SIZE_LIMIT_KB)
+        .contains(&mqtt_packet_size_limit_kb)
+    {
+        return Err(format!(
+            "MQTT packet size limit must be between {} KB and {} KB",
+            MIN_MQTT_PACKET_SIZE_LIMIT_KB, MAX_MQTT_PACKET_SIZE_LIMIT_KB
+        ));
+    }
+
+    storage.set_mqtt_packet_size_limit_kb(mqtt_packet_size_limit_kb)?;
+
+    Ok(AppSettings {
+        message_limit: storage.get_message_limit(),
+        mqtt_packet_size_limit_kb: storage.get_mqtt_packet_size_limit_kb(),
     })
 }
 

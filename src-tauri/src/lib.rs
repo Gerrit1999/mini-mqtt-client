@@ -78,6 +78,7 @@ pub fn run() {
             // 设置命令
             get_app_settings,
             update_message_limit,
+            update_mqtt_packet_size_limit,
             get_data_path,
             migrate_data_path,
             select_data_folder,

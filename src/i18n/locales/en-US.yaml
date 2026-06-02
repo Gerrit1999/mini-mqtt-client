@@ -96,6 +96,10 @@ settings:
     title: Messages
     desc: Configure how many messages each connection keeps in the UI; exports still include the full local history
     limit: Message Limit
+  mqtt:
+    title: MQTT
+    desc: Configure the MQTT incoming and outgoing packet size limit; applies to new connections after saving
+    packetSizeLimit: Packet Size Limit
   log:
     title: Logs
     desc: Error logs are rotated daily, keeping up to 10 log files

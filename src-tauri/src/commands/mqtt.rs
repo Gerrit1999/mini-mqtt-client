@@ -10,8 +10,9 @@ pub async fn mqtt_connect(
 ) -> Result<(), String> {
     // 从存储获取 server 配置
     let server = storage.get_server(server_id).ok_or("Server not found")?;
+    let packet_size_limit = storage.get_mqtt_packet_size_limit_bytes();
 
-    mqtt.connect(server).await
+    mqtt.connect(server, packet_size_limit).await
 }
 
 #[tauri::command]
