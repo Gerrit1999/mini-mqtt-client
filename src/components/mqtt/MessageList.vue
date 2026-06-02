@@ -215,6 +215,9 @@
               {{ getFormatLabel(getMessageFormat(selectedMessage), selectedMessage) }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item :label="$t('messages.payloadSize')">
+            {{ formatPayloadSize(selectedMessage.payload) }}
+          </el-descriptions-item>
           <el-descriptions-item label="Time" :span="2">
             {{ formatFullTime(selectedMessage.timestamp) }}
           </el-descriptions-item>
@@ -425,6 +428,21 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
     .join(" ");
+}
+
+function formatNumberWithCommas(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
+function formatPayloadSize(payload: string | Uint8Array | undefined): string {
+  const size = payloadToBytes(payload).length;
+  if (size < 1024) {
+    return `${formatNumberWithCommas(size)} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(2)} KB (${formatNumberWithCommas(size)} B)`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(2)} MB (${formatNumberWithCommas(size)} B)`;
 }
 
 function buildDerivedMessageMeta(msg: MqttMessage): DerivedMessageMeta {

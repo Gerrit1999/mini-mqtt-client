@@ -143,6 +143,7 @@ messages:
   viewPayload: 查看消息内容
   copyPayload: 复制
   copyToPublish: 复制到发布
+  payloadSize: Payload 大小
   search:
     matchCase: 区分大小写
     wholeWord: 全词匹配

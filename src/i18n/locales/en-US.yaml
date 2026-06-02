@@ -143,6 +143,7 @@ messages:
   viewPayload: View Payload
   copyPayload: Copy
   copyToPublish: Copy to Publish
+  payloadSize: Payload Size
   search:
     matchCase: Match case
     wholeWord: Match whole word
