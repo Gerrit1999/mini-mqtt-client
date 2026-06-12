@@ -250,7 +250,7 @@ import { useAppStore, type Theme, type Locale } from '@/stores/app'
 import { useMqttStore } from '@/stores/mqtt'
 import { useMessageStore } from '@/stores/message'
 
-const GITHUB_REPO = 'dreamlonglll/mini-mqtt-client'
+const GITHUB_REPO = 'Gerrit1999/mini-mqtt-client'
 const MESSAGE_LIMIT_MIN = 100
 const MESSAGE_LIMIT_MAX = 10000
 const MQTT_PACKET_SIZE_LIMIT_MIN = 10

@@ -9,7 +9,7 @@ export type Theme = "light" | "dark" | "auto";
 export type ViewType = "messages" | "templates";
 export type { Locale, ActualLocale };
 
-export const GITHUB_REPO = 'dreamlonglll/mini-mqtt-client';
+export const GITHUB_REPO = 'Gerrit1999/mini-mqtt-client';
 
 // 版本更新信息
 export interface UpdateInfo {
