@@ -15,13 +15,13 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
-            args: '--target universal-apple-darwin'
+            args: '--target universal-apple-darwin -- --locked'
             name: 'macOS'
           - platform: 'ubuntu-22.04'
-            args: ''
+            args: '-- --locked'
             name: 'Linux'
           - platform: 'windows-latest'
-            args: ''
+            args: '-- --locked'
             name: 'Windows'
 
     runs-on: ${{ matrix.platform }}

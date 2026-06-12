@@ -29,6 +29,7 @@ __pycache__/
 
 # Lock files
 Cargo.lock
+!src-tauri/Cargo.lock
 
 # Auto-generated TypeScript declaration files
 src/auto-imports.d.ts
