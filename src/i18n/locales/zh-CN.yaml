@@ -82,16 +82,16 @@ settings:
     auto: 跟随系统
   storage:
     title: 数据存储
-    desc: 配置和脚本等数据的存储位置
-    changeLocation: 更改位置
+    desc: 配置、脚本和消息历史等数据的存储文件夹
+    changeLocation: 更改文件夹
     copyPath: 复制路径
-    migrateAlert: 将迁移数据到新位置
-    migrateTitle: 更改数据存储位置
-    migrateConfirm: 是否将现有数据迁移到新位置？
+    migrateAlert: 将迁移数据到新文件夹
+    migrateTitle: 更改数据存储文件夹
+    migrateConfirm: 是否将现有数据迁移到新文件夹？
     migrateBtn: 迁移数据
-    changeOnlyBtn: 仅更改路径
+    changeOnlyBtn: 仅更改文件夹
     migrateSuccess: 数据迁移完成，请重启应用
-    changeSuccess: 存储位置已更改，请重启应用
+    changeSuccess: 存储文件夹已更改，请重启应用
   messages:
     title: 消息
     desc: 配置每个连接在界面中当前保留的最大消息数量，导出会包含全部本地历史

@@ -58,38 +58,6 @@
         </el-radio-group>
       </div>
 
-      <!-- 数据存储设置 -->
-      <div class="setting-section">
-        <div class="setting-header">
-          <div class="setting-title">{{ $t('settings.storage.title') }}</div>
-          <div class="setting-desc">{{ $t('settings.storage.desc') }}</div>
-        </div>
-        <div class="path-group">
-          <el-tooltip :content="currentDataPath" placement="top">
-            <el-input :model-value="currentDataPath" readonly size="small" class="path-input" />
-          </el-tooltip>
-          <div class="action-group">
-            <el-tooltip :content="$t('settings.storage.changeLocation')" placement="top">
-              <el-button size="small" :icon="FolderOpened" @click="handleSelectFolder" />
-            </el-tooltip>
-            <el-tooltip :content="$t('settings.storage.copyPath')" placement="top">
-              <el-button size="small" :icon="CopyDocument" @click="handleCopyPath" />
-            </el-tooltip>
-          </div>
-        </div>
-        <el-alert
-          v-if="newDataPath"
-          type="warning"
-          :closable="false"
-          show-icon
-          class="migrate-alert"
-        >
-          <template #title>
-            <span>{{ $t('settings.storage.migrateAlert') }}: {{ truncatePath(newDataPath) }}</span>
-          </template>
-        </el-alert>
-      </div>
-
       <!-- 消息设置 -->
       <div class="setting-section">
         <div class="setting-header">
@@ -167,6 +135,36 @@
         </div>
       </div>
 
+      <!-- 数据存储设置 -->
+      <div class="setting-section">
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.storage.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.storage.desc') }}</div>
+        </div>
+        <div class="path-group">
+          <el-input :model-value="currentDataPath" readonly size="small" class="path-input" />
+          <div class="action-group">
+            <el-tooltip :content="$t('settings.storage.changeLocation')" placement="top">
+              <el-button size="small" :icon="FolderOpened" @click="handleSelectFolder" />
+            </el-tooltip>
+            <el-tooltip :content="$t('settings.storage.copyPath')" placement="top">
+              <el-button size="small" :icon="CopyDocument" @click="handleCopyPath" />
+            </el-tooltip>
+          </div>
+        </div>
+        <el-alert
+          v-if="newDataPath"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="migrate-alert"
+        >
+          <template #title>
+            <span>{{ $t('settings.storage.migrateAlert') }}: {{ truncatePath(newDataPath) }}</span>
+          </template>
+        </el-alert>
+      </div>
+
       <!-- 日志设置 -->
       <div class="setting-section">
         <div class="setting-header">
@@ -174,9 +172,7 @@
           <div class="setting-desc">{{ $t('settings.log.desc') }}</div>
         </div>
         <div class="path-group">
-          <el-tooltip :content="logPath" placement="top">
-            <el-input :model-value="logPath" readonly size="small" class="path-input" />
-          </el-tooltip>
+          <el-input :model-value="logPath" readonly size="small" class="path-input" />
           <div class="action-group">
             <el-tooltip :content="$t('settings.log.openDir')" placement="top">
               <el-button size="small" :icon="FolderOpened" @click="handleOpenLogFolder" />
@@ -613,10 +609,20 @@ async function handleOpenRelease() {
 </script>
 
 <style scoped lang="scss">
-.settings-dialog {
-  :deep(.el-dialog__body) {
-    padding-top: 12px;
-  }
+:global(.settings-dialog) {
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 48px auto;
+}
+
+:global(.settings-dialog .el-dialog__body) {
+  padding-top: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
 }
 
 .settings-content {

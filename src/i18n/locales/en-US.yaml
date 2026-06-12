@@ -82,16 +82,16 @@ settings:
     auto: Follow System
   storage:
     title: Data Storage
-    desc: Storage location for configuration and scripts
-    changeLocation: Change Location
+    desc: Storage folder for configuration, scripts, and message history
+    changeLocation: Change Folder
     copyPath: Copy Path
-    migrateAlert: Data will be migrated to the new location
-    migrateTitle: Change Data Storage Location
-    migrateConfirm: Migrate existing data to the new location?
+    migrateAlert: Data will be migrated to the new folder
+    migrateTitle: Change Data Storage Folder
+    migrateConfirm: Migrate existing data to the new folder?
     migrateBtn: Migrate Data
-    changeOnlyBtn: Change Path Only
+    changeOnlyBtn: Change Folder Only
     migrateSuccess: Data migration complete, please restart the application
-    changeSuccess: Storage location changed, please restart the application
+    changeSuccess: Storage folder changed, please restart the application
   messages:
     title: Messages
     desc: Configure how many messages each connection keeps in the UI; exports still include the full local history

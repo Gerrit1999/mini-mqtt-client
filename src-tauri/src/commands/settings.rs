@@ -109,7 +109,7 @@ pub fn update_message_cleanup_policy(
 /// 获取当前数据存储路径
 #[tauri::command]
 pub fn get_data_path(storage: tauri::State<Storage>) -> Result<String, String> {
-    Ok(storage.get_file_path().to_string_lossy().to_string())
+    Ok(storage.get_storage_dir().to_string_lossy().to_string())
 }
 
 /// 迁移数据到新路径
@@ -126,25 +126,24 @@ pub fn migrate_data_path(
         return Err("Please provide an absolute path".to_string());
     }
 
-    // 确保目标目录存在
-    if let Some(parent) = new_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+    if new_path.exists() && !new_path.is_dir() {
+        return Err("Please provide a directory path".to_string());
     }
+
+    // 确保目标目录存在
+    fs::create_dir_all(&new_path).map_err(|e| format!("Failed to create directory: {}", e))?;
 
     // 如果需要迁移，复制当前数据到新位置
     if migrate {
         let current_path = storage.get_file_path();
+        let new_data_path = new_path.join("data.yaml");
         if current_path.exists() {
-            fs::copy(current_path, &new_path)
+            fs::copy(current_path, &new_data_path)
                 .map_err(|e| format!("Failed to copy data file: {}", e))?;
         }
 
         let current_db_path = storage.get_message_db_path();
-        let new_db_path = if new_path.extension().and_then(|ext| ext.to_str()) == Some("yaml") {
-            new_path.with_file_name("messages.sqlite")
-        } else {
-            new_path.with_extension("messages.sqlite")
-        };
+        let new_db_path = new_path.join("messages.sqlite");
         if current_db_path.exists() {
             fs::copy(current_db_path, new_db_path)
                 .map_err(|e| format!("Failed to copy message db: {}", e))?;
@@ -171,8 +170,7 @@ pub async fn select_data_folder(app_handle: AppHandle) -> Result<Option<String>,
         Some(file_path) => {
             // FilePath 需要转换为 PathBuf
             let path_buf = file_path.as_path().ok_or("Invalid path")?;
-            let data_file = path_buf.join("data.yaml");
-            Ok(Some(data_file.to_string_lossy().to_string()))
+            Ok(Some(path_buf.to_string_lossy().to_string()))
         }
         None => Ok(None),
     }

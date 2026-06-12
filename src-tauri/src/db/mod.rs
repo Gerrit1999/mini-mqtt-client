@@ -91,7 +91,7 @@ impl Storage {
         let config = load_yaml_or_backup::<AppConfig>(&config_path)?;
 
         let file_path = if let Some(custom_path) = &config.data_path {
-            let custom_path = PathBuf::from(custom_path);
+            let custom_path = data_file_path_from_storage_path(PathBuf::from(custom_path));
             if custom_path.exists() || custom_path.parent().map(|p| p.exists()).unwrap_or(false) {
                 custom_path
             } else {
@@ -125,6 +125,10 @@ impl Storage {
     /// 获取当前数据文件路径
     pub fn get_file_path(&self) -> &PathBuf {
         &self.file_path
+    }
+
+    pub fn get_storage_dir(&self) -> PathBuf {
+        storage_dir_from_data_file_path(&self.file_path)
     }
 
     pub fn get_message_db_path(&self) -> &PathBuf {
@@ -730,10 +734,28 @@ impl Storage {
 }
 
 fn message_db_path(data_file_path: &Path) -> PathBuf {
-    if data_file_path.extension().and_then(|ext| ext.to_str()) == Some("yaml") {
-        data_file_path.with_file_name("messages.sqlite")
+    storage_dir_from_data_file_path(data_file_path).join("messages.sqlite")
+}
+
+pub fn data_file_path_from_storage_path(path: PathBuf) -> PathBuf {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("yaml") {
+        path
+    } else if path.is_file() {
+        path.parent()
+            .map(|parent| parent.join("data.yaml"))
+            .unwrap_or_else(|| PathBuf::from("data.yaml"))
     } else {
-        data_file_path.with_extension("messages.sqlite")
+        path.join("data.yaml")
+    }
+}
+
+fn storage_dir_from_data_file_path(path: &Path) -> PathBuf {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("yaml") {
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        path.to_path_buf()
     }
 }
 
@@ -1040,6 +1062,33 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn storage_directory_maps_to_data_yaml_and_message_db() {
+        let dir = test_dir("storage-dir");
+
+        assert_eq!(
+            data_file_path_from_storage_path(dir.clone()),
+            dir.join("data.yaml")
+        );
+        assert_eq!(message_db_path(&dir), dir.join("messages.sqlite"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_data_yaml_path_remains_supported() {
+        let dir = test_dir("legacy-data-path");
+        let data_file = dir.join("data.yaml");
+
+        assert_eq!(
+            data_file_path_from_storage_path(data_file.clone()),
+            data_file
+        );
+        assert_eq!(message_db_path(&data_file), dir.join("messages.sqlite"));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
