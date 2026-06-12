@@ -6,8 +6,10 @@ use models::{
     UpdateScriptRequest, UpdateSubscriptionRequest, UpdateTemplateRequest,
 };
 use parking_lot::RwLock;
-use std::fs;
-use std::path::PathBuf;
+use serde::de::DeserializeOwned;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -73,14 +75,7 @@ impl Storage {
         fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
 
         let config_path = app_dir.join("config.yaml");
-        let config = if config_path.exists() {
-            fs::read_to_string(&config_path)
-                .ok()
-                .and_then(|content| serde_yaml::from_str::<AppConfig>(&content).ok())
-                .unwrap_or_default()
-        } else {
-            AppConfig::default()
-        };
+        let config = load_yaml_or_backup::<AppConfig>(&config_path)?;
 
         let file_path = if let Some(custom_path) = &config.data_path {
             let custom_path = PathBuf::from(custom_path);
@@ -93,12 +88,7 @@ impl Storage {
             app_dir.join("data.yaml")
         };
 
-        let data = if file_path.exists() {
-            let content = fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
-            serde_yaml::from_str(&content).unwrap_or_default()
-        } else {
-            AppData::default()
-        };
+        let data = load_yaml_or_backup::<AppData>(&file_path)?;
 
         Ok(Self {
             data: RwLock::new(data),
@@ -149,13 +139,13 @@ impl Storage {
     fn save(&self) -> Result<(), String> {
         let data = self.data.read();
         let content = serde_yaml::to_string(&*data).map_err(|e| e.to_string())?;
-        fs::write(&self.file_path, content).map_err(|e| e.to_string())
+        write_yaml_file_with_backup::<AppData>(&self.file_path, content.as_bytes())
     }
 
     fn save_config(&self) -> Result<(), String> {
         let config = self.config.read();
         let content = serde_yaml::to_string(&*config).map_err(|e| e.to_string())?;
-        fs::write(&self.config_path, content).map_err(|e| e.to_string())
+        write_yaml_file_with_backup::<AppConfig>(&self.config_path, content.as_bytes())
     }
 
     // ===== Server 操作 =====
@@ -594,4 +584,339 @@ fn sanitize_mqtt_packet_size_limit_kb(limit: Option<usize>) -> usize {
     limit
         .unwrap_or(DEFAULT_MQTT_PACKET_SIZE_LIMIT_KB)
         .clamp(MIN_MQTT_PACKET_SIZE_LIMIT_KB, MAX_MQTT_PACKET_SIZE_LIMIT_KB)
+}
+
+fn load_yaml_or_backup<T>(path: &Path) -> Result<T, String>
+where
+    T: DeserializeOwned + Default,
+{
+    if !path.exists() {
+        if let Some((loaded_path, value)) = load_first_available_backup(path) {
+            return value.map_err(|backup_error| {
+                format!(
+                    "{} is missing and backup {} could not be loaded: {}",
+                    path.display(),
+                    loaded_path.display(),
+                    backup_error
+                )
+            });
+        }
+        return Ok(T::default());
+    }
+
+    match read_yaml_file(path) {
+        Ok(value) => Ok(value),
+        Err(primary_error) => {
+            if let Some((loaded_path, value)) = load_first_available_backup(path) {
+                return value.map_err(|backup_error| {
+                    format!(
+                        "{} could not be loaded: {}; backup {} also failed: {}",
+                        path.display(),
+                        primary_error,
+                        loaded_path.display(),
+                        backup_error
+                    )
+                });
+            }
+
+            Err(primary_error)
+        }
+    }
+}
+
+fn load_first_available_backup<T>(path: &Path) -> Option<(PathBuf, Result<T, String>)>
+where
+    T: DeserializeOwned,
+{
+    for fallback_path in [replacing_path(path), backup_path(path)] {
+        if fallback_path.exists() {
+            return Some((fallback_path.clone(), read_yaml_file(&fallback_path)));
+        }
+    }
+    None
+}
+
+fn read_yaml_file<T>(path: &Path) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+    serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+}
+
+fn write_yaml_file_with_backup<T>(path: &Path, content: &[u8]) -> Result<(), String>
+where
+    T: DeserializeOwned,
+{
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+
+    let temp_path = temp_path(path);
+    let backup_path = backup_path(path);
+    let replacing_path = replacing_path(path);
+
+    if temp_path.exists() {
+        fs::remove_file(&temp_path)
+            .map_err(|e| format!("Failed to remove stale {}: {}", temp_path.display(), e))?;
+    }
+
+    {
+        let mut temp_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|e| format!("Failed to create {}: {}", temp_path.display(), e))?;
+
+        temp_file
+            .write_all(content)
+            .map_err(|e| format!("Failed to write {}: {}", temp_path.display(), e))?;
+        temp_file
+            .sync_all()
+            .map_err(|e| format!("Failed to flush {}: {}", temp_path.display(), e))?;
+    }
+
+    let replaced_current_file = path.exists();
+    let should_backup_current = replaced_current_file && read_yaml_file::<T>(path).is_ok();
+
+    if replaced_current_file {
+        if replacing_path.exists() {
+            fs::remove_file(&replacing_path).map_err(|e| {
+                format!("Failed to remove stale {}: {}", replacing_path.display(), e)
+            })?;
+        }
+
+        fs::rename(path, &replacing_path).map_err(|e| {
+            format!(
+                "Failed to move {} before replacement {}: {}",
+                path.display(),
+                replacing_path.display(),
+                e
+            )
+        })?;
+    }
+
+    if let Err(replace_error) = fs::rename(&temp_path, path) {
+        if replacing_path.exists() && !path.exists() {
+            let _ = fs::rename(&replacing_path, path);
+        }
+        let _ = fs::remove_file(&temp_path);
+
+        return Err(format!(
+            "Failed to replace {} with {}: {}",
+            path.display(),
+            temp_path.display(),
+            replace_error
+        ));
+    }
+
+    if replaced_current_file && replacing_path.exists() {
+        if should_backup_current {
+            if backup_path.exists() {
+                fs::remove_file(&backup_path).map_err(|e| {
+                    format!(
+                        "Failed to remove old backup {}: {}",
+                        backup_path.display(),
+                        e
+                    )
+                })?;
+            }
+
+            fs::rename(&replacing_path, &backup_path).map_err(|e| {
+                format!(
+                    "Failed to move {} to backup {}: {}",
+                    replacing_path.display(),
+                    backup_path.display(),
+                    e
+                )
+            })?;
+        } else {
+            fs::remove_file(&replacing_path).map_err(|e| {
+                format!(
+                    "Failed to remove invalid replaced file {}: {}",
+                    replacing_path.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn temp_path(path: &Path) -> PathBuf {
+    sibling_path_with_suffix(path, "tmp")
+}
+
+fn replacing_path(path: &Path) -> PathBuf {
+    sibling_path_with_suffix(path, "old")
+}
+
+fn backup_path(path: &Path) -> PathBuf {
+    sibling_path_with_suffix(path, "bak")
+}
+
+fn sibling_path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "data".into());
+
+    path.with_file_name(format!("{}.{}", file_name, suffix))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mini-mqtt-client-{}-{}-{}",
+            name,
+            std::process::id(),
+            timestamp
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn write_file_with_backup_replaces_file_and_keeps_previous_copy() {
+        let dir = test_dir("write-backup");
+        let path = dir.join("data.yaml");
+
+        fs::write(&path, b"servers: []\n").unwrap();
+        write_yaml_file_with_backup::<serde_yaml::Value>(&path, b"servers:\n- name: local\n")
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "servers:\n- name: local\n"
+        );
+        assert_eq!(
+            fs::read_to_string(backup_path(&path)).unwrap(),
+            "servers: []\n"
+        );
+        assert!(!temp_path(&path).exists());
+        assert!(!replacing_path(&path).exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn load_yaml_or_backup_recovers_when_primary_is_corrupt() {
+        let dir = test_dir("load-backup");
+        let path = dir.join("data.yaml");
+        let backup = backup_path(&path);
+
+        fs::write(&path, b"\0\0\0\0").unwrap();
+        fs::write(
+            backup,
+            b"servers: []\nsubscriptions: []\nmessages: []\ntemplates: []\nscripts: []\nenv_variables: []\n",
+        )
+        .unwrap();
+
+        let data = load_yaml_or_backup::<AppData>(&path).unwrap();
+
+        assert!(data.servers.is_empty());
+        assert!(data.scripts.is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn load_yaml_or_backup_prefers_replaced_file_before_backup() {
+        let dir = test_dir("load-old");
+        let path = dir.join("data.yaml");
+        let replaced = replacing_path(&path);
+        let backup = backup_path(&path);
+
+        fs::write(
+            replaced,
+            b"servers: []\nsubscriptions: []\nmessages: []\ntemplates: []\nscripts: []\nenv_variables:\n- id: 1\n  server_id: 1\n  name: from_old\n  value: newer\n  description: null\n  created_at: null\n  updated_at: null\n",
+        )
+        .unwrap();
+        fs::write(
+            backup,
+            b"servers: []\nsubscriptions: []\nmessages: []\ntemplates: []\nscripts: []\nenv_variables: []\n",
+        )
+        .unwrap();
+
+        let data = load_yaml_or_backup::<AppData>(&path).unwrap();
+
+        assert_eq!(data.env_variables.len(), 1);
+        assert_eq!(data.env_variables[0].name, "from_old");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn write_file_with_backup_preserves_existing_backup_when_current_file_is_corrupt() {
+        let dir = test_dir("preserve-backup");
+        let path = dir.join("data.yaml");
+        let backup = backup_path(&path);
+
+        fs::write(&path, b"\0\0\0").unwrap();
+        fs::write(&backup, b"servers: []\n").unwrap();
+
+        write_yaml_file_with_backup::<AppData>(
+            &path,
+            b"servers: []\nsubscriptions: []\nmessages: []\ntemplates: []\nscripts: []\nenv_variables: []\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "servers: []\nsubscriptions: []\nmessages: []\ntemplates: []\nscripts: []\nenv_variables: []\n"
+        );
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "servers: []\n");
+        assert!(!replacing_path(&path).exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn write_file_with_backup_keeps_replaced_file_when_primary_is_missing() {
+        let dir = test_dir("keep-old");
+        let path = dir.join("data.yaml");
+        let replaced = replacing_path(&path);
+
+        fs::write(&replaced, b"servers: []\n").unwrap();
+
+        write_yaml_file_with_backup::<AppData>(
+            &path,
+            b"servers: []\nsubscriptions: []\nmessages: []\ntemplates: []\nscripts: []\nenv_variables: []\n",
+        )
+        .unwrap();
+
+        assert!(path.exists());
+        assert_eq!(fs::read_to_string(replaced).unwrap(), "servers: []\n");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn load_yaml_or_backup_fails_when_primary_and_backup_are_corrupt() {
+        let dir = test_dir("load-fail");
+        let path = dir.join("data.yaml");
+        let backup = backup_path(&path);
+
+        fs::write(&path, b"\0\0").unwrap();
+        fs::write(backup, b"\0\0").unwrap();
+
+        let error = load_yaml_or_backup::<AppData>(&path).unwrap_err();
+
+        assert!(error.contains("could not be loaded"));
+        assert!(error.contains("backup"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
