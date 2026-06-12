@@ -64,6 +64,7 @@ pub fn run() {
             save_received_message,
             get_message_history,
             clear_message_history,
+            cleanup_message_history,
             // 模板命令
             create_template,
             get_template,
@@ -79,6 +80,7 @@ pub fn run() {
             get_app_settings,
             update_message_limit,
             update_mqtt_packet_size_limit,
+            update_message_cleanup_policy,
             get_data_path,
             migrate_data_path,
             select_data_folder,

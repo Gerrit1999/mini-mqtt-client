@@ -3,14 +3,17 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 
 use crate::db::{
-    Storage, MAX_MESSAGE_LIMIT, MAX_MQTT_PACKET_SIZE_LIMIT_KB, MIN_MESSAGE_LIMIT,
-    MIN_MQTT_PACKET_SIZE_LIMIT_KB,
+    Storage, MAX_MESSAGE_LIMIT, MAX_MESSAGE_RETENTION_COUNT, MAX_MESSAGE_RETENTION_DAYS,
+    MAX_MQTT_PACKET_SIZE_LIMIT_KB, MIN_MESSAGE_LIMIT, MIN_MESSAGE_RETENTION_COUNT,
+    MIN_MESSAGE_RETENTION_DAYS, MIN_MQTT_PACKET_SIZE_LIMIT_KB,
 };
 
 #[derive(Debug, serde::Serialize)]
 pub struct AppSettings {
     pub message_limit: usize,
     pub mqtt_packet_size_limit_kb: usize,
+    pub message_retention_days: u32,
+    pub message_retention_count: usize,
 }
 
 #[tauri::command]
@@ -18,6 +21,8 @@ pub fn get_app_settings(storage: tauri::State<Storage>) -> Result<AppSettings, S
     Ok(AppSettings {
         message_limit: storage.get_message_limit(),
         mqtt_packet_size_limit_kb: storage.get_mqtt_packet_size_limit_kb(),
+        message_retention_days: storage.get_message_retention_days(),
+        message_retention_count: storage.get_message_retention_count(),
     })
 }
 
@@ -38,6 +43,8 @@ pub fn update_message_limit(
     Ok(AppSettings {
         message_limit: storage.get_message_limit(),
         mqtt_packet_size_limit_kb: storage.get_mqtt_packet_size_limit_kb(),
+        message_retention_days: storage.get_message_retention_days(),
+        message_retention_count: storage.get_message_retention_count(),
     })
 }
 
@@ -60,6 +67,42 @@ pub fn update_mqtt_packet_size_limit(
     Ok(AppSettings {
         message_limit: storage.get_message_limit(),
         mqtt_packet_size_limit_kb: storage.get_mqtt_packet_size_limit_kb(),
+        message_retention_days: storage.get_message_retention_days(),
+        message_retention_count: storage.get_message_retention_count(),
+    })
+}
+
+#[tauri::command]
+pub fn update_message_cleanup_policy(
+    storage: tauri::State<Storage>,
+    message_retention_days: u32,
+    message_retention_count: usize,
+) -> Result<AppSettings, String> {
+    if !(MIN_MESSAGE_RETENTION_DAYS..=MAX_MESSAGE_RETENTION_DAYS)
+        .contains(&message_retention_days)
+    {
+        return Err(format!(
+            "Message retention days must be between {} and {}",
+            MIN_MESSAGE_RETENTION_DAYS, MAX_MESSAGE_RETENTION_DAYS
+        ));
+    }
+
+    if !(MIN_MESSAGE_RETENTION_COUNT..=MAX_MESSAGE_RETENTION_COUNT)
+        .contains(&message_retention_count)
+    {
+        return Err(format!(
+            "Message retention count must be between {} and {}",
+            MIN_MESSAGE_RETENTION_COUNT, MAX_MESSAGE_RETENTION_COUNT
+        ));
+    }
+
+    storage.set_message_cleanup_policy(message_retention_days, message_retention_count)?;
+
+    Ok(AppSettings {
+        message_limit: storage.get_message_limit(),
+        mqtt_packet_size_limit_kb: storage.get_mqtt_packet_size_limit_kb(),
+        message_retention_days: storage.get_message_retention_days(),
+        message_retention_count: storage.get_message_retention_count(),
     })
 }
 
@@ -94,6 +137,17 @@ pub fn migrate_data_path(
         if current_path.exists() {
             fs::copy(current_path, &new_path)
                 .map_err(|e| format!("Failed to copy data file: {}", e))?;
+        }
+
+        let current_db_path = storage.get_message_db_path();
+        let new_db_path = if new_path.extension().and_then(|ext| ext.to_str()) == Some("yaml") {
+            new_path.with_file_name("messages.sqlite")
+        } else {
+            new_path.with_extension("messages.sqlite")
+        };
+        if current_db_path.exists() {
+            fs::copy(current_db_path, new_db_path)
+                .map_err(|e| format!("Failed to copy message db: {}", e))?;
         }
     }
 

@@ -79,6 +79,13 @@ pub struct MessageHistory {
     pub created_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MessageCleanupResult {
+    pub deleted_by_age: usize,
+    pub deleted_by_count: usize,
+    pub vacuumed: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishPayload {
     pub topic: String,

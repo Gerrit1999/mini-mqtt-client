@@ -96,6 +96,12 @@ settings:
     title: Messages
     desc: Configure how many messages each connection keeps in the UI; exports still include the full local history
     limit: Message Limit
+    retentionDays: History Retention Days
+    retentionCount: Retained Per Connection
+    storageMaintenance: Storage Maintenance
+    cleanupAndVacuum: Clean and Compact
+    cleanupSuccess: Cleaned {count} historical messages
+    daysUnit: days
   mqtt:
     title: MQTT
     desc: Configure the MQTT incoming and outgoing packet size limit; applies to new connections after saving

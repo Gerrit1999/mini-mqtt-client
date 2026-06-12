@@ -36,3 +36,4 @@ rustls-native-certs = "0.8"
 rustls-pemfile = "2"
 pkcs8 = { version = "0.10", features = ["encryption", "pem"] }
 pem = "3"
+rusqlite = { version = "0.32", features = ["bundled"] }

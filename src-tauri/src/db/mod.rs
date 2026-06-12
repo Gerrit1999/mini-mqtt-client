@@ -2,10 +2,11 @@ pub mod models;
 
 use models::{
     CommandTemplate, CreateEnvVariableRequest, CreateScriptRequest, CreateTemplateRequest,
-    EnvVariable, MessageHistory, MqttServer, Script, Subscription, UpdateEnvVariableRequest,
-    UpdateScriptRequest, UpdateSubscriptionRequest, UpdateTemplateRequest,
+    EnvVariable, MessageCleanupResult, MessageHistory, MqttServer, Script, Subscription,
+    UpdateEnvVariableRequest, UpdateScriptRequest, UpdateSubscriptionRequest, UpdateTemplateRequest,
 };
 use parking_lot::RwLock;
+use rusqlite::{params, Connection, OpenFlags};
 use serde::de::DeserializeOwned;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -21,11 +22,18 @@ pub const MAX_MESSAGE_LIMIT: usize = 10000;
 pub const DEFAULT_MQTT_PACKET_SIZE_LIMIT_KB: usize = 1024;
 pub const MIN_MQTT_PACKET_SIZE_LIMIT_KB: usize = 10;
 pub const MAX_MQTT_PACKET_SIZE_LIMIT_KB: usize = 102400;
+pub const DEFAULT_MESSAGE_RETENTION_DAYS: u32 = 30;
+pub const MIN_MESSAGE_RETENTION_DAYS: u32 = 1;
+pub const MAX_MESSAGE_RETENTION_DAYS: u32 = 3650;
+pub const DEFAULT_MESSAGE_RETENTION_COUNT: usize = 100000;
+pub const MIN_MESSAGE_RETENTION_COUNT: usize = 1000;
+pub const MAX_MESSAGE_RETENTION_COUNT: usize = 10_000_000;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct AppData {
     pub servers: Vec<MqttServer>,
     pub subscriptions: Vec<Subscription>,
+    #[serde(default, skip_serializing)]
     pub messages: Vec<MessageHistory>,
     #[serde(default)]
     pub templates: Vec<CommandTemplate>,
@@ -56,6 +64,10 @@ pub struct AppConfig {
     pub message_limit: Option<usize>,
     #[serde(default)]
     pub mqtt_packet_size_limit_kb: Option<usize>,
+    #[serde(default)]
+    pub message_retention_days: Option<u32>,
+    #[serde(default)]
+    pub message_retention_count: Option<usize>,
 }
 
 pub struct Storage {
@@ -63,6 +75,7 @@ pub struct Storage {
     config: RwLock<AppConfig>,
     config_path: PathBuf,
     file_path: PathBuf,
+    message_db_path: PathBuf,
 }
 
 impl Storage {
@@ -88,19 +101,34 @@ impl Storage {
             app_dir.join("data.yaml")
         };
 
-        let data = load_yaml_or_backup::<AppData>(&file_path)?;
+        let mut data = load_yaml_or_backup::<AppData>(&file_path)?;
+        let legacy_messages = data.messages.clone();
+        let message_db_path = message_db_path(&file_path);
+        initialize_message_db(&message_db_path)?;
+        migrate_legacy_messages(&legacy_messages, &message_db_path)?;
+        if !legacy_messages.is_empty() {
+            data.messages.clear();
+        }
 
-        Ok(Self {
+        let storage = Self {
             data: RwLock::new(data),
             config: RwLock::new(config),
             config_path,
             file_path,
-        })
+            message_db_path,
+        };
+        storage.cleanup_message_history(false)?;
+
+        Ok(storage)
     }
 
     /// 获取当前数据文件路径
     pub fn get_file_path(&self) -> &PathBuf {
         &self.file_path
+    }
+
+    pub fn get_message_db_path(&self) -> &PathBuf {
+        &self.message_db_path
     }
 
     pub fn get_message_limit(&self) -> usize {
@@ -129,11 +157,100 @@ impl Storage {
         self.save_config()
     }
 
+    pub fn get_message_retention_days(&self) -> u32 {
+        sanitize_message_retention_days(self.config.read().message_retention_days)
+    }
+
+    pub fn get_message_retention_count(&self) -> usize {
+        sanitize_message_retention_count(self.config.read().message_retention_count)
+    }
+
+    pub fn set_message_cleanup_policy(
+        &self,
+        retention_days: u32,
+        retention_count: usize,
+    ) -> Result<(), String> {
+        let mut config = self.config.write();
+        config.message_retention_days = Some(sanitize_message_retention_days(Some(retention_days)));
+        config.message_retention_count =
+            Some(sanitize_message_retention_count(Some(retention_count)));
+        drop(config);
+        self.save_config()
+    }
+
     pub fn set_data_path(&self, path: String) -> Result<(), String> {
         let mut config = self.config.write();
         config.data_path = Some(path);
         drop(config);
         self.save_config()
+    }
+
+    fn open_message_db(&self) -> Result<Connection, String> {
+        Connection::open_with_flags(
+            &self.message_db_path,
+            OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    fn delete_messages_by_server(&self, server_id: i64) -> Result<(), String> {
+        let conn = self.open_message_db()?;
+        conn.execute("DELETE FROM message_history WHERE server_id = ?", params![server_id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn clear_messages_by_server(&self, server_id: i64) -> Result<(), String> {
+        self.delete_messages_by_server(server_id)
+    }
+
+    pub fn cleanup_message_history(&self, vacuum: bool) -> Result<MessageCleanupResult, String> {
+        let conn = self.open_message_db()?;
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::days(self.get_message_retention_days() as i64);
+        let deleted_by_age = conn
+            .execute(
+                "DELETE FROM message_history WHERE created_at < ?",
+                params![cutoff.to_rfc3339()],
+            )
+            .map_err(|e| e.to_string())?;
+
+        let retention_count = self.get_message_retention_count();
+        let deleted_by_count = conn
+            .execute(
+                r#"
+                DELETE FROM message_history
+                WHERE id IN (
+                    SELECT id
+                    FROM (
+                        SELECT
+                            id,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY server_id
+                                ORDER BY created_at DESC, id DESC
+                            ) AS row_num
+                        FROM message_history
+                    )
+                    WHERE row_num > ?
+                )
+                "#,
+                params![retention_count as i64],
+            )
+            .map_err(|e| e.to_string())?;
+
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|e| e.to_string())?;
+
+        if vacuum {
+            conn.execute_batch("VACUUM;")
+                .map_err(|e| e.to_string())?;
+        }
+
+        Ok(MessageCleanupResult {
+            deleted_by_age,
+            deleted_by_count,
+            vacuumed: vacuum,
+        })
     }
 
     fn save(&self) -> Result<(), String> {
@@ -187,11 +304,11 @@ impl Storage {
         data.servers.retain(|s| s.id != Some(id));
         // 同时删除相关订阅、消息、模板、脚本和环境变量
         data.subscriptions.retain(|s| s.server_id != id);
-        data.messages.retain(|m| m.server_id != id);
         data.templates.retain(|t| t.server_id != id);
         data.scripts.retain(|s| s.server_id != id);
         data.env_variables.retain(|e| e.server_id != id);
         drop(data);
+        self.delete_messages_by_server(id)?;
         self.save()
     }
 
@@ -258,37 +375,75 @@ impl Storage {
 
     // ===== 消息操作 =====
     pub fn get_messages(&self, server_id: i64, limit: usize, offset: usize) -> Vec<MessageHistory> {
-        let data = self.data.read();
-        data.messages
-            .iter()
-            .filter(|m| m.server_id == server_id)
-            .rev()
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect()
+        let conn = match self.open_message_db() {
+            Ok(conn) => conn,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut stmt = match conn.prepare(
+            r#"
+            SELECT id, server_id, direction, topic, payload, payload_format, qos, retain, created_at
+            FROM message_history
+            WHERE server_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            "#,
+        ) {
+            Ok(stmt) => stmt,
+            Err(_) => return Vec::new(),
+        };
+
+        let rows = match stmt.query_map(params![server_id, limit as i64, offset as i64], |row| {
+            Ok(MessageHistory {
+                id: row.get(0)?,
+                server_id: row.get(1)?,
+                direction: row.get(2)?,
+                topic: row.get(3)?,
+                payload: row.get(4)?,
+                payload_format: row.get(5)?,
+                qos: row.get(6)?,
+                retain: row.get::<_, i64>(7)? != 0,
+                created_at: row.get(8)?,
+            })
+        }) {
+            Ok(rows) => rows,
+            Err(_) => return Vec::new(),
+        };
+
+        rows.filter_map(Result::ok).collect()
     }
 
     pub fn create_message(&self, mut msg: MessageHistory) -> Result<MessageHistory, String> {
-        let mut data = self.data.write();
-        data.next_message_id += 1;
-        msg.id = Some(data.next_message_id);
+        let conn = self.open_message_db()?;
         if msg.created_at.is_none() {
             msg.created_at = Some(chrono::Utc::now().to_rfc3339());
         }
-        let result = msg.clone();
-        data.messages.push(msg);
 
-        drop(data);
-        self.save()?;
-        Ok(result)
+        conn.execute(
+            r#"
+            INSERT INTO message_history (
+                server_id, direction, topic, payload, payload_format, qos, retain, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                msg.server_id,
+                msg.direction,
+                msg.topic,
+                msg.payload,
+                msg.payload_format,
+                msg.qos,
+                if msg.retain { 1 } else { 0 },
+                msg.created_at,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        msg.id = Some(conn.last_insert_rowid());
+        Ok(msg)
     }
 
     pub fn clear_messages(&self, server_id: i64) -> Result<(), String> {
-        let mut data = self.data.write();
-        data.messages.retain(|m| m.server_id != server_id);
-        drop(data);
-        self.save()
+        self.clear_messages_by_server(server_id)
     }
 
     // ===== 模板操作 =====
@@ -574,6 +729,93 @@ impl Storage {
     }
 }
 
+fn message_db_path(data_file_path: &Path) -> PathBuf {
+    if data_file_path.extension().and_then(|ext| ext.to_str()) == Some("yaml") {
+        data_file_path.with_file_name("messages.sqlite")
+    } else {
+        data_file_path.with_extension("messages.sqlite")
+    }
+}
+
+fn initialize_message_db(message_db_path: &Path) -> Result<(), String> {
+    if let Some(parent) = message_db_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let conn = Connection::open(message_db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch(
+        r#"
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = NORMAL;
+        CREATE TABLE IF NOT EXISTS message_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          server_id INTEGER NOT NULL,
+          direction TEXT NOT NULL,
+          topic TEXT NOT NULL,
+          payload TEXT,
+          payload_format TEXT,
+          qos INTEGER NOT NULL,
+          retain INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_message_history_server_created_at
+          ON message_history(server_id, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_message_history_server_topic_created_at
+          ON message_history(server_id, topic, created_at DESC, id DESC);
+        "#,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn migrate_legacy_messages(
+    legacy_messages: &[MessageHistory],
+    message_db_path: &Path,
+) -> Result<(), String> {
+    if legacy_messages.is_empty() {
+        return Ok(());
+    }
+
+    let mut conn = Connection::open(message_db_path).map_err(|e| e.to_string())?;
+    let has_existing_messages: i64 = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM message_history LIMIT 1)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if has_existing_messages != 0 {
+        return Ok(());
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare(
+                r#"
+                INSERT INTO message_history (
+                    server_id, direction, topic, payload, payload_format, qos, retain, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                "#,
+            )
+            .map_err(|e| e.to_string())?;
+
+        for msg in legacy_messages {
+            stmt.execute(params![
+                msg.server_id,
+                msg.direction,
+                msg.topic,
+                msg.payload,
+                msg.payload_format,
+                msg.qos,
+                if msg.retain { 1 } else { 0 },
+                msg.created_at,
+            ])
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
 fn sanitize_message_limit(limit: Option<usize>) -> usize {
     limit
         .unwrap_or(DEFAULT_MESSAGE_LIMIT)
@@ -584,6 +826,18 @@ fn sanitize_mqtt_packet_size_limit_kb(limit: Option<usize>) -> usize {
     limit
         .unwrap_or(DEFAULT_MQTT_PACKET_SIZE_LIMIT_KB)
         .clamp(MIN_MQTT_PACKET_SIZE_LIMIT_KB, MAX_MQTT_PACKET_SIZE_LIMIT_KB)
+}
+
+fn sanitize_message_retention_days(limit: Option<u32>) -> u32 {
+    limit
+        .unwrap_or(DEFAULT_MESSAGE_RETENTION_DAYS)
+        .clamp(MIN_MESSAGE_RETENTION_DAYS, MAX_MESSAGE_RETENTION_DAYS)
+}
+
+fn sanitize_message_retention_count(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_MESSAGE_RETENTION_COUNT)
+        .clamp(MIN_MESSAGE_RETENTION_COUNT, MAX_MESSAGE_RETENTION_COUNT)
 }
 
 fn load_yaml_or_backup<T>(path: &Path) -> Result<T, String>

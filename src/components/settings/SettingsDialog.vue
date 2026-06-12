@@ -108,6 +108,42 @@
             class="limit-input"
           />
         </div>
+        <div class="setting-row message-setting-row">
+          <span class="setting-label setting-label--compact">{{ $t('settings.messages.retentionDays') }}</span>
+          <el-input-number
+            v-model="currentMessageRetentionDays"
+            :min="MESSAGE_RETENTION_DAYS_MIN"
+            :max="MESSAGE_RETENTION_DAYS_MAX"
+            :step="1"
+            :controls-position="'right'"
+            size="small"
+            class="limit-input"
+          />
+          <span class="setting-unit">{{ $t('settings.messages.daysUnit') }}</span>
+        </div>
+        <div class="setting-row message-setting-row">
+          <span class="setting-label setting-label--compact">{{ $t('settings.messages.retentionCount') }}</span>
+          <el-input-number
+            v-model="currentMessageRetentionCount"
+            :min="MESSAGE_RETENTION_COUNT_MIN"
+            :max="MESSAGE_RETENTION_COUNT_MAX"
+            :step="1000"
+            :controls-position="'right'"
+            size="small"
+            class="limit-input"
+          />
+        </div>
+        <div class="setting-row message-setting-row">
+          <span class="setting-label setting-label--compact">{{ $t('settings.messages.storageMaintenance') }}</span>
+          <el-button
+            size="small"
+            :icon="Refresh"
+            :loading="cleaningMessages"
+            @click="handleCleanupMessages"
+          >
+            {{ $t('settings.messages.cleanupAndVacuum') }}
+          </el-button>
+        </div>
       </div>
 
       <!-- MQTT 设置 -->
@@ -219,6 +255,10 @@ const MESSAGE_LIMIT_MIN = 100
 const MESSAGE_LIMIT_MAX = 10000
 const MQTT_PACKET_SIZE_LIMIT_MIN = 10
 const MQTT_PACKET_SIZE_LIMIT_MAX = 102400
+const MESSAGE_RETENTION_DAYS_MIN = 1
+const MESSAGE_RETENTION_DAYS_MAX = 3650
+const MESSAGE_RETENTION_COUNT_MIN = 1000
+const MESSAGE_RETENTION_COUNT_MAX = 10000000
 
 const props = defineProps<{
   visible: boolean
@@ -248,11 +288,16 @@ const currentMessageLimit = ref(1000)
 const originalMessageLimit = ref(1000)
 const currentMqttPacketSizeLimitKb = ref(1024)
 const originalMqttPacketSizeLimitKb = ref(1024)
+const currentMessageRetentionDays = ref(30)
+const originalMessageRetentionDays = ref(30)
+const currentMessageRetentionCount = ref(100000)
+const originalMessageRetentionCount = ref(100000)
 const currentDataPath = ref('')
 const newDataPath = ref('')
 const logPath = ref('')
 const currentVersion = ref('')
 const checkingUpdate = ref(false)
+const cleaningMessages = ref(false)
 const updateInfo = ref<{ hasUpdate: boolean; latestVersion: string } | null>(null)
 
 // 是否有更改
@@ -261,6 +306,8 @@ const hasChanges = computed(() => {
          currentLocale.value !== originalLocale.value ||
          currentMessageLimit.value !== originalMessageLimit.value ||
          currentMqttPacketSizeLimitKb.value !== originalMqttPacketSizeLimitKb.value ||
+         currentMessageRetentionDays.value !== originalMessageRetentionDays.value ||
+         currentMessageRetentionCount.value !== originalMessageRetentionCount.value ||
          newDataPath.value !== ''
 })
 
@@ -274,6 +321,10 @@ async function loadSettings() {
   originalMessageLimit.value = appStore.messageLimit
   currentMqttPacketSizeLimitKb.value = appStore.mqttPacketSizeLimitKb
   originalMqttPacketSizeLimitKb.value = appStore.mqttPacketSizeLimitKb
+  currentMessageRetentionDays.value = appStore.messageRetentionDays
+  originalMessageRetentionDays.value = appStore.messageRetentionDays
+  currentMessageRetentionCount.value = appStore.messageRetentionCount
+  originalMessageRetentionCount.value = appStore.messageRetentionCount
   newDataPath.value = ''
   updateInfo.value = null
   
@@ -290,13 +341,23 @@ async function loadSettings() {
   }
 
   try {
-    const settings = await invoke<{ message_limit: number; mqtt_packet_size_limit_kb: number }>('get_app_settings')
+    const settings = await invoke<{
+      message_limit: number;
+      mqtt_packet_size_limit_kb: number;
+      message_retention_days: number;
+      message_retention_count: number;
+    }>('get_app_settings')
     currentMessageLimit.value = settings.message_limit
     originalMessageLimit.value = settings.message_limit
     currentMqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb
     originalMqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb
+    currentMessageRetentionDays.value = settings.message_retention_days
+    originalMessageRetentionDays.value = settings.message_retention_days
+    currentMessageRetentionCount.value = settings.message_retention_count
+    originalMessageRetentionCount.value = settings.message_retention_count
     appStore.setMessageLimit(settings.message_limit)
     appStore.setMqttPacketSizeLimitKb(settings.mqtt_packet_size_limit_kb)
+    appStore.setMessageCleanupPolicy(settings.message_retention_days, settings.message_retention_count)
   } catch (e) {
     console.error('获取应用设置失败:', e)
   }
@@ -371,6 +432,26 @@ async function handleClearLogs() {
   }
 }
 
+async function handleCleanupMessages() {
+  cleaningMessages.value = true
+  try {
+    const result = await invoke<{
+      deleted_by_age: number;
+      deleted_by_count: number;
+      vacuumed: boolean;
+    }>('cleanup_message_history', { vacuum: true })
+    ElMessage.success(
+      t('settings.messages.cleanupSuccess', {
+        count: result.deleted_by_age + result.deleted_by_count,
+      })
+    )
+  } catch (e) {
+    ElMessage.error(`${t('errors.deleteFailed')}: ${e}`)
+  } finally {
+    cleaningMessages.value = false
+  }
+}
+
 // 截断路径显示
 function truncatePath(path: string): string {
   if (!path) return ''
@@ -435,6 +516,26 @@ async function handleSave() {
       )
       appStore.setMqttPacketSizeLimitKb(settings.mqtt_packet_size_limit_kb)
       originalMqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb
+    }
+
+    if (
+      currentMessageRetentionDays.value !== originalMessageRetentionDays.value ||
+      currentMessageRetentionCount.value !== originalMessageRetentionCount.value
+    ) {
+      const settings = await invoke<{
+        message_retention_days: number;
+        message_retention_count: number;
+      }>('update_message_cleanup_policy', {
+        messageRetentionDays: currentMessageRetentionDays.value,
+        messageRetentionCount: currentMessageRetentionCount.value,
+      })
+      appStore.setMessageCleanupPolicy(
+        settings.message_retention_days,
+        settings.message_retention_count
+      )
+      originalMessageRetentionDays.value = settings.message_retention_days
+      originalMessageRetentionCount.value = settings.message_retention_count
+      await invoke('cleanup_message_history', { vacuum: false })
     }
     
     dialogVisible.value = false

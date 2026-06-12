@@ -21,6 +21,8 @@ export interface UpdateInfo {
 export interface AppSettings {
   message_limit: number;
   mqtt_packet_size_limit_kb: number;
+  message_retention_days: number;
+  message_retention_count: number;
 }
 
 // 复制到发布面板的消息数据
@@ -60,6 +62,10 @@ export const useAppStore = defineStore("app", () => {
 
   // MQTT 收发包大小上限（KB）
   const mqttPacketSizeLimitKb = ref(1024);
+
+  // SQLite 消息历史保留策略
+  const messageRetentionDays = ref(30);
+  const messageRetentionCount = ref(100000);
 
   // 版本更新信息
   const updateInfo = ref<UpdateInfo | null>(null);
@@ -232,10 +238,14 @@ export const useAppStore = defineStore("app", () => {
       const settings = await invoke<AppSettings>("get_app_settings");
       messageLimit.value = settings.message_limit;
       mqttPacketSizeLimitKb.value = settings.mqtt_packet_size_limit_kb;
+      messageRetentionDays.value = settings.message_retention_days;
+      messageRetentionCount.value = settings.message_retention_count;
     } catch (error) {
       console.warn("Failed to load app settings:", error);
       messageLimit.value = 1000;
       mqttPacketSizeLimitKb.value = 1024;
+      messageRetentionDays.value = 30;
+      messageRetentionCount.value = 100000;
     }
   };
 
@@ -245,6 +255,11 @@ export const useAppStore = defineStore("app", () => {
 
   const setMqttPacketSizeLimitKb = (value: number) => {
     mqttPacketSizeLimitKb.value = value;
+  };
+
+  const setMessageCleanupPolicy = (days: number, count: number) => {
+    messageRetentionDays.value = days;
+    messageRetentionCount.value = count;
   };
 
   // 设置当前视图
@@ -323,6 +338,8 @@ export const useAppStore = defineStore("app", () => {
     autoScroll,
     messageLimit,
     mqttPacketSizeLimitKb,
+    messageRetentionDays,
+    messageRetentionCount,
     updateInfo,
     checkingUpdate,
     toggleTheme,
@@ -340,6 +357,7 @@ export const useAppStore = defineStore("app", () => {
     initAppSettings,
     setMessageLimit,
     setMqttPacketSizeLimitKb,
+    setMessageCleanupPolicy,
     checkUpdate,
     clearUpdateInfo,
     cleanup,

@@ -1,4 +1,4 @@
-use crate::db::models::{MessageHistory, PublishPayload};
+use crate::db::models::{MessageCleanupResult, MessageHistory, PublishPayload};
 use crate::db::Storage;
 use crate::mqtt::MqttManager;
 use tauri::State;
@@ -91,4 +91,12 @@ pub async fn clear_message_history(
     server_id: i64,
 ) -> Result<(), String> {
     storage.clear_messages(server_id)
+}
+
+#[tauri::command]
+pub async fn cleanup_message_history(
+    storage: State<'_, Storage>,
+    vacuum: Option<bool>,
+) -> Result<MessageCleanupResult, String> {
+    storage.cleanup_message_history(vacuum.unwrap_or(false))
 }
