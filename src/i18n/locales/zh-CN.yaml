@@ -63,8 +63,8 @@ sidebar:
     auto: 跟随系统
   update:
     newVersionFound: 发现新版本
-    confirmDownload: 发现新版本 {version}，是否前往下载？
-    goDownload: 前往下载
+    confirmDownload: 发现新版本 {version}，是否安装并重启应用？
+    installNow: 安装并重启
 
 settings:
   title: 系统设置
@@ -120,7 +120,9 @@ settings:
     check: 检查更新
     newVersion: 发现新版本
     upToDate: 已是最新版本
-    download: 前往下载
+    install: 安装并重启
+    installing: 正在安装
+    installConfirm: 发现新版本 {version}，安装完成后将重启应用，是否继续？
 
 publish:
   topic: Topic
@@ -360,6 +362,7 @@ errors:
   selectFolderFailed: 选择文件夹失败
   copyFailed: 复制失败
   checkUpdateFailed: 检查更新失败
+  updateInstallFailed: 安装更新失败
   openBrowserFailed: 打开浏览器失败
   selectFile: 请先选择文件
 

@@ -3,19 +3,21 @@ import { ref } from "vue";
 import { getCurrentWindow, type Theme as TauriTheme } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import i18n, { getActualLocale, type Locale, type ActualLocale } from "@/i18n";
 
 export type Theme = "light" | "dark" | "auto";
 export type ViewType = "messages" | "templates";
 export type { Locale, ActualLocale };
 
-export const GITHUB_REPO = 'Gerrit1999/mini-mqtt-client';
-
 // 版本更新信息
 export interface UpdateInfo {
   hasUpdate: boolean;
   latestVersion: string;
   currentVersion: string;
+  date?: string;
+  body?: string;
 }
 
 export interface AppSettings {
@@ -70,6 +72,9 @@ export const useAppStore = defineStore("app", () => {
   // 版本更新信息
   const updateInfo = ref<UpdateInfo | null>(null);
   const checkingUpdate = ref(false);
+  const installingUpdate = ref(false);
+  const updateProgress = ref<number | null>(null);
+  let pendingUpdate: Update | null = null;
 
   // 获取系统主题（使用 Tauri API）
   const getSystemTheme = async (): Promise<"light" | "dark"> => {
@@ -277,41 +282,23 @@ export const useAppStore = defineStore("app", () => {
     copyToPublishData.value = null;
   };
 
-  // 比较版本号
-  const compareVersions = (v1: string, v2: string): number => {
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
-    
-    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-      const p1 = parts1[i] || 0;
-      const p2 = parts2[i] || 0;
-      if (p1 > p2) return 1;
-      if (p1 < p2) return -1;
-    }
-    return 0;
-  };
-
   // 检查更新
   const checkUpdate = async (): Promise<UpdateInfo | null> => {
     if (checkingUpdate.value) return null;
     
     checkingUpdate.value = true;
+    pendingUpdate = null;
     try {
       const currentVersion = await getVersion();
-      const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
-      
-      if (!response.ok) {
-        throw new Error('获取版本信息失败');
-      }
-      
-      const data = await response.json();
-      const latestVersion = data.tag_name?.replace(/^v/, '') || '';
-      const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
-      
+      const update = await check();
+      pendingUpdate = update;
+
       updateInfo.value = { 
-        hasUpdate, 
-        latestVersion: `v${latestVersion}`,
-        currentVersion 
+        hasUpdate: update !== null, 
+        latestVersion: update ? `v${update.version}` : `v${currentVersion}`,
+        currentVersion,
+        date: update?.date,
+        body: update?.body,
       };
       
       return updateInfo.value;
@@ -326,6 +313,45 @@ export const useAppStore = defineStore("app", () => {
   // 清除更新信息
   const clearUpdateInfo = () => {
     updateInfo.value = null;
+    pendingUpdate = null;
+    updateProgress.value = null;
+  };
+
+  const installUpdate = async () => {
+    if (!pendingUpdate || installingUpdate.value) return false;
+
+    installingUpdate.value = true;
+    updateProgress.value = 0;
+    try {
+      let downloaded = 0;
+      let contentLength = 0;
+
+      await pendingUpdate.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            contentLength = event.data.contentLength ?? 0;
+            updateProgress.value = contentLength > 0 ? 0 : null;
+            break;
+          case "Progress":
+            downloaded += event.data.chunkLength;
+            updateProgress.value = contentLength > 0
+              ? Math.min(100, Math.round((downloaded / contentLength) * 100))
+              : null;
+            break;
+          case "Finished":
+            updateProgress.value = 100;
+            break;
+        }
+      });
+
+      await relaunch();
+      return true;
+    } catch (e) {
+      console.error("安装更新失败:", e);
+      throw e;
+    } finally {
+      installingUpdate.value = false;
+    }
   };
 
   return {
@@ -342,6 +368,8 @@ export const useAppStore = defineStore("app", () => {
     messageRetentionCount,
     updateInfo,
     checkingUpdate,
+    installingUpdate,
+    updateProgress,
     toggleTheme,
     setTheme,
     initTheme,
@@ -359,6 +387,7 @@ export const useAppStore = defineStore("app", () => {
     setMqttPacketSizeLimitKb,
     setMessageCleanupPolicy,
     checkUpdate,
+    installUpdate,
     clearUpdateInfo,
     cleanup,
   };

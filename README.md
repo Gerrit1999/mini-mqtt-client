@@ -90,6 +90,19 @@ npm run tauri dev
 npm run tauri build
 ```
 
+### 自动更新发布
+
+自动更新使用 Tauri updater。发布版本时需要使用同一把签名私钥构建，并把安装包、对应 `.sig` 文件以及 `latest.json` 一起上传到 GitHub Release。
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/mini-mqtt-client-updater.key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<your-signing-key-password>"
+npm run tauri build
+npm run updater:json
+```
+
+`latest.json` 会生成到 `src-tauri/target/release/bundle/latest.json`，客户端会从 `https://github.com/Gerrit1999/mini-mqtt-client/releases/latest/download/latest.json` 检查更新。
+
 ## 技术栈
 
 | 层级 | 技术 |

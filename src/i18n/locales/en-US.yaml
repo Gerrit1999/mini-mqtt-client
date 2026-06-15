@@ -63,8 +63,8 @@ sidebar:
     auto: Follow System
   update:
     newVersionFound: New Version Found
-    confirmDownload: "New version {version} is available. Would you like to download it?"
-    goDownload: Go to Download
+    confirmDownload: "New version {version} is available. Install it and restart now?"
+    installNow: Install and Restart
 
 settings:
   title: Settings
@@ -120,7 +120,9 @@ settings:
     check: Check Updates
     newVersion: New version available
     upToDate: You are up to date
-    download: Download
+    install: Install and Restart
+    installing: Installing
+    installConfirm: "New version {version} is available. The app will restart after installation. Continue?"
 
 publish:
   topic: Topic
@@ -360,6 +362,7 @@ errors:
   selectFolderFailed: Failed to select folder
   copyFailed: Copy failed
   checkUpdateFailed: Failed to check for updates
+  updateInstallFailed: Failed to install update
   openBrowserFailed: Failed to open browser
   selectFile: Please select a file first
 

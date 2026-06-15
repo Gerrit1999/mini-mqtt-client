@@ -9,6 +9,8 @@
     "core:event:allow-listen",
     "opener:default",
     "dialog:default",
+    "process:allow-restart",
+    "updater:default",
     "fs:default",
     "fs:allow-write-text-file",
     {

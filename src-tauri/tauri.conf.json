@@ -31,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +43,14 @@
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "timestampUrl": ""
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhENTY5MDU0MTA1OTMyMDEKUldRQk1sa1FWSkJXamFTZXp2SUtyQXdEaTR0NEE3YWkzSC9ZZ3ZMeTkxOWxUY3ZBWGs0aGk3QVMK",
+      "endpoints": [
+        "https://github.com/Gerrit1999/mini-mqtt-client/releases/latest/download/latest.json"
+      ]
     }
   }
 }

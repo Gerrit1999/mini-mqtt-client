@@ -211,9 +211,12 @@
               size="small" 
               type="primary"
               :icon="Download"
-              @click="handleOpenRelease"
+              :loading="installingUpdate"
+              @click="handleInstallUpdate"
             >
-              {{ $t('settings.update.download') }}
+              {{ installingUpdate && updateProgress !== null
+                ? `${$t('settings.update.installing')} ${updateProgress}%`
+                : $t('settings.update.install') }}
             </el-button>
           </div>
         </div>
@@ -240,13 +243,12 @@ import { useI18n } from 'vue-i18n'
 import { Sunny, Moon, Platform, FolderOpened, CopyDocument, Delete, Refresh, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
-import { revealItemInDir, openUrl } from '@tauri-apps/plugin-opener'
+import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore, type Theme, type Locale } from '@/stores/app'
 import { useMqttStore } from '@/stores/mqtt'
 import { useMessageStore } from '@/stores/message'
 
-const GITHUB_REPO = 'Gerrit1999/mini-mqtt-client'
 const MESSAGE_LIMIT_MIN = 100
 const MESSAGE_LIMIT_MAX = 10000
 const MQTT_PACKET_SIZE_LIMIT_MIN = 10
@@ -293,8 +295,10 @@ const newDataPath = ref('')
 const logPath = ref('')
 const currentVersion = ref('')
 const checkingUpdate = ref(false)
+const installingUpdate = computed(() => appStore.installingUpdate)
+const updateProgress = computed(() => appStore.updateProgress)
 const cleaningMessages = ref(false)
-const updateInfo = ref<{ hasUpdate: boolean; latestVersion: string } | null>(null)
+const updateInfo = computed(() => appStore.updateInfo)
 
 // 是否有更改
 const hasChanges = computed(() => {
@@ -322,7 +326,7 @@ async function loadSettings() {
   currentMessageRetentionCount.value = appStore.messageRetentionCount
   originalMessageRetentionCount.value = appStore.messageRetentionCount
   newDataPath.value = ''
-  updateInfo.value = null
+  appStore.clearUpdateInfo()
   
   try {
     currentVersion.value = await getVersion()
@@ -560,21 +564,12 @@ function handleClose() {
 // 检查更新
 async function handleCheckUpdate() {
   checkingUpdate.value = true
-  updateInfo.value = null
+  appStore.clearUpdateInfo()
   
   try {
-    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`)
-    if (!response.ok) {
-      throw new Error('获取版本信息失败')
-    }
+    const result = await appStore.checkUpdate()
     
-    const data = await response.json()
-    const latestVersion = data.tag_name?.replace(/^v/, '') || ''
-    const hasUpdate = compareVersions(latestVersion, currentVersion.value) > 0
-    
-    updateInfo.value = { hasUpdate, latestVersion: `v${latestVersion}` }
-    
-    if (!hasUpdate) {
+    if (result && !result.hasUpdate) {
       ElMessage.success(t('settings.update.upToDate'))
     }
   } catch (e) {
@@ -584,26 +579,22 @@ async function handleCheckUpdate() {
   }
 }
 
-// 比较版本号
-function compareVersions(v1: string, v2: string): number {
-  const parts1 = v1.split('.').map(Number)
-  const parts2 = v2.split('.').map(Number)
-  
-  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-    const p1 = parts1[i] || 0
-    const p2 = parts2[i] || 0
-    if (p1 > p2) return 1
-    if (p1 < p2) return -1
-  }
-  return 0
-}
-
-// 打开 release 页面
-async function handleOpenRelease() {
+async function handleInstallUpdate() {
   try {
-    await openUrl(`https://github.com/${GITHUB_REPO}/releases/latest`)
+    await ElMessageBox.confirm(
+      t('settings.update.installConfirm', { version: updateInfo.value?.latestVersion }),
+      t('settings.update.newVersion'),
+      {
+        confirmButtonText: t('settings.update.install'),
+        cancelButtonText: t('common.cancel'),
+        type: 'info',
+      }
+    )
+    await appStore.installUpdate()
   } catch (e) {
-    ElMessage.error(`${t('errors.openBrowserFailed')}: ${e}`)
+    if (e !== 'cancel') {
+      ElMessage.error(`${t('errors.updateInstallFailed')}: ${e}`)
+    }
   }
 }
 </script>

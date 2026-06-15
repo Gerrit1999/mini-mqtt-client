@@ -37,3 +37,5 @@ rustls-pemfile = "2"
 pkcs8 = { version = "0.10", features = ["encryption", "pem"] }
 pem = "3"
 rusqlite = { version = "0.32", features = ["bundled"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "updater:json": "node scripts/generate-updater-json.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -16,6 +17,8 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "element-plus": "^2.13.1",
     "pako": "^2.1.0",
     "pinia": "^3.0.4",

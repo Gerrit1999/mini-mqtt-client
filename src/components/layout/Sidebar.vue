@@ -355,7 +355,6 @@
 import { ref, reactive, onMounted, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Plus,
   MoreFilled,
@@ -372,7 +371,7 @@ import {
   FolderAdd,
   FolderOpened,
 } from "@element-plus/icons-vue";
-import { useAppStore, GITHUB_REPO } from "@/stores/app";
+import { useAppStore } from "@/stores/app";
 import { useServerStore } from "@/stores/server";
 import { useSubscriptionStore } from "@/stores/subscription";
 import { useMqttStore } from "@/stores/mqtt";
@@ -640,14 +639,16 @@ const handleVersionClick = async () => {
         t('sidebar.update.confirmDownload', { version: appStore.updateInfo.latestVersion }),
         t('sidebar.update.newVersionFound'),
         {
-          confirmButtonText: t('sidebar.update.goDownload'),
+          confirmButtonText: t('sidebar.update.installNow'),
           cancelButtonText: t('common.cancel'),
           type: 'info',
         }
       );
-      await openUrl(`https://github.com/${GITHUB_REPO}/releases/latest`);
-    } catch {
-      // 用户取消
+      await appStore.installUpdate();
+    } catch (e) {
+      if (e !== 'cancel') {
+        ElMessage.error(`${t('errors.updateInstallFailed')}: ${e}`);
+      }
     }
   }
 };
