@@ -45,6 +45,7 @@
 </template>
 
 <script setup lang="ts">
+import { parse as parseLosslessJson, stringify as stringifyLosslessJson } from "lossless-json";
 import { computed } from "vue";
 
 type PayloadFormat = "json" | "binary" | "text";
@@ -146,8 +147,11 @@ const formattedJsonPayload = computed(() => {
     return payloadString.value;
   }
   try {
-    const parsed = JSON.parse(payloadString.value);
-    return JSON.stringify(parsed, null, 2);
+    const parsed = parseLosslessJson(payloadString.value, undefined, {
+      // Match JSON.parse behavior when object keys are repeated.
+      onDuplicateKey: ({ newValue }) => newValue,
+    });
+    return stringifyLosslessJson(parsed, undefined, 2) ?? payloadString.value;
   } catch {
     return payloadString.value;
   }
