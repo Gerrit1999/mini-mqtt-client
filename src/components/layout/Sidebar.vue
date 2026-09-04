@@ -205,7 +205,11 @@
             v-for="sub in currentSubscriptions"
             :key="sub.id"
             class="subscription-item"
-            :class="{ inactive: !sub.is_active }"
+            :class="{
+              inactive: !sub.is_active,
+              pending: isSubscriptionPending(sub),
+              failed: getSubscriptionRuntimeState(sub)?.status === 'failed',
+            }"
           >
             <!-- 第一行：颜色 + Topic + 开关 -->
             <div class="sub-row-1">
@@ -220,15 +224,36 @@
               <el-switch
                 :model-value="sub.is_active"
                 size="small"
+                :disabled="isSubscriptionPending(sub)"
                 @change="(val: string | number | boolean) => handleToggleSubscription(sub, Boolean(val))"
               />
             </div>
             <!-- 第二行：QoS + 操作按钮 -->
             <div class="sub-row-2">
-              <el-tag size="small" effect="plain" type="info">Q{{ sub.qos }}</el-tag>
+              <div class="subscription-runtime">
+                <el-icon v-if="isSubscriptionPending(sub)" class="subscription-state-icon pending-icon">
+                  <Loading />
+                </el-icon>
+                <el-tooltip
+                  v-else-if="getSubscriptionRuntimeState(sub)?.status === 'failed'"
+                  :content="getSubscriptionRuntimeState(sub)?.error"
+                  placement="top"
+                >
+                  <el-icon class="subscription-state-icon failed-icon">
+                    <WarningFilled />
+                  </el-icon>
+                </el-tooltip>
+                <el-tag
+                  size="small"
+                  effect="plain"
+                  :type="getSubscriptionQosTagType(sub)"
+                >
+                  {{ getSubscriptionQosLabel(sub) }}
+                </el-tag>
+              </div>
               <div class="sub-actions">
-                <el-button text size="small" :icon="Edit" @click="handleEditSubscription(sub)" />
-                <el-button text size="small" type="danger" :icon="Close" @click="handleDeleteSubscription(sub)" />
+                <el-button text size="small" :icon="Edit" :disabled="isSubscriptionPending(sub)" @click="handleEditSubscription(sub)" />
+                <el-button text size="small" type="danger" :icon="Close" :disabled="isSubscriptionPending(sub)" @click="handleDeleteSubscription(sub)" />
               </div>
             </div>
           </div>
@@ -370,6 +395,8 @@ import {
   Folder,
   FolderAdd,
   FolderOpened,
+  Loading,
+  WarningFilled,
 } from "@element-plus/icons-vue";
 import { useAppStore } from "@/stores/app";
 import { useServerStore } from "@/stores/server";
@@ -414,6 +441,38 @@ const currentSubscriptions = computed(() => {
   if (!serverId) return [];
   return subscriptionStore.getSubscriptionsByServer(serverId);
 });
+
+const getSubscriptionRuntimeState = (sub: Subscription) => {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return undefined;
+  return mqttStore.getSubscriptionState(serverId, sub.topic);
+};
+
+const isSubscriptionPending = (sub: Subscription): boolean =>
+  getSubscriptionRuntimeState(sub)?.status === "pending";
+
+const getSubscriptionQosLabel = (sub: Subscription): string => {
+  const state = getSubscriptionRuntimeState(sub);
+  if (state?.status !== "active" || state.granted_qos === undefined) {
+    return `Q${sub.qos}`;
+  }
+  return state.granted_qos === sub.qos
+    ? `Q${state.granted_qos}`
+    : `Q${sub.qos} → Q${state.granted_qos}`;
+};
+
+const getSubscriptionQosTagType = (sub: Subscription) => {
+  switch (getSubscriptionRuntimeState(sub)?.status) {
+    case "active":
+      return "success";
+    case "pending":
+      return "warning";
+    case "failed":
+      return "danger";
+    default:
+      return "info";
+  }
+};
 
 const ungroupedServers = computed(() => {
   return serverStore.servers.filter(
@@ -727,7 +786,7 @@ const handleToggleSubscription = async (sub: Subscription, isActive: boolean) =>
       sub.qos,
       isActive
     );
-    ElMessage.success(isActive ? t('success.resumed') : t('success.paused'));
+    ElMessage.success(t('success.saved'));
   } catch (error) {
     ElMessage.error(`${t('errors.subscribeFailed')}: ${error}`);
   }
@@ -770,7 +829,7 @@ const handleConfirmSubscription = async () => {
           color: subFormData.color,
         });
       }
-      ElMessage.success(t('success.subscribed'));
+      ElMessage.success(t('success.saved'));
     }
     showSubDialog.value = false;
   } catch (error) {
@@ -1065,6 +1124,14 @@ const handleConfirmSubscription = async () => {
   &.inactive {
     opacity: 0.6;
   }
+
+  &.pending {
+    border-color: var(--el-color-warning-light-5);
+  }
+
+  &.failed {
+    border-color: var(--el-color-danger-light-5);
+  }
 }
 
 .sub-row-1 {
@@ -1084,6 +1151,33 @@ const handleConfirmSubscription = async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.subscription-runtime {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.subscription-state-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.pending-icon {
+  color: var(--el-color-warning);
+  animation: subscription-spin 1s linear infinite;
+}
+
+.failed-icon {
+  color: var(--el-color-danger);
+}
+
+@keyframes subscription-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .sub-row-2-right {

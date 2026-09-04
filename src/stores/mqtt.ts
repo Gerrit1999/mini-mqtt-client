@@ -9,6 +9,8 @@ import type {
   MqttCapability,
   MqttMessage,
   MqttProtocolVersion,
+  SubscriptionOperationResult,
+  SubscriptionRuntimeState,
 } from "@/types/mqtt";
 import { ScriptEngine } from "@/utils/scriptEngine";
 import type { Script } from "@/stores/script";
@@ -73,8 +75,10 @@ export const useMqttStore = defineStore("mqtt", () => {
   // 每个 server 的累计接收计数（不受消息保留上限影响）
   const receivedCountByServer = ref<Map<number, number>>(new Map());
 
-  // 订阅列表（按 server_id 分组）
-  const subscriptions = ref<Map<number, Set<string>>>(new Map());
+  // Broker 确认的连接级订阅运行状态（按 server_id 和 topic 分组）
+  const subscriptionStates = ref<
+    Map<number, Map<string, SubscriptionRuntimeState>>
+  >(new Map());
 
   // 脚本缓存（避免高频调用 invoke）
   const scriptCache = new Map<string, ScriptCache>();
@@ -275,11 +279,58 @@ export const useMqttStore = defineStore("mqtt", () => {
         protocolVersion: protocol_version,
         capabilities: capabilities ?? [],
       });
+
+      if (status === "disconnected" || status === "error") {
+        const existingStates = subscriptionStates.value.get(server_id);
+        if (existingStates) {
+          const nextStates = new Map(subscriptionStates.value);
+          const serverStates = new Map(existingStates);
+          for (const [topic, state] of serverStates) {
+            if (state.status === "active") {
+              serverStates.set(topic, {
+                ...state,
+                status: "disabled",
+                granted_qos: undefined,
+                error: undefined,
+              });
+            } else if (state.status === "pending") {
+              serverStates.set(topic, {
+                ...state,
+                status: "failed",
+                granted_qos: undefined,
+                error: error ?? "Connection closed before acknowledgement",
+              });
+            }
+          }
+          nextStates.set(server_id, serverStates);
+          subscriptionStates.value = nextStates;
+        }
+      }
       
       // 如果有错误，使用 ElMessage 显示
       if (error && status === "error") {
         ElMessage.error({
           message: `${i18n.global.t('errors.connectFailed')}: ${error}`,
+          duration: 5000,
+        });
+      }
+    });
+
+    await listen<SubscriptionRuntimeState>("mqtt-subscription-state", (event) => {
+      const state = event.payload;
+      const nextStates = new Map(subscriptionStates.value);
+      const serverStates = new Map(nextStates.get(state.server_id) ?? []);
+      serverStates.set(state.topic, state);
+      nextStates.set(state.server_id, serverStates);
+      subscriptionStates.value = nextStates;
+
+      if (state.status === "failed" && state.error) {
+        const errorKey =
+          state.operation === "unsubscribe"
+            ? "errors.unsubscribeFailed"
+            : "errors.subscribeFailed";
+        ElMessage.error({
+          message: `${i18n.global.t(errorKey)}: ${state.error}`,
           duration: 5000,
         });
       }
@@ -411,20 +462,21 @@ export const useMqttStore = defineStore("mqtt", () => {
     serverId: number,
     topic: string,
     qos: 0 | 1 | 2 = 0
-  ) => {
-    await invoke("mqtt_subscribe", { serverId, topic, qos });
-
-    if (!subscriptions.value.has(serverId)) {
-      subscriptions.value.set(serverId, new Set());
-    }
-    subscriptions.value.get(serverId)!.add(topic);
-  };
+  ): Promise<SubscriptionOperationResult> =>
+    invoke<SubscriptionOperationResult>("mqtt_subscribe", { serverId, topic, qos });
 
   // 取消订阅
-  const unsubscribe = async (serverId: number, topic: string) => {
-    await invoke("mqtt_unsubscribe", { serverId, topic });
-    subscriptions.value.get(serverId)?.delete(topic);
-  };
+  const unsubscribe = async (
+    serverId: number,
+    topic: string
+  ): Promise<SubscriptionOperationResult> =>
+    invoke<SubscriptionOperationResult>("mqtt_unsubscribe", { serverId, topic });
+
+  const getSubscriptionState = (
+    serverId: number,
+    topic: string
+  ): SubscriptionRuntimeState | undefined =>
+    subscriptionStates.value.get(serverId)?.get(topic);
 
   // 获取连接状态
   const getConnectionStatus = (serverId: number): ConnectionStatus => {
@@ -543,13 +595,14 @@ export const useMqttStore = defineStore("mqtt", () => {
     connectionStates,
     messagesByServer,
     receivedCountByServer,
-    subscriptions,
+    subscriptionStates,
     initListeners,
     connect,
     disconnect,
     publish,
     subscribe,
     unsubscribe,
+    getSubscriptionState,
     getConnectionStatus,
     getConnectionError,
     getConnectionProtocolVersion,

@@ -3,6 +3,20 @@ use crate::db::Storage;
 use crate::mqtt::MqttManager;
 use tauri::State;
 
+fn subscribe_in_background(mqtt_manager: &MqttManager, server_id: i64, topic: String, qos: u8) {
+    let mqtt_manager = mqtt_manager.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = mqtt_manager.subscribe(server_id, topic, qos).await;
+    });
+}
+
+fn unsubscribe_in_background(mqtt_manager: &MqttManager, server_id: i64, topic: String) {
+    let mqtt_manager = mqtt_manager.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = mqtt_manager.unsubscribe(server_id, topic).await;
+    });
+}
+
 #[tauri::command]
 pub async fn add_subscription(
     storage: State<'_, Storage>,
@@ -26,10 +40,8 @@ pub async fn add_subscription(
 
     // 如果已连接，则订阅主题
     if mqtt_manager.is_connected(server_id) {
-        mqtt_manager
-            .subscribe(server_id, topic, qos as u8)
-            .await
-            .map_err(|e| e.to_string())?;
+        // 配置已经保存；Broker 失败通过运行状态事件报告，不能回滚配置意图。
+        subscribe_in_background(mqtt_manager.inner(), server_id, topic, qos as u8);
     }
 
     Ok(subscription)
@@ -79,15 +91,9 @@ pub async fn toggle_subscription(
     // 执行订阅/取消订阅操作
     if mqtt_manager.is_connected(server_id) {
         if is_active {
-            mqtt_manager
-                .subscribe(server_id, topic, qos as u8)
-                .await
-                .map_err(|e| e.to_string())?;
+            subscribe_in_background(mqtt_manager.inner(), server_id, topic, qos as u8);
         } else {
-            mqtt_manager
-                .unsubscribe(server_id, topic)
-                .await
-                .map_err(|e| e.to_string())?;
+            unsubscribe_in_background(mqtt_manager.inner(), server_id, topic);
         }
     }
 
@@ -102,43 +108,48 @@ pub async fn update_subscription(
     old_topic: String,
     request: UpdateSubscriptionRequest,
 ) -> Result<Subscription, String> {
-    let new_topic = request.topic.clone();
-    let new_qos = request.qos;
+    let existing = storage
+        .get_subscriptions(server_id)
+        .into_iter()
+        .find(|subscription| subscription.id == Some(request.id))
+        .ok_or("Subscription not found")?;
+    if old_topic != existing.topic {
+        return Err("Subscription changed; reload before editing".to_string());
+    }
+    let next_topic = request
+        .topic
+        .clone()
+        .unwrap_or_else(|| existing.topic.clone());
+    let topic_changed = next_topic != existing.topic;
+    let qos_changed = request.qos.is_some_and(|qos| qos != existing.qos);
+    let connected = mqtt_manager.is_connected(server_id) && existing.is_active;
 
-    // 更新存储
-    let subscription = storage.update_subscription(request)?;
+    if connected && topic_changed {
+        mqtt_manager
+            .unsubscribe(server_id, old_topic)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
 
-    // 如果已连接且 topic 或 qos 改变，需要重新订阅
-    if mqtt_manager.is_connected(server_id) && subscription.is_active {
-        // 如果 topic 改变了，先取消订阅旧的
-        if let Some(ref topic) = new_topic {
-            if topic != &old_topic {
-                mqtt_manager
-                    .unsubscribe(server_id, old_topic)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                mqtt_manager
-                    .subscribe(server_id, topic.clone(), subscription.qos as u8)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            } else if new_qos.is_some() {
-                // topic 没变但 qos 变了，重新订阅
-                mqtt_manager
-                    .subscribe(server_id, topic.clone(), subscription.qos as u8)
-                    .await
-                    .map_err(|e| e.to_string())?;
+    let subscription = match storage.update_subscription(request) {
+        Ok(subscription) => subscription,
+        Err(error) => {
+            if connected && topic_changed {
+                let _ = mqtt_manager
+                    .subscribe(server_id, existing.topic, existing.qos as u8)
+                    .await;
             }
-        } else if new_qos.is_some() {
-            // 只有 qos 变了
-            mqtt_manager
-                .subscribe(
-                    server_id,
-                    subscription.topic.clone(),
-                    subscription.qos as u8,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
+            return Err(error);
         }
+    };
+
+    if connected && (topic_changed || qos_changed) {
+        subscribe_in_background(
+            mqtt_manager.inner(),
+            server_id,
+            subscription.topic.clone(),
+            subscription.qos as u8,
+        );
     }
 
     Ok(subscription)
