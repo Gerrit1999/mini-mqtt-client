@@ -1,5 +1,5 @@
 use crate::db::Storage;
-use crate::mqtt::MqttManager;
+use crate::mqtt::{MqttManager, SubscriptionOperationResult};
 use tauri::State;
 
 #[tauri::command]
@@ -38,7 +38,7 @@ pub async fn mqtt_subscribe(
     server_id: i64,
     topic: String,
     qos: u8,
-) -> Result<(), String> {
+) -> Result<SubscriptionOperationResult, String> {
     mqtt.subscribe(server_id, topic, qos).await
 }
 
@@ -47,7 +47,7 @@ pub async fn mqtt_unsubscribe(
     mqtt: State<'_, MqttManager>,
     server_id: i64,
     topic: String,
-) -> Result<(), String> {
+) -> Result<SubscriptionOperationResult, String> {
     mqtt.unsubscribe(server_id, topic).await
 }
 

@@ -85,6 +85,29 @@ export interface Subscription {
   created_at?: string;
 }
 
+export type SubscriptionOperation = "subscribe" | "unsubscribe";
+export type SubscriptionRuntimeStatus =
+  | "disabled"
+  | "pending"
+  | "active"
+  | "failed";
+
+export interface SubscriptionRuntimeState {
+  server_id: number;
+  topic: string;
+  operation: SubscriptionOperation;
+  status: SubscriptionRuntimeStatus;
+  requested_qos?: 0 | 1 | 2;
+  granted_qos?: 0 | 1 | 2;
+  error?: string;
+  operation_id: string;
+}
+
+export interface SubscriptionOperationResult {
+  operation_id: string;
+  granted_qos?: 0 | 1 | 2;
+}
+
 /**
  * 更新订阅请求
  */

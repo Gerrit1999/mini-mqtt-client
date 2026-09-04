@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useMqttStore } from "./mqtt";
 import { invoke } from "@tauri-apps/api/core";
+import { ElMessage } from "element-plus";
 
 // 保存 mqtt-message 的 listener 回调
 let mqttMessageListener: ((event: { payload: any }) => Promise<void>) | null = null;
 let connectionStateListener: ((event: { payload: any }) => void) | null = null;
+let subscriptionStateListener: ((event: { payload: any }) => void) | null = null;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -15,6 +17,8 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, callback: any) => {
     if (event === "mqtt-connection-state") {
       connectionStateListener = callback;
+    } else if (event === "mqtt-subscription-state") {
+      subscriptionStateListener = callback;
     } else if (event === "mqtt-message") {
       mqttMessageListener = callback;
     }
@@ -66,6 +70,7 @@ describe("useMqttStore", () => {
     setActivePinia(createPinia());
     mqttMessageListener = null;
     connectionStateListener = null;
+    subscriptionStateListener = null;
     vi.clearAllMocks();
     vi.useFakeTimers();
   });
@@ -108,6 +113,123 @@ describe("useMqttStore", () => {
       expect(store.getConnectionError(1)).toBe(
         "Unsupported MQTT protocol version: 4.0. Supported versions: 3.1.1, 5.0"
       );
+    });
+  });
+
+  describe("订阅运行状态", () => {
+    it("仅在 Broker ACK 事件到达后标记 active 并保存授予 QoS", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      mockedInvoke.mockResolvedValueOnce({
+        operation_id: "op-1",
+        granted_qos: 1,
+      });
+
+      await store.subscribe(1, "sensor/+", 2);
+
+      expect(store.getSubscriptionState(1, "sensor/+")).toBeUndefined();
+
+      subscriptionStateListener!({
+        payload: {
+          server_id: 1,
+          topic: "sensor/+",
+          operation: "subscribe",
+          status: "active",
+          requested_qos: 2,
+          granted_qos: 1,
+          operation_id: "op-1",
+        },
+      });
+
+      expect(store.getSubscriptionState(1, "sensor/+")).toEqual({
+        server_id: 1,
+        topic: "sensor/+",
+        operation: "subscribe",
+        status: "active",
+        requested_qos: 2,
+        granted_qos: 1,
+        operation_id: "op-1",
+      });
+    });
+
+    it("保留 pending 到 failed 的错误状态", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+
+      subscriptionStateListener!({
+        payload: {
+          server_id: 1,
+          topic: "sensor/+",
+          operation: "subscribe",
+          status: "pending",
+          requested_qos: 1,
+          operation_id: "op-2",
+        },
+      });
+      expect(store.getSubscriptionState(1, "sensor/+")?.status).toBe("pending");
+
+      subscriptionStateListener!({
+        payload: {
+          server_id: 1,
+          topic: "sensor/+",
+          operation: "subscribe",
+          status: "failed",
+          requested_qos: 1,
+          error: "Subscription acknowledgement timed out",
+          operation_id: "op-2",
+        },
+      });
+
+      expect(store.getSubscriptionState(1, "sensor/+")).toMatchObject({
+        status: "failed",
+        error: "Subscription acknowledgement timed out",
+        operation_id: "op-2",
+      });
+      expect(ElMessage.error).toHaveBeenCalledWith({
+        message: "errors.subscribeFailed: Subscription acknowledgement timed out",
+        duration: 5000,
+      });
+    });
+
+    it("断线后清除 active 并将 pending 标记为 failed", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+
+      subscriptionStateListener!({
+        payload: {
+          server_id: 1,
+          topic: "active/topic",
+          operation: "subscribe",
+          status: "active",
+          requested_qos: 1,
+          granted_qos: 1,
+          operation_id: "op-active",
+        },
+      });
+      subscriptionStateListener!({
+        payload: {
+          server_id: 1,
+          topic: "pending/topic",
+          operation: "subscribe",
+          status: "pending",
+          requested_qos: 2,
+          operation_id: "op-pending",
+        },
+      });
+
+      connectionStateListener!({
+        payload: {
+          server_id: 1,
+          status: "disconnected",
+        },
+      });
+
+      expect(store.getSubscriptionState(1, "active/topic")?.status).toBe("disabled");
+      expect(store.getSubscriptionState(1, "active/topic")?.granted_qos).toBeUndefined();
+      expect(store.getSubscriptionState(1, "pending/topic")).toMatchObject({
+        status: "failed",
+        error: "Connection closed before acknowledgement",
+      });
     });
   });
 

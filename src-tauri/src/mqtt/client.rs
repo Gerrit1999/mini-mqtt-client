@@ -9,12 +9,20 @@ use rumqttc::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::time::timeout;
 
 use crate::db::models::MqttServer;
+use crate::mqtt::subscription::{
+    StartedSubscriptionOperation, SubscriptionOperation, SubscriptionOperationResult,
+    SubscriptionOperationTracker, SubscriptionRequest, SubscriptionStateEvent,
+};
+
+const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MqttProtocolVersion {
@@ -255,50 +263,160 @@ enum ProtocolEvent {
         qos: u8,
         retain: bool,
     },
+    SubscriptionRequestSent {
+        operation: SubscriptionOperation,
+        packet_id: u16,
+    },
+    SubscriptionAcknowledged {
+        operation: SubscriptionOperation,
+        packet_id: u16,
+        granted_qos: Option<u8>,
+    },
+    SubscriptionRejected {
+        operation: SubscriptionOperation,
+        packet_id: u16,
+        error: String,
+    },
     Other,
 }
 
 impl ProtocolEventLoop {
-    async fn poll(&mut self) -> Result<ProtocolEvent, String> {
-        match self {
-            Self::V3_1_1(eventloop) => match eventloop.poll().await {
-                Ok(V3Event::Incoming(V3Packet::ConnAck(ack))) => {
-                    if ack.code == rumqttc::ConnectReturnCode::Success {
-                        Ok(ProtocolEvent::Connected)
-                    } else {
-                        Ok(ProtocolEvent::ConnectionRefused(format!("{:?}", ack.code)))
-                    }
+    fn map_v3_event(event: V3Event) -> Result<ProtocolEvent, String> {
+        match event {
+            V3Event::Incoming(V3Packet::ConnAck(ack)) => {
+                if ack.code == rumqttc::ConnectReturnCode::Success {
+                    Ok(ProtocolEvent::Connected)
+                } else {
+                    Ok(ProtocolEvent::ConnectionRefused(format!("{:?}", ack.code)))
                 }
-                Ok(V3Event::Incoming(V3Packet::Publish(publish))) => Ok(ProtocolEvent::Publish {
-                    topic: publish.topic,
+            }
+            V3Event::Incoming(V3Packet::Publish(publish)) => Ok(ProtocolEvent::Publish {
+                topic: publish.topic,
+                payload: publish.payload.to_vec(),
+                qos: publish.qos as u8,
+                retain: publish.retain,
+            }),
+            V3Event::Outgoing(rumqttc::Outgoing::Subscribe(packet_id)) => {
+                Ok(ProtocolEvent::SubscriptionRequestSent {
+                    operation: SubscriptionOperation::Subscribe,
+                    packet_id,
+                })
+            }
+            V3Event::Outgoing(rumqttc::Outgoing::Unsubscribe(packet_id)) => {
+                Ok(ProtocolEvent::SubscriptionRequestSent {
+                    operation: SubscriptionOperation::Unsubscribe,
+                    packet_id,
+                })
+            }
+            V3Event::Incoming(V3Packet::SubAck(ack)) => match ack.return_codes.as_slice() {
+                [rumqttc::SubscribeReasonCode::Success(qos)] => {
+                    Ok(ProtocolEvent::SubscriptionAcknowledged {
+                        operation: SubscriptionOperation::Subscribe,
+                        packet_id: ack.pkid,
+                        granted_qos: Some(*qos as u8),
+                    })
+                }
+                [rumqttc::SubscribeReasonCode::Failure] => {
+                    Ok(ProtocolEvent::SubscriptionRejected {
+                        operation: SubscriptionOperation::Subscribe,
+                        packet_id: ack.pkid,
+                        error: "Broker rejected subscription".to_string(),
+                    })
+                }
+                return_codes => Ok(ProtocolEvent::SubscriptionRejected {
+                    operation: SubscriptionOperation::Subscribe,
+                    packet_id: ack.pkid,
+                    error: format!("Unexpected SUBACK return codes: {return_codes:?}"),
+                }),
+            },
+            V3Event::Incoming(V3Packet::UnsubAck(ack)) => {
+                Ok(ProtocolEvent::SubscriptionAcknowledged {
+                    operation: SubscriptionOperation::Unsubscribe,
+                    packet_id: ack.pkid,
+                    granted_qos: None,
+                })
+            }
+            _ => Ok(ProtocolEvent::Other),
+        }
+    }
+
+    fn map_v5_event(event: V5Event) -> Result<ProtocolEvent, String> {
+        use rumqttc::v5::mqttbytes::v5::{Packet, SubscribeReasonCode, UnsubAckReason};
+
+        match event {
+            V5Event::Incoming(Packet::ConnAck(ack)) => {
+                if ack.code == rumqttc::v5::mqttbytes::v5::ConnectReturnCode::Success {
+                    Ok(ProtocolEvent::Connected)
+                } else {
+                    Ok(ProtocolEvent::ConnectionRefused(format!("{:?}", ack.code)))
+                }
+            }
+            V5Event::Incoming(Packet::Publish(publish)) => {
+                let topic = String::from_utf8(publish.topic.to_vec())
+                    .map_err(|error| format!("Invalid MQTT 5.0 topic: {error}"))?;
+                Ok(ProtocolEvent::Publish {
+                    topic,
                     payload: publish.payload.to_vec(),
                     qos: publish.qos as u8,
                     retain: publish.retain,
-                }),
-                Ok(_) => Ok(ProtocolEvent::Other),
-                Err(error) => Err(error.to_string()),
-            },
-            Self::V5_0(eventloop) => match eventloop.poll().await {
-                Ok(V5Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(ack))) => {
-                    if ack.code == rumqttc::v5::mqttbytes::v5::ConnectReturnCode::Success {
-                        Ok(ProtocolEvent::Connected)
-                    } else {
-                        Ok(ProtocolEvent::ConnectionRefused(format!("{:?}", ack.code)))
-                    }
-                }
-                Ok(V5Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(publish))) => {
-                    let topic = String::from_utf8(publish.topic.to_vec())
-                        .map_err(|error| format!("Invalid MQTT 5.0 topic: {}", error))?;
-                    Ok(ProtocolEvent::Publish {
-                        topic,
-                        payload: publish.payload.to_vec(),
-                        qos: publish.qos as u8,
-                        retain: publish.retain,
+                })
+            }
+            V5Event::Outgoing(rumqttc::Outgoing::Subscribe(packet_id)) => {
+                Ok(ProtocolEvent::SubscriptionRequestSent {
+                    operation: SubscriptionOperation::Subscribe,
+                    packet_id,
+                })
+            }
+            V5Event::Outgoing(rumqttc::Outgoing::Unsubscribe(packet_id)) => {
+                Ok(ProtocolEvent::SubscriptionRequestSent {
+                    operation: SubscriptionOperation::Unsubscribe,
+                    packet_id,
+                })
+            }
+            V5Event::Incoming(Packet::SubAck(ack)) => match ack.return_codes.as_slice() {
+                [SubscribeReasonCode::Success(qos)] => {
+                    Ok(ProtocolEvent::SubscriptionAcknowledged {
+                        operation: SubscriptionOperation::Subscribe,
+                        packet_id: ack.pkid,
+                        granted_qos: Some(*qos as u8),
                     })
                 }
-                Ok(_) => Ok(ProtocolEvent::Other),
-                Err(error) => Err(error.to_string()),
+                return_codes => Ok(ProtocolEvent::SubscriptionRejected {
+                    operation: SubscriptionOperation::Subscribe,
+                    packet_id: ack.pkid,
+                    error: format!("Broker rejected subscription: {return_codes:?}"),
+                }),
             },
+            V5Event::Incoming(Packet::UnsubAck(ack)) => match ack.reasons.as_slice() {
+                [UnsubAckReason::Success | UnsubAckReason::NoSubscriptionExisted] => {
+                    Ok(ProtocolEvent::SubscriptionAcknowledged {
+                        operation: SubscriptionOperation::Unsubscribe,
+                        packet_id: ack.pkid,
+                        granted_qos: None,
+                    })
+                }
+                reasons => Ok(ProtocolEvent::SubscriptionRejected {
+                    operation: SubscriptionOperation::Unsubscribe,
+                    packet_id: ack.pkid,
+                    error: format!("Broker rejected unsubscription: {reasons:?}"),
+                }),
+            },
+            _ => Ok(ProtocolEvent::Other),
+        }
+    }
+
+    async fn poll(&mut self) -> Result<ProtocolEvent, String> {
+        match self {
+            Self::V3_1_1(eventloop) => eventloop
+                .poll()
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(Self::map_v3_event),
+            Self::V5_0(eventloop) => eventloop
+                .poll()
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(Self::map_v5_event),
         }
     }
 }
@@ -309,11 +427,27 @@ struct ProtocolConnection {
     protocol_version: MqttProtocolVersion,
 }
 
+#[derive(Clone)]
 struct ClientHandle {
+    connection_id: uuid::Uuid,
     client: ProtocolClient,
     shutdown_tx: mpsc::Sender<()>,
+    connected: Arc<AtomicBool>,
+    subscription_gate: Arc<AsyncMutex<()>>,
+    subscription_tracker: Arc<AsyncMutex<SubscriptionOperationTracker>>,
 }
 
+struct EventLoopContext {
+    server_id: i64,
+    connection_id: uuid::Uuid,
+    protocol_version: MqttProtocolVersion,
+    app_handle: AppHandle,
+    clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
+    connected_flag: Arc<AtomicBool>,
+    subscription_tracker: Arc<AsyncMutex<SubscriptionOperationTracker>>,
+}
+
+#[derive(Clone)]
 pub struct MqttManager {
     clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
     app_handle: AppHandle,
@@ -348,6 +482,10 @@ impl MqttManager {
 
         // 创建停止信号
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
+        let connection_id = uuid::Uuid::new_v4();
+        let connected = Arc::new(AtomicBool::new(false));
+        let subscription_tracker =
+            Arc::new(AsyncMutex::new(SubscriptionOperationTracker::default()));
 
         // 保存客户端句柄
         {
@@ -355,8 +493,12 @@ impl MqttManager {
             clients.insert(
                 server_id,
                 ClientHandle {
+                    connection_id,
                     client,
                     shutdown_tx,
+                    connected: connected.clone(),
+                    subscription_gate: Arc::new(AsyncMutex::new(())),
+                    subscription_tracker: subscription_tracker.clone(),
                 },
             );
         }
@@ -367,12 +509,17 @@ impl MqttManager {
 
         tokio::spawn(async move {
             Self::run_eventloop(
-                server_id,
-                protocol_version,
                 eventloop,
                 shutdown_rx,
-                app_handle,
-                clients,
+                EventLoopContext {
+                    server_id,
+                    connection_id,
+                    protocol_version,
+                    app_handle,
+                    clients,
+                    connected_flag: connected,
+                    subscription_tracker,
+                },
             )
             .await;
         });
@@ -381,18 +528,30 @@ impl MqttManager {
     }
 
     async fn run_eventloop(
-        server_id: i64,
-        protocol_version: MqttProtocolVersion,
         mut eventloop: ProtocolEventLoop,
         mut shutdown_rx: mpsc::Receiver<()>,
-        app_handle: AppHandle,
-        clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
+        context: EventLoopContext,
     ) {
+        let EventLoopContext {
+            server_id,
+            connection_id,
+            protocol_version,
+            app_handle,
+            clients,
+            connected_flag,
+            subscription_tracker,
+        } = context;
         let mut connected = false;
 
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
+                    connected_flag.store(false, Ordering::Release);
+                    Self::fail_pending_subscription(
+                        &app_handle,
+                        &subscription_tracker,
+                        "Connection closed before acknowledgement".to_string(),
+                    ).await;
                     Self::emit_state_static(
                         &app_handle,
                         server_id,
@@ -406,6 +565,7 @@ impl MqttManager {
                     match event {
                         Ok(ProtocolEvent::Connected) => {
                             connected = true;
+                            connected_flag.store(true, Ordering::Release);
                             Self::emit_state_static(
                                 &app_handle,
                                 server_id,
@@ -415,6 +575,7 @@ impl MqttManager {
                             );
                         }
                         Ok(ProtocolEvent::ConnectionRefused(code)) => {
+                            connected_flag.store(false, Ordering::Release);
                             Self::emit_state_static(
                                 &app_handle,
                                 server_id,
@@ -440,7 +601,42 @@ impl MqttManager {
                             };
                             let _ = app_handle.emit("mqtt-message", msg);
                         }
+                        Ok(ProtocolEvent::SubscriptionRequestSent { operation, packet_id }) => {
+                            subscription_tracker.lock().await.mark_sent(operation, packet_id);
+                        }
+                        Ok(ProtocolEvent::SubscriptionAcknowledged {
+                            operation,
+                            packet_id,
+                            granted_qos,
+                        }) => {
+                            let state = subscription_tracker
+                                .lock()
+                                .await
+                                .complete(operation, packet_id, granted_qos);
+                            if let Some(state) = state {
+                                Self::emit_subscription_state_static(&app_handle, state);
+                            }
+                        }
+                        Ok(ProtocolEvent::SubscriptionRejected {
+                            operation,
+                            packet_id,
+                            error,
+                        }) => {
+                            let state = subscription_tracker
+                                .lock()
+                                .await
+                                .reject(operation, packet_id, error);
+                            if let Some(state) = state {
+                                Self::emit_subscription_state_static(&app_handle, state);
+                            }
+                        }
                         Err(e) => {
+                            connected_flag.store(false, Ordering::Release);
+                            Self::fail_pending_subscription(
+                                &app_handle,
+                                &subscription_tracker,
+                                format!("Connection closed before acknowledgement: {e}"),
+                            ).await;
                             if connected {
                                 Self::emit_state_static(
                                     &app_handle,
@@ -468,7 +664,12 @@ impl MqttManager {
 
         // 清理客户端
         let mut clients = clients.write();
-        clients.remove(&server_id);
+        if clients
+            .get(&server_id)
+            .is_some_and(|handle| handle.connection_id == connection_id)
+        {
+            clients.remove(&server_id);
+        }
     }
 
     pub async fn disconnect(&self, server_id: i64) -> Result<(), String> {
@@ -502,26 +703,93 @@ impl MqttManager {
         client.publish(topic, qos, retain, payload).await
     }
 
-    pub async fn subscribe(&self, server_id: i64, topic: String, qos: u8) -> Result<(), String> {
-        let client = {
-            let clients = self.clients.read();
-            clients.get(&server_id).map(|h| h.client.clone())
-        };
-
-        let client = client.ok_or("Not connected")?;
-
-        client.subscribe(topic, qos).await
+    pub async fn subscribe(
+        &self,
+        server_id: i64,
+        topic: String,
+        qos: u8,
+    ) -> Result<SubscriptionOperationResult, String> {
+        self.run_subscription_operation(
+            server_id,
+            topic,
+            SubscriptionRequest::Subscribe { requested_qos: qos },
+        )
+        .await
     }
 
-    pub async fn unsubscribe(&self, server_id: i64, topic: String) -> Result<(), String> {
-        let client = {
+    pub async fn unsubscribe(
+        &self,
+        server_id: i64,
+        topic: String,
+    ) -> Result<SubscriptionOperationResult, String> {
+        self.run_subscription_operation(server_id, topic, SubscriptionRequest::Unsubscribe)
+            .await
+    }
+
+    async fn run_subscription_operation(
+        &self,
+        server_id: i64,
+        topic: String,
+        request: SubscriptionRequest,
+    ) -> Result<SubscriptionOperationResult, String> {
+        let handle = {
             let clients = self.clients.read();
-            clients.get(&server_id).map(|h| h.client.clone())
+            clients.get(&server_id).cloned()
+        }
+        .ok_or("Not connected")?;
+        let _operation_guard = handle.subscription_gate.lock().await;
+
+        if !handle.connected.load(Ordering::Acquire)
+            || self
+                .clients
+                .read()
+                .get(&server_id)
+                .is_none_or(|current| current.connection_id != handle.connection_id)
+        {
+            return Err("Not connected".to_string());
+        }
+
+        let StartedSubscriptionOperation { state, completion } = handle
+            .subscription_tracker
+            .lock()
+            .await
+            .start(server_id, topic.clone(), request)?;
+        self.emit_subscription_state(state);
+
+        let enqueue_result = match request {
+            SubscriptionRequest::Subscribe { requested_qos } => {
+                handle.client.subscribe(topic, requested_qos).await
+            }
+            SubscriptionRequest::Unsubscribe => handle.client.unsubscribe(topic).await,
         };
+        if let Err(error) = enqueue_result {
+            let state = handle
+                .subscription_tracker
+                .lock()
+                .await
+                .fail_current(error.clone());
+            if let Some(state) = state {
+                self.emit_subscription_state(state);
+            }
+            return Err(error);
+        }
 
-        let client = client.ok_or("Not connected")?;
-
-        client.unsubscribe(topic).await
+        match timeout(SUBSCRIPTION_ACK_TIMEOUT, completion).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("Subscription operation was interrupted".to_string()),
+            Err(_) => {
+                let error = "Subscription acknowledgement timed out".to_string();
+                let state = handle
+                    .subscription_tracker
+                    .lock()
+                    .await
+                    .fail_current(error.clone());
+                if let Some(state) = state {
+                    self.emit_subscription_state(state);
+                }
+                Err(error)
+            }
+        }
     }
 
     fn emit_state(
@@ -545,9 +813,30 @@ impl MqttManager {
         let _ = app_handle.emit("mqtt-connection-state", state);
     }
 
+    fn emit_subscription_state(&self, state: SubscriptionStateEvent) {
+        Self::emit_subscription_state_static(&self.app_handle, state);
+    }
+
+    fn emit_subscription_state_static(app_handle: &AppHandle, state: SubscriptionStateEvent) {
+        let _ = app_handle.emit("mqtt-subscription-state", state);
+    }
+
+    async fn fail_pending_subscription(
+        app_handle: &AppHandle,
+        subscription_tracker: &AsyncMutex<SubscriptionOperationTracker>,
+        error: String,
+    ) {
+        let state = subscription_tracker.lock().await.fail_current(error);
+        if let Some(state) = state {
+            Self::emit_subscription_state_static(app_handle, state);
+        }
+    }
+
     pub fn is_connected(&self, server_id: i64) -> bool {
         let clients = self.clients.read();
-        clients.contains_key(&server_id)
+        clients
+            .get(&server_id)
+            .is_some_and(|handle| handle.connected.load(Ordering::Acquire))
     }
 
     fn build_connection(
@@ -723,7 +1012,10 @@ impl MqttManager {
         } else {
             None
         };
-        let builder = rumqttc::tokio_rustls::rustls::ClientConfig::builder();
+        let provider = Arc::new(rumqttc::tokio_rustls::rustls::crypto::ring::default_provider());
+        let builder = rumqttc::tokio_rustls::rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|error| format!("Failed to configure TLS protocol versions: {error}"))?;
 
         let mut client_config = if ssl_secure {
             let builder = builder.with_root_certificates(root_cert_store);
@@ -838,11 +1130,18 @@ impl MqttManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionState, MqttCapability, MqttManager, MqttProtocolVersion};
+    use super::{
+        ConnectionState, MqttCapability, MqttManager, MqttProtocolVersion, ProtocolEvent,
+        ProtocolEventLoop,
+    };
     use crate::db::models::MqttServer;
+    use crate::mqtt::subscription::{
+        SubscriptionOperation, SubscriptionOperationTracker, SubscriptionRequest,
+    };
     use std::time::Duration;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
     use tokio::time::timeout;
 
     fn server(protocol: &str, websocket_path: Option<&str>) -> MqttServer {
@@ -902,6 +1201,24 @@ mod tests {
 
         assert_eq!(&packet_prefix[2..8], b"\0\x04MQTT");
         packet_prefix[8]
+    }
+
+    async fn read_mqtt_packet(socket: &mut tokio::net::TcpStream) -> (u8, Vec<u8>) {
+        let packet_type = socket.read_u8().await.unwrap();
+        let mut remaining_length = 0_usize;
+        let mut multiplier = 1_usize;
+        loop {
+            let byte = socket.read_u8().await.unwrap();
+            remaining_length += usize::from(byte & 0x7f) * multiplier;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            multiplier *= 128;
+        }
+
+        let mut payload = vec![0_u8; remaining_length];
+        socket.read_exact(&mut payload).await.unwrap();
+        (packet_type, payload)
     }
 
     #[tokio::test]
@@ -1011,5 +1328,250 @@ mod tests {
         );
 
         assert!(tls_config.is_ok());
+    }
+
+    #[test]
+    fn mqtt_311_suback_exposes_packet_id_and_granted_qos() {
+        let event = ProtocolEventLoop::map_v3_event(rumqttc::Event::Incoming(
+            rumqttc::Packet::SubAck(rumqttc::SubAck::new(
+                41,
+                vec![rumqttc::SubscribeReasonCode::Success(
+                    rumqttc::QoS::AtLeastOnce,
+                )],
+            )),
+        ))
+        .unwrap();
+
+        assert!(matches!(
+            event,
+            ProtocolEvent::SubscriptionAcknowledged {
+                operation: SubscriptionOperation::Subscribe,
+                packet_id: 41,
+                granted_qos: Some(1),
+            }
+        ));
+    }
+
+    #[test]
+    fn mqtt_5_suback_exposes_packet_id_and_granted_qos() {
+        use rumqttc::v5::mqttbytes::v5::{Packet, SubAck, SubscribeReasonCode};
+        use rumqttc::v5::mqttbytes::QoS;
+
+        let event =
+            ProtocolEventLoop::map_v5_event(rumqttc::v5::Event::Incoming(Packet::SubAck(SubAck {
+                pkid: 17,
+                return_codes: vec![SubscribeReasonCode::Success(QoS::AtMostOnce)],
+                properties: None,
+            })))
+            .unwrap();
+
+        assert!(matches!(
+            event,
+            ProtocolEvent::SubscriptionAcknowledged {
+                operation: SubscriptionOperation::Subscribe,
+                packet_id: 17,
+                granted_qos: Some(0),
+            }
+        ));
+    }
+
+    #[test]
+    fn mqtt_5_rejection_is_classified_as_subscription_failure() {
+        use rumqttc::v5::mqttbytes::v5::SubscribeReasonCode;
+
+        let event = ProtocolEventLoop::map_v5_event(rumqttc::v5::Event::Incoming(
+            rumqttc::v5::mqttbytes::v5::Packet::SubAck(rumqttc::v5::mqttbytes::v5::SubAck {
+                pkid: 23,
+                return_codes: vec![SubscribeReasonCode::NotAuthorized],
+                properties: None,
+            }),
+        ))
+        .unwrap();
+
+        assert!(matches!(
+            event,
+            ProtocolEvent::SubscriptionRejected {
+                operation: SubscriptionOperation::Subscribe,
+                packet_id: 23,
+                error,
+            } if error.contains("NotAuthorized")
+        ));
+    }
+
+    #[test]
+    fn mqtt_5_missing_subscription_is_a_successful_unsubscribe() {
+        use rumqttc::v5::mqttbytes::v5::{Packet, UnsubAck, UnsubAckReason};
+
+        let event = ProtocolEventLoop::map_v5_event(rumqttc::v5::Event::Incoming(
+            Packet::UnsubAck(UnsubAck {
+                pkid: 29,
+                reasons: vec![UnsubAckReason::NoSubscriptionExisted],
+                properties: None,
+            }),
+        ))
+        .unwrap();
+
+        assert!(matches!(
+            event,
+            ProtocolEvent::SubscriptionAcknowledged {
+                operation: SubscriptionOperation::Unsubscribe,
+                packet_id: 29,
+                granted_qos: None,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn subscribe_stays_pending_until_broker_suback() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release_ack, wait_for_release) = oneshot::channel();
+        let (finish_test, wait_for_test) = oneshot::channel();
+        let broker = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let (packet_type, _) = read_mqtt_packet(&mut socket).await;
+            assert_eq!(packet_type >> 4, 1);
+            socket.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+
+            let (packet_type, subscribe) = read_mqtt_packet(&mut socket).await;
+            assert_eq!(packet_type >> 4, 8);
+            let packet_id = u16::from_be_bytes([subscribe[0], subscribe[1]]);
+            wait_for_release.await.unwrap();
+            socket
+                .write_all(&[0x90, 0x03, (packet_id >> 8) as u8, packet_id as u8, 0x01])
+                .await
+                .unwrap();
+            wait_for_test.await.unwrap();
+        });
+
+        let mut server = server("mqtt", None);
+        server.host = address.ip().to_string();
+        server.port = i32::from(address.port());
+        server.protocol_version = "3.1.1".to_string();
+        let connection = MqttManager::build_connection(&server, 1024).unwrap();
+        let mut eventloop = connection.eventloop;
+        let client = connection.client;
+
+        assert!(matches!(
+            eventloop.poll().await,
+            Ok(ProtocolEvent::Connected)
+        ));
+        let mut tracker = SubscriptionOperationTracker::default();
+        let mut started = tracker
+            .start(
+                1,
+                "sensor/+".to_string(),
+                SubscriptionRequest::Subscribe { requested_qos: 2 },
+            )
+            .unwrap();
+        client.subscribe("sensor/+".to_string(), 2).await.unwrap();
+
+        let sent = eventloop.poll().await.unwrap();
+        let ProtocolEvent::SubscriptionRequestSent {
+            operation,
+            packet_id,
+        } = sent
+        else {
+            panic!("expected outgoing SUBSCRIBE event");
+        };
+        assert!(tracker.mark_sent(operation, packet_id));
+        assert!(started.completion.try_recv().is_err());
+
+        release_ack.send(()).unwrap();
+        let ack = eventloop.poll().await.unwrap();
+        let ProtocolEvent::SubscriptionAcknowledged {
+            operation,
+            packet_id,
+            granted_qos,
+        } = ack
+        else {
+            panic!("expected incoming SUBACK event");
+        };
+        let state = tracker.complete(operation, packet_id, granted_qos).unwrap();
+        let result = started.completion.await.unwrap().unwrap();
+
+        assert_eq!(state.granted_qos, Some(1));
+        assert_eq!(result.granted_qos, Some(1));
+        finish_test.send(()).unwrap();
+        broker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mqtt_5_rejected_suback_does_not_reset_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let broker = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let (packet_type, _) = read_mqtt_packet(&mut socket).await;
+            assert_eq!(packet_type >> 4, 1);
+            socket
+                .write_all(&[0x20, 0x03, 0x00, 0x00, 0x00])
+                .await
+                .unwrap();
+
+            let (packet_type, subscribe) = read_mqtt_packet(&mut socket).await;
+            assert_eq!(packet_type >> 4, 8);
+            let packet_id = u16::from_be_bytes([subscribe[0], subscribe[1]]);
+            socket
+                .write_all(&[
+                    0x90,
+                    0x04,
+                    (packet_id >> 8) as u8,
+                    packet_id as u8,
+                    0x00,
+                    0x87,
+                ])
+                .await
+                .unwrap();
+
+            let (packet_type, _) = timeout(Duration::from_secs(2), read_mqtt_packet(&mut socket))
+                .await
+                .expect("client reset the connection after rejected SUBACK");
+            assert_eq!(packet_type >> 4, 3);
+        });
+
+        let mut server = server("mqtt", None);
+        server.host = address.ip().to_string();
+        server.port = i32::from(address.port());
+        server.protocol_version = "5.0".to_string();
+        let connection = MqttManager::build_connection(&server, 1024).unwrap();
+        let mut eventloop = connection.eventloop;
+        let client = connection.client;
+
+        assert!(matches!(
+            eventloop.poll().await,
+            Ok(ProtocolEvent::Connected)
+        ));
+        client
+            .subscribe("restricted/topic".to_string(), 1)
+            .await
+            .unwrap();
+
+        let sent = eventloop.poll().await.unwrap();
+        let ProtocolEvent::SubscriptionRequestSent {
+            operation,
+            packet_id,
+        } = sent
+        else {
+            panic!("expected outgoing SUBSCRIBE event");
+        };
+        assert_eq!(operation, SubscriptionOperation::Subscribe);
+
+        let rejected = eventloop.poll().await;
+        assert!(matches!(
+            rejected,
+            Ok(ProtocolEvent::SubscriptionRejected {
+                operation: SubscriptionOperation::Subscribe,
+                packet_id: rejected_packet_id,
+                error,
+            }) if rejected_packet_id == packet_id && error.contains("NotAuthorized")
+        ));
+
+        client
+            .publish("still/connected".to_string(), 0, false, b"ok".to_vec())
+            .await
+            .unwrap();
+        assert!(matches!(eventloop.poll().await, Ok(ProtocolEvent::Other)));
+        broker.await.unwrap();
     }
 }
