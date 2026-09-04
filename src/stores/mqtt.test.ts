@@ -8,6 +8,7 @@ import { ElMessage } from "element-plus";
 let mqttMessageListener: ((event: { payload: any }) => Promise<void>) | null = null;
 let connectionStateListener: ((event: { payload: any }) => void) | null = null;
 let subscriptionStateListener: ((event: { payload: any }) => void) | null = null;
+let publishStateListener: ((event: { payload: any }) => void) | null = null;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -19,6 +20,8 @@ vi.mock("@tauri-apps/api/event", () => ({
       connectionStateListener = callback;
     } else if (event === "mqtt-subscription-state") {
       subscriptionStateListener = callback;
+    } else if (event === "mqtt-publish-state") {
+      publishStateListener = callback;
     } else if (event === "mqtt-message") {
       mqttMessageListener = callback;
     }
@@ -71,6 +74,7 @@ describe("useMqttStore", () => {
     mqttMessageListener = null;
     connectionStateListener = null;
     subscriptionStateListener = null;
+    publishStateListener = null;
     vi.clearAllMocks();
     vi.useFakeTimers();
   });
@@ -233,6 +237,78 @@ describe("useMqttStore", () => {
     });
   });
 
+  describe("发布确认状态", () => {
+    it("立即插入 pending 并按 operation ID 原地更新到 confirmed", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      let resolvePublish!: (value: any) => void;
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === "publish_message") {
+          return new Promise((resolve) => {
+            resolvePublish = resolve;
+          });
+        }
+        return Promise.resolve([]);
+      });
+
+      const publishPromise = store.publishTrackedMessage(1, {
+        topic: "devices/1",
+        payload: "on",
+        qos: 1,
+        retain: false,
+        format: "text",
+      });
+
+      const pending = store.getServerMessages(1);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({
+        topic: "devices/1",
+        publish_status: "pending",
+      });
+      expect(pending[0].operation_id).toBeTruthy();
+
+      publishStateListener!({
+        payload: {
+          operation_id: pending[0].operation_id,
+          server_id: 1,
+          qos: 1,
+          status: "sent",
+          packet_id: 41,
+        },
+      });
+      expect(store.getServerMessages(1)).toHaveLength(1);
+      expect(store.getServerMessages(1)[0]).toMatchObject({
+        publish_status: "sent",
+        packet_id: 41,
+      });
+
+      resolvePublish({
+        id: 9,
+        server_id: 1,
+        direction: "publish",
+        topic: "devices/1",
+        payload: "on",
+        payload_format: "text",
+        qos: 1,
+        retain: false,
+        created_at: "2026-09-04T00:00:00Z",
+        operation_id: pending[0].operation_id,
+        publish_status: "confirmed",
+        packet_id: 41,
+        sent_at: "2026-09-04T00:00:01Z",
+        confirmed_at: "2026-09-04T00:00:02Z",
+      });
+      await publishPromise;
+
+      expect(store.getServerMessages(1)).toHaveLength(1);
+      expect(store.getServerMessages(1)[0]).toMatchObject({
+        id: 9,
+        publish_status: "confirmed",
+        packet_id: 41,
+      });
+    });
+  });
+
   describe("queueMessage seq", () => {
     it("应为每条消息分配单调递增的 seq", async () => {
       const store = useMqttStore();
@@ -341,10 +417,19 @@ describe("useMqttStore", () => {
 
       // mock publish 延迟，模拟发布时的 await
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === "mqtt_publish") {
+        if (cmd === "publish_message") {
           await Promise.resolve();
           await Promise.resolve();
-          return;
+          return {
+            server_id: 1,
+            direction: "publish",
+            topic: "topic/pub",
+            payload: "payload",
+            payload_format: "text",
+            qos: 0,
+            retain: false,
+            publish_status: "sent",
+          };
         }
         if (cmd === "get_enabled_scripts") {
           return [];
@@ -352,8 +437,14 @@ describe("useMqttStore", () => {
         return [];
       });
 
-      // 开始发布（内部会 await mqtt_publish，期间让出控制权）
-      const publishPromise = store.publish(1, "topic/pub", "payload", 0, false);
+      // 开始发布（内部会 await publish_message，期间让出控制权）
+      const publishPromise = store.publishTrackedMessage(1, {
+        topic: "topic/pub",
+        payload: "payload",
+        qos: 0,
+        retain: false,
+        format: "text",
+      });
 
       // 在 publish 的 await 期间，模拟收到一条消息
       // 由于 publish 中的 await 会挂起，此时可以触发 listener
@@ -383,12 +474,7 @@ describe("useMqttStore", () => {
       const store = useMqttStore();
       await store.initListeners();
 
-      // 模拟发布延迟
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === "mqtt_publish") {
-          await Promise.resolve();
-          return;
-        }
         if (cmd === "get_enabled_scripts") {
           return [];
         }

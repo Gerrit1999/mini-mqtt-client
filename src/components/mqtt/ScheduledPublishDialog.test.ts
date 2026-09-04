@@ -99,7 +99,14 @@ const mockPublish = vi.fn();
 
 vi.mock("@/stores/mqtt", () => ({
   useMqttStore: () => ({
-    publish: mockPublish,
+    publishTrackedMessage: (serverId: number, request: any) =>
+      mockPublish(
+        serverId,
+        request.topic,
+        request.payload,
+        request.qos,
+        request.retain
+      ),
     reserveSeq: vi.fn(() => 0),
     getConnectionStatus: vi.fn(() => "connected"),
   }),
@@ -392,6 +399,42 @@ describe("ScheduledPublishDialog", () => {
         0,
         false
       );
+    });
+
+    it("单条确认较慢时仍按间隔启动后续消息并等待全部结算", async () => {
+      setupTemplates();
+      let resolveFirst!: () => void;
+      mockPublish
+        .mockImplementationOnce(
+          () => new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          })
+        )
+        .mockResolvedValue(undefined);
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.config.interval = 500;
+      vm.config.loopMode = "count";
+      vm.config.loopCount = 1;
+      vm.selectedIds = [1, 2];
+      await flushPromises();
+
+      await vm.handleStart();
+      await flushPromises();
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(500);
+      await flushPromises();
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+      expect(vm.isRunning).toBe(true);
+
+      resolveFirst();
+      await flushPromises();
+      expect(vm.isRunning).toBe(false);
+      expect(vm.isCompleted).toBe(true);
+      expect(vm.successCount).toBe(2);
     });
 
     it("无限循环模式下应持续发送", async () => {

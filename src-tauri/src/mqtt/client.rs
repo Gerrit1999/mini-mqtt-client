@@ -12,17 +12,23 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use tokio::time::timeout;
 
-use crate::db::models::MqttServer;
+use crate::db::{models::MqttServer, Storage};
+use crate::log::{LogEntry, LogManager};
+use crate::mqtt::publish::{
+    PublishAckOutcome, PublishAckPhase, PublishOperationResult, PublishOperationTracker,
+    PublishStateEvent, StartedPublishOperation,
+};
 use crate::mqtt::subscription::{
     StartedSubscriptionOperation, SubscriptionOperation, SubscriptionOperationResult,
     SubscriptionOperationTracker, SubscriptionRequest, SubscriptionStateEvent,
 };
 
 const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+const PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MqttProtocolVersion {
@@ -263,6 +269,14 @@ enum ProtocolEvent {
         qos: u8,
         retain: bool,
     },
+    PublishRequestSent {
+        packet_id: u16,
+    },
+    PublishAcknowledged {
+        phase: PublishAckPhase,
+        packet_id: u16,
+        outcome: PublishAckOutcome,
+    },
     SubscriptionRequestSent {
         operation: SubscriptionOperation,
         packet_id: u16,
@@ -295,6 +309,24 @@ impl ProtocolEventLoop {
                 payload: publish.payload.to_vec(),
                 qos: publish.qos as u8,
                 retain: publish.retain,
+            }),
+            V3Event::Outgoing(rumqttc::Outgoing::Publish(packet_id)) => {
+                Ok(ProtocolEvent::PublishRequestSent { packet_id })
+            }
+            V3Event::Incoming(V3Packet::PubAck(ack)) => Ok(ProtocolEvent::PublishAcknowledged {
+                phase: PublishAckPhase::PubAck,
+                packet_id: ack.pkid,
+                outcome: PublishAckOutcome::Success,
+            }),
+            V3Event::Incoming(V3Packet::PubRec(ack)) => Ok(ProtocolEvent::PublishAcknowledged {
+                phase: PublishAckPhase::PubRec,
+                packet_id: ack.pkid,
+                outcome: PublishAckOutcome::Success,
+            }),
+            V3Event::Incoming(V3Packet::PubComp(ack)) => Ok(ProtocolEvent::PublishAcknowledged {
+                phase: PublishAckPhase::PubComp,
+                packet_id: ack.pkid,
+                outcome: PublishAckOutcome::Success,
             }),
             V3Event::Outgoing(rumqttc::Outgoing::Subscribe(packet_id)) => {
                 Ok(ProtocolEvent::SubscriptionRequestSent {
@@ -341,7 +373,9 @@ impl ProtocolEventLoop {
     }
 
     fn map_v5_event(event: V5Event) -> Result<ProtocolEvent, String> {
-        use rumqttc::v5::mqttbytes::v5::{Packet, SubscribeReasonCode, UnsubAckReason};
+        use rumqttc::v5::mqttbytes::v5::{
+            Packet, PubAckReason, PubCompReason, PubRecReason, SubscribeReasonCode, UnsubAckReason,
+        };
 
         match event {
             V5Event::Incoming(Packet::ConnAck(ack)) => {
@@ -359,6 +393,52 @@ impl ProtocolEventLoop {
                     payload: publish.payload.to_vec(),
                     qos: publish.qos as u8,
                     retain: publish.retain,
+                })
+            }
+            V5Event::Outgoing(rumqttc::Outgoing::Publish(packet_id)) => {
+                Ok(ProtocolEvent::PublishRequestSent { packet_id })
+            }
+            V5Event::Incoming(Packet::PubAck(ack)) => {
+                let outcome = match ack.reason {
+                    PubAckReason::Success | PubAckReason::NoMatchingSubscribers => {
+                        PublishAckOutcome::Success
+                    }
+                    reason => PublishAckOutcome::Rejected(format!(
+                        "Broker rejected QoS 1 publish: {reason:?}"
+                    )),
+                };
+                Ok(ProtocolEvent::PublishAcknowledged {
+                    phase: PublishAckPhase::PubAck,
+                    packet_id: ack.pkid,
+                    outcome,
+                })
+            }
+            V5Event::Incoming(Packet::PubRec(ack)) => {
+                let outcome = match ack.reason {
+                    PubRecReason::Success | PubRecReason::NoMatchingSubscribers => {
+                        PublishAckOutcome::Success
+                    }
+                    reason => PublishAckOutcome::Rejected(format!(
+                        "Broker rejected QoS 2 publish: {reason:?}"
+                    )),
+                };
+                Ok(ProtocolEvent::PublishAcknowledged {
+                    phase: PublishAckPhase::PubRec,
+                    packet_id: ack.pkid,
+                    outcome,
+                })
+            }
+            V5Event::Incoming(Packet::PubComp(ack)) => {
+                let outcome = match ack.reason {
+                    PubCompReason::Success => PublishAckOutcome::Success,
+                    reason => PublishAckOutcome::Rejected(format!(
+                        "Broker failed to complete QoS 2 publish: {reason:?}"
+                    )),
+                };
+                Ok(ProtocolEvent::PublishAcknowledged {
+                    phase: PublishAckPhase::PubComp,
+                    packet_id: ack.pkid,
+                    outcome,
                 })
             }
             V5Event::Outgoing(rumqttc::Outgoing::Subscribe(packet_id)) => {
@@ -433,6 +513,8 @@ struct ClientHandle {
     client: ProtocolClient,
     shutdown_tx: mpsc::Sender<()>,
     connected: Arc<AtomicBool>,
+    publish_enqueue_gate: Arc<AsyncMutex<()>>,
+    publish_tracker: Arc<AsyncMutex<PublishOperationTracker>>,
     subscription_gate: Arc<AsyncMutex<()>>,
     subscription_tracker: Arc<AsyncMutex<SubscriptionOperationTracker>>,
 }
@@ -444,6 +526,7 @@ struct EventLoopContext {
     app_handle: AppHandle,
     clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
     connected_flag: Arc<AtomicBool>,
+    publish_tracker: Arc<AsyncMutex<PublishOperationTracker>>,
     subscription_tracker: Arc<AsyncMutex<SubscriptionOperationTracker>>,
 }
 
@@ -484,6 +567,7 @@ impl MqttManager {
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
         let connection_id = uuid::Uuid::new_v4();
         let connected = Arc::new(AtomicBool::new(false));
+        let publish_tracker = Arc::new(AsyncMutex::new(PublishOperationTracker::default()));
         let subscription_tracker =
             Arc::new(AsyncMutex::new(SubscriptionOperationTracker::default()));
 
@@ -497,6 +581,8 @@ impl MqttManager {
                     client,
                     shutdown_tx,
                     connected: connected.clone(),
+                    publish_enqueue_gate: Arc::new(AsyncMutex::new(())),
+                    publish_tracker: publish_tracker.clone(),
                     subscription_gate: Arc::new(AsyncMutex::new(())),
                     subscription_tracker: subscription_tracker.clone(),
                 },
@@ -518,6 +604,7 @@ impl MqttManager {
                     app_handle,
                     clients,
                     connected_flag: connected,
+                    publish_tracker,
                     subscription_tracker,
                 },
             )
@@ -539,6 +626,7 @@ impl MqttManager {
             app_handle,
             clients,
             connected_flag,
+            publish_tracker,
             subscription_tracker,
         } = context;
         let mut connected = false;
@@ -550,6 +638,11 @@ impl MqttManager {
                     Self::fail_pending_subscription(
                         &app_handle,
                         &subscription_tracker,
+                        "Connection closed before acknowledgement".to_string(),
+                    ).await;
+                    Self::fail_pending_publish(
+                        &app_handle,
+                        &publish_tracker,
                         "Connection closed before acknowledgement".to_string(),
                     ).await;
                     Self::emit_state_static(
@@ -601,6 +694,42 @@ impl MqttManager {
                             };
                             let _ = app_handle.emit("mqtt-message", msg);
                         }
+                        Ok(ProtocolEvent::PublishRequestSent { packet_id }) => {
+                            let state = publish_tracker
+                                .lock()
+                                .await
+                                .on_outgoing_publish(packet_id);
+                            if let Some(state) = state {
+                                Self::emit_publish_state_static(&app_handle, state);
+                            }
+                        }
+                        Ok(ProtocolEvent::PublishAcknowledged {
+                            phase,
+                            packet_id,
+                            outcome,
+                        }) => {
+                            let diagnostic = format!(
+                                "server_id={server_id}, phase={phase:?}, packet_id={packet_id}, outcome={outcome:?}"
+                            );
+                            let state = {
+                                let mut tracker = publish_tracker.lock().await;
+                                match phase {
+                                    PublishAckPhase::PubAck => tracker.on_puback(packet_id, outcome),
+                                    PublishAckPhase::PubRec => tracker.on_pubrec(packet_id, outcome),
+                                    PublishAckPhase::PubComp => tracker.on_pubcomp(packet_id, outcome),
+                                }
+                            };
+                            if let Some(state) = state {
+                                Self::emit_publish_state_static(&app_handle, state);
+                            } else {
+                                Self::write_diagnostic(
+                                    &app_handle,
+                                    "warning",
+                                    "Unmatched publish acknowledgement",
+                                    Some(diagnostic),
+                                );
+                            }
+                        }
                         Ok(ProtocolEvent::SubscriptionRequestSent { operation, packet_id }) => {
                             subscription_tracker.lock().await.mark_sent(operation, packet_id);
                         }
@@ -635,6 +764,11 @@ impl MqttManager {
                             Self::fail_pending_subscription(
                                 &app_handle,
                                 &subscription_tracker,
+                                format!("Connection closed before acknowledgement: {e}"),
+                            ).await;
+                            Self::fail_pending_publish(
+                                &app_handle,
+                                &publish_tracker,
                                 format!("Connection closed before acknowledgement: {e}"),
                             ).await;
                             if connected {
@@ -685,22 +819,69 @@ impl MqttManager {
         Ok(())
     }
 
-    pub async fn publish(
+    pub(crate) async fn publish_tracked(
         &self,
         server_id: i64,
+        operation_id: String,
         topic: String,
         payload: Vec<u8>,
         qos: u8,
         retain: bool,
-    ) -> Result<(), String> {
-        let client = {
+    ) -> Result<PublishOperationResult, String> {
+        let handle = {
             let clients = self.clients.read();
-            clients.get(&server_id).map(|h| h.client.clone())
+            clients.get(&server_id).cloned()
+        }
+        .ok_or("Not connected")?;
+
+        let completion = {
+            let _enqueue_guard = handle.publish_enqueue_gate.lock().await;
+            if !handle.connected.load(Ordering::Acquire)
+                || self.clients.read().get(&server_id).map_or(true, |current| {
+                    current.connection_id != handle.connection_id
+                })
+            {
+                return Err("Not connected".to_string());
+            }
+
+            let StartedPublishOperation { state, completion } = handle
+                .publish_tracker
+                .lock()
+                .await
+                .start(server_id, qos, operation_id.clone())?;
+            self.emit_publish_state(state);
+
+            if let Err(error) = handle.client.publish(topic, qos, retain, payload).await {
+                let state = handle
+                    .publish_tracker
+                    .lock()
+                    .await
+                    .mark_enqueue_failed(&operation_id, error.clone());
+                if let Some(state) = state {
+                    self.emit_publish_state(state);
+                }
+                return Err(error);
+            }
+
+            completion
         };
 
-        let client = client.ok_or("Not connected")?;
-
-        client.publish(topic, qos, retain, payload).await
+        match timeout(PUBLISH_ACK_TIMEOUT, completion).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("Publish operation was interrupted".to_string()),
+            Err(_) => {
+                let error = "Publish acknowledgement timed out".to_string();
+                let state = handle
+                    .publish_tracker
+                    .lock()
+                    .await
+                    .fail_operation(&operation_id, error.clone());
+                if let Some(state) = state {
+                    self.emit_publish_state(state);
+                }
+                Err(error)
+            }
+        }
     }
 
     pub async fn subscribe(
@@ -817,6 +998,50 @@ impl MqttManager {
         Self::emit_subscription_state_static(&self.app_handle, state);
     }
 
+    fn emit_publish_state(&self, state: PublishStateEvent) {
+        Self::emit_publish_state_static(&self.app_handle, state);
+    }
+
+    fn emit_publish_state_static(app_handle: &AppHandle, state: PublishStateEvent) {
+        if let Some(storage) = app_handle.try_state::<Storage>() {
+            if let Err(error) = storage.update_publish_state(
+                &state.operation_id,
+                state.status.as_str(),
+                state.packet_id,
+                state.error.as_deref(),
+            ) {
+                Self::write_diagnostic(
+                    app_handle,
+                    "error",
+                    "Failed to persist publish state",
+                    Some(format!(
+                        "operation_id={}, status={}, error={error}",
+                        state.operation_id,
+                        state.status.as_str()
+                    )),
+                );
+            }
+        }
+        let _ = app_handle.emit("mqtt-publish-state", state);
+    }
+
+    fn write_diagnostic(
+        app_handle: &AppHandle,
+        entry_type: &str,
+        message: &str,
+        details: Option<String>,
+    ) {
+        let Some(log_manager) = app_handle.try_state::<LogManager>() else {
+            return;
+        };
+        let _ = log_manager.write_log(&LogEntry {
+            r#type: entry_type.to_string(),
+            message: message.to_string(),
+            details,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     fn emit_subscription_state_static(app_handle: &AppHandle, state: SubscriptionStateEvent) {
         let _ = app_handle.emit("mqtt-subscription-state", state);
     }
@@ -829,6 +1054,17 @@ impl MqttManager {
         let state = subscription_tracker.lock().await.fail_current(error);
         if let Some(state) = state {
             Self::emit_subscription_state_static(app_handle, state);
+        }
+    }
+
+    async fn fail_pending_publish(
+        app_handle: &AppHandle,
+        publish_tracker: &AsyncMutex<PublishOperationTracker>,
+        error: String,
+    ) {
+        let states = publish_tracker.lock().await.fail_all(error);
+        for state in states {
+            Self::emit_publish_state_static(app_handle, state);
         }
     }
 
@@ -1135,6 +1371,7 @@ mod tests {
         ProtocolEventLoop,
     };
     use crate::db::models::MqttServer;
+    use crate::mqtt::publish::{PublishAckOutcome, PublishAckPhase, PublishOperationTracker};
     use crate::mqtt::subscription::{
         SubscriptionOperation, SubscriptionOperationTracker, SubscriptionRequest,
     };
@@ -1353,6 +1590,53 @@ mod tests {
     }
 
     #[test]
+    fn mqtt_311_publish_events_expose_packet_ids() {
+        let sent = ProtocolEventLoop::map_v3_event(rumqttc::Event::Outgoing(
+            rumqttc::Outgoing::Publish(41),
+        ))
+        .unwrap();
+        assert!(matches!(
+            sent,
+            ProtocolEvent::PublishRequestSent { packet_id: 41 }
+        ));
+
+        let acknowledged = ProtocolEventLoop::map_v3_event(rumqttc::Event::Incoming(
+            rumqttc::Packet::PubAck(rumqttc::PubAck::new(41)),
+        ))
+        .unwrap();
+        assert!(matches!(
+            acknowledged,
+            ProtocolEvent::PublishAcknowledged {
+                phase: PublishAckPhase::PubAck,
+                packet_id: 41,
+                outcome: PublishAckOutcome::Success,
+            }
+        ));
+    }
+
+    #[test]
+    fn mqtt_5_publish_rejection_preserves_reason() {
+        use rumqttc::v5::mqttbytes::v5::{Packet, PubAck, PubAckReason};
+
+        let event =
+            ProtocolEventLoop::map_v5_event(rumqttc::v5::Event::Incoming(Packet::PubAck(PubAck {
+                pkid: 23,
+                reason: PubAckReason::NotAuthorized,
+                properties: None,
+            })))
+            .unwrap();
+
+        assert!(matches!(
+            event,
+            ProtocolEvent::PublishAcknowledged {
+                phase: PublishAckPhase::PubAck,
+                packet_id: 23,
+                outcome: PublishAckOutcome::Rejected(error),
+            } if error.contains("NotAuthorized")
+        ));
+    }
+
+    #[test]
     fn mqtt_5_suback_exposes_packet_id_and_granted_qos() {
         use rumqttc::v5::mqttbytes::v5::{Packet, SubAck, SubscribeReasonCode};
         use rumqttc::v5::mqttbytes::QoS;
@@ -1497,6 +1781,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn qos1_publish_completes_only_after_broker_puback() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release_ack, wait_for_release) = oneshot::channel();
+        let (finish_test, wait_for_test) = oneshot::channel();
+        let broker = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let (packet_type, _) = read_mqtt_packet(&mut socket).await;
+            assert_eq!(packet_type >> 4, 1);
+            socket.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+
+            let (packet_type, publish) = read_mqtt_packet(&mut socket).await;
+            assert_eq!(packet_type >> 4, 3);
+            let topic_length = usize::from(u16::from_be_bytes([publish[0], publish[1]]));
+            let packet_id_offset = 2 + topic_length;
+            let packet_id =
+                u16::from_be_bytes([publish[packet_id_offset], publish[packet_id_offset + 1]]);
+            wait_for_release.await.unwrap();
+            socket
+                .write_all(&[0x40, 0x02, (packet_id >> 8) as u8, packet_id as u8])
+                .await
+                .unwrap();
+            wait_for_test.await.unwrap();
+        });
+
+        let mut server = server("mqtt", None);
+        server.host = address.ip().to_string();
+        server.port = i32::from(address.port());
+        server.protocol_version = "3.1.1".to_string();
+        let connection = MqttManager::build_connection(&server, 1024).unwrap();
+        let mut eventloop = connection.eventloop;
+        let client = connection.client;
+
+        assert!(matches!(
+            eventloop.poll().await,
+            Ok(ProtocolEvent::Connected)
+        ));
+        let mut tracker = PublishOperationTracker::default();
+        let mut started = tracker.start(1, 1, "op-qos1-broker".to_string()).unwrap();
+        client
+            .publish("tracked/topic".to_string(), 1, false, b"payload".to_vec())
+            .await
+            .unwrap();
+
+        let sent = eventloop.poll().await.unwrap();
+        let ProtocolEvent::PublishRequestSent { packet_id } = sent else {
+            panic!("expected outgoing PUBLISH event");
+        };
+        tracker.on_outgoing_publish(packet_id).unwrap();
+        assert!(started.completion.try_recv().is_err());
+
+        release_ack.send(()).unwrap();
+        let acknowledged = eventloop.poll().await.unwrap();
+        let ProtocolEvent::PublishAcknowledged {
+            phase: PublishAckPhase::PubAck,
+            packet_id: acknowledged_packet_id,
+            outcome,
+        } = acknowledged
+        else {
+            panic!("expected incoming PUBACK event");
+        };
+        assert_eq!(acknowledged_packet_id, packet_id);
+        tracker.on_puback(acknowledged_packet_id, outcome).unwrap();
+        let result = started.completion.await.unwrap().unwrap();
+        assert_eq!(result.packet_id, Some(packet_id));
+
+        finish_test.send(()).unwrap();
+        broker.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn mqtt_5_rejected_suback_does_not_reset_connection() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1571,7 +1926,10 @@ mod tests {
             .publish("still/connected".to_string(), 0, false, b"ok".to_vec())
             .await
             .unwrap();
-        assert!(matches!(eventloop.poll().await, Ok(ProtocolEvent::Other)));
+        assert!(matches!(
+            eventloop.poll().await,
+            Ok(ProtocolEvent::PublishRequestSent { packet_id: 0 })
+        ));
         broker.await.unwrap();
     }
 }

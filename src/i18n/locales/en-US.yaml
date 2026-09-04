@@ -160,6 +160,14 @@ messages:
   direction:
     received: Received
     sent: Sent
+  publishStatus:
+    label: Publish Status
+    pending: Pending
+    sent: Sent
+    confirmed: Confirmed
+    failed: Failed
+    untracked: Untracked
+    error: Failure Reason
   clearConfirm: Are you sure to clear all messages?
   clearTitle: Clear Messages
   copied: Message copied

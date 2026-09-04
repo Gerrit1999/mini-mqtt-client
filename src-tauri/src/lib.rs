@@ -51,7 +51,6 @@ pub fn run() {
             // MQTT 命令
             mqtt_connect,
             mqtt_disconnect,
-            mqtt_publish,
             mqtt_subscribe,
             mqtt_unsubscribe,
             mqtt_is_connected,

@@ -11,14 +11,18 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
-const mockSave = vi.fn();
+const fileMocks = vi.hoisted(() => ({
+  save: vi.fn(),
+  writeTextFile: vi.fn(),
+}));
+const mockSave = fileMocks.save;
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: mockSave,
+  save: fileMocks.save,
 }));
 
-const mockWriteTextFile = vi.fn();
+const mockWriteTextFile = fileMocks.writeTextFile;
 vi.mock("@tauri-apps/plugin-fs", () => ({
-  writeTextFile: mockWriteTextFile,
+  writeTextFile: fileMocks.writeTextFile,
 }));
 
 // Mock stores
@@ -108,6 +112,14 @@ function createTestI18n() {
           direction: {
             received: "接收",
             sent: "发送",
+          },
+          publishStatus: {
+            label: "发布状态",
+            pending: "等待发送",
+            sent: "已发送",
+            confirmed: "已确认",
+            failed: "失败",
+            untracked: "未跟踪",
           },
         },
         template: {
@@ -274,6 +286,74 @@ describe("MessageList Topic 筛选", () => {
         "history/topic",
         "sensor/temp",
       ]);
+    });
+
+    it("应按 operation ID 合并历史与实时发布状态", async () => {
+      mockHistoryMessages.mockReturnValue([
+        {
+          id: 11,
+          server_id: 1,
+          direction: "publish",
+          topic: "tracked/topic",
+          payload: "value",
+          payload_format: "text",
+          qos: 1,
+          retain: false,
+          created_at: "2026-09-04T00:00:00Z",
+          operation_id: "op-1",
+          publish_status: "confirmed",
+          packet_id: 41,
+        },
+      ]);
+      mockMessages.mockReturnValue([
+        {
+          server_id: 1,
+          direction: "publish",
+          topic: "tracked/topic",
+          payload: new TextEncoder().encode("value"),
+          qos: 1,
+          retain: false,
+          timestamp: "2026-09-04T00:00:00Z",
+          operation_id: "op-1",
+          publish_status: "sent",
+          packet_id: 41,
+          seq: 1,
+        },
+      ]);
+
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      expect(vm.messages).toHaveLength(1);
+      expect(vm.messages[0]).toMatchObject({
+        id: 11,
+        operation_id: "op-1",
+        publish_status: "confirmed",
+      });
+    });
+
+    it("应渲染失败状态和 Broker 错误原因", async () => {
+      mockMessages.mockReturnValue([
+        {
+          server_id: 1,
+          direction: "publish",
+          topic: "tracked/topic",
+          payload: new TextEncoder().encode("value"),
+          qos: 1,
+          retain: false,
+          timestamp: "2026-09-04T00:00:00Z",
+          operation_id: "op-failed",
+          publish_status: "failed",
+          publish_error: "Broker rejected publish: NotAuthorized",
+        },
+      ]);
+
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      expect(wrapper.text()).toContain("失败");
+      expect(wrapper.text()).toContain("Broker rejected publish: NotAuthorized");
     });
 
     it("空消息时应返回空数组", async () => {
