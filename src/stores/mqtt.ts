@@ -230,6 +230,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     for (const [serverId, newMessages] of messagesByServerId) {
       const existing = newMap.get(serverId) || [];
       const merged = existing.concat(newMessages);
+      merged.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
       const messageLimit = appStore.messageLimit;
       // 限制每个 server 的消息数量
       newMap.set(
