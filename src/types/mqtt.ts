@@ -3,6 +3,11 @@
  */
 export type MqttTransportProtocol = "mqtt" | "mqtts" | "ws" | "wss";
 export type MqttCertificateType = "ca_signed" | "self_signed";
+export type MqttProtocolVersion = "3.1.1" | "5.0";
+export type MqttCapability =
+  | "publish_properties"
+  | "session_expiry"
+  | "topic_alias";
 
 export interface MqttServer {
   id?: number;
@@ -11,7 +16,7 @@ export interface MqttServer {
   port: number;
   protocol?: MqttTransportProtocol;
   websocket_path?: string;
-  protocol_version: "3.1.1" | "5.0";
+  protocol_version: MqttProtocolVersion;
   username?: string;
   password?: string;
   client_id?: string;

@@ -5,14 +5,19 @@ import { invoke } from "@tauri-apps/api/core";
 
 // 保存 mqtt-message 的 listener 回调
 let mqttMessageListener: ((event: { payload: any }) => Promise<void>) | null = null;
+let connectionStateListener: ((event: { payload: any }) => void) | null = null;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_event: string, callback: any) => {
-    mqttMessageListener = callback;
+  listen: vi.fn(async (event: string, callback: any) => {
+    if (event === "mqtt-connection-state") {
+      connectionStateListener = callback;
+    } else if (event === "mqtt-message") {
+      mqttMessageListener = callback;
+    }
     return () => {};
   }),
 }));
@@ -60,12 +65,50 @@ describe("useMqttStore", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     mqttMessageListener = null;
+    connectionStateListener = null;
     vi.clearAllMocks();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  describe("连接协议状态", () => {
+    it("保存后端确认的实际协议版本和能力", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+
+      connectionStateListener!({
+        payload: {
+          server_id: 1,
+          status: "connected",
+          protocol_version: "5.0",
+          capabilities: ["publish_properties", "session_expiry", "topic_alias"],
+        },
+      });
+
+      expect(store.getConnectionProtocolVersion(1)).toBe("5.0");
+      expect(store.supportsCapability(1, "publish_properties")).toBe(true);
+      expect(store.supportsCapability(1, "session_expiry")).toBe(true);
+      expect(store.supportsCapability(1, "topic_alias")).toBe(true);
+    });
+
+    it("连接预检失败时记录明确错误状态", async () => {
+      const store = useMqttStore();
+      mockedInvoke.mockRejectedValueOnce(
+        "Unsupported MQTT protocol version: 4.0. Supported versions: 3.1.1, 5.0"
+      );
+
+      await expect(store.connect(1)).rejects.toBe(
+        "Unsupported MQTT protocol version: 4.0. Supported versions: 3.1.1, 5.0"
+      );
+
+      expect(store.getConnectionStatus(1)).toBe("error");
+      expect(store.getConnectionError(1)).toBe(
+        "Unsupported MQTT protocol version: 4.0. Supported versions: 3.1.1, 5.0"
+      );
+    });
   });
 
   describe("queueMessage seq", () => {
