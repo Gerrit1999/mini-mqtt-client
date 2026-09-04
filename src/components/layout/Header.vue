@@ -20,7 +20,7 @@
     <!-- 中间：协议和配置信息 -->
     <div v-if="activeServer" class="header-center">
       <el-tag size="small" type="info" effect="plain">
-        MQTT {{ activeServer.server.protocol_version }}
+        MQTT {{ displayedProtocolVersion }}
       </el-tag>
       <el-tag
         v-if="activeServer.server.use_tls"
@@ -108,6 +108,13 @@ const activeServer = computed(() => serverStore.activeServer);
 const connectionStatus = computed(() => {
   if (!activeServer.value?.server.id) return "disconnected";
   return mqttStore.getConnectionStatus(activeServer.value.server.id);
+});
+
+const displayedProtocolVersion = computed(() => {
+  const server = activeServer.value?.server;
+  if (!server?.id) return server?.protocol_version;
+  if (connectionStatus.value !== "connected") return server.protocol_version;
+  return mqttStore.getConnectionProtocolVersion(server.id) ?? server.protocol_version;
 });
 
 const statusText = computed(() => {

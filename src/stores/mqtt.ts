@@ -3,7 +3,13 @@ import { ref, shallowRef } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ElMessage } from "element-plus";
-import type { ConnectionStatus, MqttMessage, EnvVariable } from "@/types/mqtt";
+import type {
+  ConnectionStatus,
+  EnvVariable,
+  MqttCapability,
+  MqttMessage,
+  MqttProtocolVersion,
+} from "@/types/mqtt";
 import { ScriptEngine } from "@/utils/scriptEngine";
 import type { Script } from "@/stores/script";
 import { handleScriptError } from "@/utils/errorHandler";
@@ -14,6 +20,8 @@ interface ConnectionState {
   server_id: number;
   status: ConnectionStatus;
   error?: string;
+  protocol_version?: MqttProtocolVersion;
+  capabilities?: MqttCapability[];
 }
 
 interface ReceivedMessage {
@@ -48,7 +56,15 @@ export const useMqttStore = defineStore("mqtt", () => {
   const strictTextDecoder = new TextDecoder("utf-8", { fatal: true });
   // 连接状态
   const connectionStates = ref<
-    Map<number, { status: ConnectionStatus; error?: string }>
+    Map<
+      number,
+      {
+        status: ConnectionStatus;
+        error?: string;
+        protocolVersion?: MqttProtocolVersion;
+        capabilities: MqttCapability[];
+      }
+    >
   >(new Map());
 
   // 按 serverId 分组存储消息（使用 shallowRef 减少深度响应式开销）
@@ -251,10 +267,12 @@ export const useMqttStore = defineStore("mqtt", () => {
   const initListeners = async () => {
     // 监听连接状态变化
     await listen<ConnectionState>("mqtt-connection-state", (event) => {
-      const { server_id, status, error } = event.payload;
+      const { server_id, status, error, protocol_version, capabilities } = event.payload;
       connectionStates.value.set(server_id, {
         status: status as ConnectionStatus,
         error,
+        protocolVersion: protocol_version,
+        capabilities: capabilities ?? [],
       });
       
       // 如果有错误，使用 ElMessage 显示
@@ -332,8 +350,18 @@ export const useMqttStore = defineStore("mqtt", () => {
     connectionStates.value.set(serverId, {
       status: "connecting",
       error: undefined,
+      capabilities: [],
     });
-    await invoke("mqtt_connect", { serverId });
+    try {
+      await invoke("mqtt_connect", { serverId });
+    } catch (error) {
+      connectionStates.value.set(serverId, {
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+        capabilities: [],
+      });
+      throw error;
+    }
   };
 
   // 断开连接
@@ -405,6 +433,19 @@ export const useMqttStore = defineStore("mqtt", () => {
   // 获取连接错误
   const getConnectionError = (serverId: number): string | undefined => {
     return connectionStates.value.get(serverId)?.error;
+  };
+
+  const getConnectionProtocolVersion = (
+    serverId: number
+  ): MqttProtocolVersion | undefined => {
+    return connectionStates.value.get(serverId)?.protocolVersion;
+  };
+
+  const supportsCapability = (
+    serverId: number,
+    capability: MqttCapability
+  ): boolean => {
+    return connectionStates.value.get(serverId)?.capabilities.includes(capability) ?? false;
   };
 
   // 获取某个 server 的消息（直接返回，无需过滤）
@@ -510,6 +551,8 @@ export const useMqttStore = defineStore("mqtt", () => {
     unsubscribe,
     getConnectionStatus,
     getConnectionError,
+    getConnectionProtocolVersion,
+    supportsCapability,
     getServerMessages,
     getReceivedCount,
     applyMessageLimit,

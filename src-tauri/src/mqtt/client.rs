@@ -1,5 +1,12 @@
 use parking_lot::RwLock;
-use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS, Transport};
+use rumqttc::v5::{
+    AsyncClient as V5AsyncClient, Event as V5Event, EventLoop as V5EventLoop,
+    MqttOptions as V5MqttOptions,
+};
+use rumqttc::{
+    AsyncClient as V3AsyncClient, Event as V3Event, EventLoop as V3EventLoop,
+    MqttOptions as V3MqttOptions, Packet as V3Packet, QoS as V3QoS, Transport,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,6 +15,58 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::db::models::MqttServer;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MqttProtocolVersion {
+    #[serde(rename = "3.1.1")]
+    V3_1_1,
+    #[serde(rename = "5.0")]
+    V5_0,
+}
+
+impl MqttProtocolVersion {
+    pub fn supports(self, capability: MqttCapability) -> bool {
+        match capability {
+            MqttCapability::PublishProperties
+            | MqttCapability::SessionExpiry
+            | MqttCapability::TopicAlias => self == Self::V5_0,
+        }
+    }
+
+    fn capabilities(self) -> Vec<MqttCapability> {
+        [
+            MqttCapability::PublishProperties,
+            MqttCapability::SessionExpiry,
+            MqttCapability::TopicAlias,
+        ]
+        .into_iter()
+        .filter(|capability| self.supports(*capability))
+        .collect()
+    }
+}
+
+impl TryFrom<&str> for MqttProtocolVersion {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "3.1.1" => Ok(Self::V3_1_1),
+            "5.0" => Ok(Self::V5_0),
+            _ => Err(format!(
+                "Unsupported MQTT protocol version: {}. Supported versions: 3.1.1, 5.0",
+                value
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MqttCapability {
+    PublishProperties,
+    SessionExpiry,
+    TopicAlias,
+}
 
 #[derive(Debug)]
 struct NoCertificateVerification(Arc<rumqttc::tokio_rustls::rustls::crypto::CryptoProvider>);
@@ -81,6 +140,28 @@ pub struct ConnectionState {
     pub server_id: i64,
     pub status: String, // "disconnected", "connecting", "connected", "error"
     pub error: Option<String>,
+    pub protocol_version: Option<MqttProtocolVersion>,
+    pub capabilities: Vec<MqttCapability>,
+}
+
+impl ConnectionState {
+    fn new(
+        server_id: i64,
+        status: &str,
+        error: Option<String>,
+        protocol_version: Option<MqttProtocolVersion>,
+    ) -> Self {
+        let capabilities = protocol_version
+            .map(MqttProtocolVersion::capabilities)
+            .unwrap_or_default();
+        Self {
+            server_id,
+            status: status.to_string(),
+            error,
+            protocol_version,
+            capabilities,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,8 +174,143 @@ pub struct ReceivedMessage {
     pub timestamp: String,
 }
 
+#[derive(Clone)]
+enum ProtocolClient {
+    V3_1_1(V3AsyncClient),
+    V5_0(V5AsyncClient),
+}
+
+impl ProtocolClient {
+    async fn publish(
+        &self,
+        topic: String,
+        qos: u8,
+        retain: bool,
+        payload: Vec<u8>,
+    ) -> Result<(), String> {
+        match self {
+            Self::V3_1_1(client) => client
+                .publish(topic, Self::v3_qos(qos)?, retain, payload)
+                .await
+                .map_err(|e| e.to_string()),
+            Self::V5_0(client) => client
+                .publish(topic, Self::v5_qos(qos)?, retain, payload)
+                .await
+                .map_err(|e| e.to_string()),
+        }
+    }
+
+    async fn subscribe(&self, topic: String, qos: u8) -> Result<(), String> {
+        match self {
+            Self::V3_1_1(client) => client
+                .subscribe(topic, Self::v3_qos(qos)?)
+                .await
+                .map_err(|e| e.to_string()),
+            Self::V5_0(client) => client
+                .subscribe(topic, Self::v5_qos(qos)?)
+                .await
+                .map_err(|e| e.to_string()),
+        }
+    }
+
+    async fn unsubscribe(&self, topic: String) -> Result<(), String> {
+        match self {
+            Self::V3_1_1(client) => client.unsubscribe(topic).await.map_err(|e| e.to_string()),
+            Self::V5_0(client) => client.unsubscribe(topic).await.map_err(|e| e.to_string()),
+        }
+    }
+
+    fn v3_qos(qos: u8) -> Result<V3QoS, String> {
+        match qos {
+            0 => Ok(V3QoS::AtMostOnce),
+            1 => Ok(V3QoS::AtLeastOnce),
+            2 => Ok(V3QoS::ExactlyOnce),
+            _ => Err("Invalid QoS".to_string()),
+        }
+    }
+
+    fn v5_qos(qos: u8) -> Result<rumqttc::v5::mqttbytes::QoS, String> {
+        use rumqttc::v5::mqttbytes::QoS;
+
+        match qos {
+            0 => Ok(QoS::AtMostOnce),
+            1 => Ok(QoS::AtLeastOnce),
+            2 => Ok(QoS::ExactlyOnce),
+            _ => Err("Invalid QoS".to_string()),
+        }
+    }
+}
+
+enum ProtocolEventLoop {
+    V3_1_1(Box<V3EventLoop>),
+    V5_0(Box<V5EventLoop>),
+}
+
+enum ProtocolEvent {
+    Connected,
+    ConnectionRefused(String),
+    Publish {
+        topic: String,
+        payload: Vec<u8>,
+        qos: u8,
+        retain: bool,
+    },
+    Other,
+}
+
+impl ProtocolEventLoop {
+    async fn poll(&mut self) -> Result<ProtocolEvent, String> {
+        match self {
+            Self::V3_1_1(eventloop) => match eventloop.poll().await {
+                Ok(V3Event::Incoming(V3Packet::ConnAck(ack))) => {
+                    if ack.code == rumqttc::ConnectReturnCode::Success {
+                        Ok(ProtocolEvent::Connected)
+                    } else {
+                        Ok(ProtocolEvent::ConnectionRefused(format!("{:?}", ack.code)))
+                    }
+                }
+                Ok(V3Event::Incoming(V3Packet::Publish(publish))) => Ok(ProtocolEvent::Publish {
+                    topic: publish.topic,
+                    payload: publish.payload.to_vec(),
+                    qos: publish.qos as u8,
+                    retain: publish.retain,
+                }),
+                Ok(_) => Ok(ProtocolEvent::Other),
+                Err(error) => Err(error.to_string()),
+            },
+            Self::V5_0(eventloop) => match eventloop.poll().await {
+                Ok(V5Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(ack))) => {
+                    if ack.code == rumqttc::v5::mqttbytes::v5::ConnectReturnCode::Success {
+                        Ok(ProtocolEvent::Connected)
+                    } else {
+                        Ok(ProtocolEvent::ConnectionRefused(format!("{:?}", ack.code)))
+                    }
+                }
+                Ok(V5Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(publish))) => {
+                    let topic = String::from_utf8(publish.topic.to_vec())
+                        .map_err(|error| format!("Invalid MQTT 5.0 topic: {}", error))?;
+                    Ok(ProtocolEvent::Publish {
+                        topic,
+                        payload: publish.payload.to_vec(),
+                        qos: publish.qos as u8,
+                        retain: publish.retain,
+                    })
+                }
+                Ok(_) => Ok(ProtocolEvent::Other),
+                Err(error) => Err(error.to_string()),
+            },
+        }
+    }
+}
+
+struct ProtocolConnection {
+    client: ProtocolClient,
+    eventloop: ProtocolEventLoop,
+    protocol_version: MqttProtocolVersion,
+}
+
 struct ClientHandle {
-    client: AsyncClient,
+    client: ProtocolClient,
     shutdown_tx: mpsc::Sender<()>,
 }
 
@@ -117,73 +333,18 @@ impl MqttManager {
         packet_size_limit: usize,
     ) -> Result<(), String> {
         let server_id = server.id.ok_or("Server ID is required")?;
+        let connection = Self::build_connection(&server, packet_size_limit)?;
+        let protocol_version = connection.protocol_version;
 
         // 如果已连接，先断开
         self.disconnect(server_id).await?;
 
         // 发送连接中状态
-        self.emit_state(server_id, "connecting", None);
+        self.emit_state(server_id, "connecting", None, Some(protocol_version));
 
-        // 构建 MQTT 配置
-        let protocol =
-            server
-                .protocol
-                .as_deref()
-                .unwrap_or(if server.use_tls { "mqtts" } else { "mqtt" });
-        let broker_addr = Self::broker_addr(&server, protocol);
-        let client_id = server
-            .client_id
-            .unwrap_or_else(|| format!("mqtt_client_{}", uuid::Uuid::new_v4()));
-
-        let mut options = MqttOptions::new(client_id, broker_addr, server.port as u16);
-        options.set_keep_alive(Duration::from_secs(server.keep_alive as u64));
-        options.set_clean_session(server.clean_session);
-        options.set_max_packet_size(packet_size_limit, packet_size_limit);
-
-        if let (Some(username), Some(password)) =
-            (server.username.as_ref(), server.password.as_ref())
-        {
-            if !username.is_empty() {
-                options.set_credentials(username, password);
-            }
-        }
-
-        match protocol {
-            "mqtt" => {}
-            "mqtts" => {
-                let tls_config = Self::build_tls_config(
-                    server.ssl_secure,
-                    server.alpn.as_deref(),
-                    server.certificate_type.as_str(),
-                    server.ca_cert.as_deref(),
-                    server.client_cert.as_deref(),
-                    server.client_key.as_deref(),
-                    server.client_key_password.as_deref(),
-                )?;
-                options.set_transport(Transport::tls_with_config(tls_config));
-            }
-            "ws" => {
-                options.set_transport(Transport::Ws);
-            }
-            "wss" => {
-                let tls_config = Self::build_tls_config(
-                    server.ssl_secure,
-                    server.alpn.as_deref(),
-                    server.certificate_type.as_str(),
-                    server.ca_cert.as_deref(),
-                    server.client_cert.as_deref(),
-                    server.client_key.as_deref(),
-                    server.client_key_password.as_deref(),
-                )?;
-                options.set_transport(Transport::wss_with_config(tls_config));
-            }
-            protocol => {
-                return Err(format!("Unsupported MQTT transport protocol: {}", protocol));
-            }
-        }
-
-        // 创建客户端
-        let (client, eventloop) = AsyncClient::new(options, 100);
+        let ProtocolConnection {
+            client, eventloop, ..
+        } = connection;
 
         // 创建停止信号
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
@@ -194,7 +355,7 @@ impl MqttManager {
             clients.insert(
                 server_id,
                 ClientHandle {
-                    client: client.clone(),
+                    client,
                     shutdown_tx,
                 },
             );
@@ -205,7 +366,15 @@ impl MqttManager {
         let clients = self.clients.clone();
 
         tokio::spawn(async move {
-            Self::run_eventloop(server_id, eventloop, shutdown_rx, app_handle, clients).await;
+            Self::run_eventloop(
+                server_id,
+                protocol_version,
+                eventloop,
+                shutdown_rx,
+                app_handle,
+                clients,
+            )
+            .await;
         });
 
         Ok(())
@@ -213,7 +382,8 @@ impl MqttManager {
 
     async fn run_eventloop(
         server_id: i64,
-        mut eventloop: EventLoop,
+        protocol_version: MqttProtocolVersion,
+        mut eventloop: ProtocolEventLoop,
         mut shutdown_rx: mpsc::Receiver<()>,
         app_handle: AppHandle,
         clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
@@ -223,41 +393,52 @@ impl MqttManager {
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    Self::emit_state_static(&app_handle, server_id, "disconnected", None);
+                    Self::emit_state_static(
+                        &app_handle,
+                        server_id,
+                        "disconnected",
+                        None,
+                        Some(protocol_version),
+                    );
                     break;
                 }
                 event = eventloop.poll() => {
                     match event {
-                        Ok(Event::Incoming(Packet::ConnAck(ack))) => {
-                            if ack.code == rumqttc::ConnectReturnCode::Success {
-                                connected = true;
-                                Self::emit_state_static(&app_handle, server_id, "connected", None);
-                            } else {
-                                Self::emit_state_static(
-                                    &app_handle,
-                                    server_id,
-                                    "error",
-                                    Some(format!("Connection refused: {:?}", ack.code)),
-                                );
-                                break;
-                            }
+                        Ok(ProtocolEvent::Connected) => {
+                            connected = true;
+                            Self::emit_state_static(
+                                &app_handle,
+                                server_id,
+                                "connected",
+                                None,
+                                Some(protocol_version),
+                            );
                         }
-                        Ok(Event::Incoming(Packet::Publish(publish))) => {
+                        Ok(ProtocolEvent::ConnectionRefused(code)) => {
+                            Self::emit_state_static(
+                                &app_handle,
+                                server_id,
+                                "error",
+                                Some(format!("Connection refused: {}", code)),
+                                Some(protocol_version),
+                            );
+                            break;
+                        }
+                        Ok(ProtocolEvent::Publish {
+                            topic,
+                            payload,
+                            qos,
+                            retain,
+                        }) => {
                             let msg = ReceivedMessage {
                                 server_id,
-                                topic: publish.topic.clone(),
-                                payload: publish.payload.to_vec(),
-                                qos: publish.qos as u8,
-                                retain: publish.retain,
+                                topic,
+                                payload,
+                                qos,
+                                retain,
                                 timestamp: chrono::Utc::now().to_rfc3339(),
                             };
                             let _ = app_handle.emit("mqtt-message", msg);
-                        }
-                        Ok(Event::Incoming(Packet::SubAck(_))) => {
-                            // 订阅成功
-                        }
-                        Ok(Event::Incoming(Packet::PingResp)) => {
-                            // Ping 响应
                         }
                         Err(e) => {
                             if connected {
@@ -266,6 +447,7 @@ impl MqttManager {
                                     server_id,
                                     "error",
                                     Some(format!("Connection error: {}", e)),
+                                    Some(protocol_version),
                                 );
                             } else {
                                 Self::emit_state_static(
@@ -273,6 +455,7 @@ impl MqttManager {
                                     server_id,
                                     "error",
                                     Some(format!("Failed to connect: {}", e)),
+                                    Some(protocol_version),
                                 );
                             }
                             break;
@@ -316,17 +499,7 @@ impl MqttManager {
 
         let client = client.ok_or("Not connected")?;
 
-        let qos = match qos {
-            0 => QoS::AtMostOnce,
-            1 => QoS::AtLeastOnce,
-            2 => QoS::ExactlyOnce,
-            _ => return Err("Invalid QoS".to_string()),
-        };
-
-        client
-            .publish(topic, qos, retain, payload)
-            .await
-            .map_err(|e| e.to_string())
+        client.publish(topic, qos, retain, payload).await
     }
 
     pub async fn subscribe(&self, server_id: i64, topic: String, qos: u8) -> Result<(), String> {
@@ -337,17 +510,7 @@ impl MqttManager {
 
         let client = client.ok_or("Not connected")?;
 
-        let qos = match qos {
-            0 => QoS::AtMostOnce,
-            1 => QoS::AtLeastOnce,
-            2 => QoS::ExactlyOnce,
-            _ => return Err("Invalid QoS".to_string()),
-        };
-
-        client
-            .subscribe(topic, qos)
-            .await
-            .map_err(|e| e.to_string())
+        client.subscribe(topic, qos).await
     }
 
     pub async fn unsubscribe(&self, server_id: i64, topic: String) -> Result<(), String> {
@@ -358,11 +521,17 @@ impl MqttManager {
 
         let client = client.ok_or("Not connected")?;
 
-        client.unsubscribe(topic).await.map_err(|e| e.to_string())
+        client.unsubscribe(topic).await
     }
 
-    fn emit_state(&self, server_id: i64, status: &str, error: Option<String>) {
-        Self::emit_state_static(&self.app_handle, server_id, status, error);
+    fn emit_state(
+        &self,
+        server_id: i64,
+        status: &str,
+        error: Option<String>,
+        protocol_version: Option<MqttProtocolVersion>,
+    ) {
+        Self::emit_state_static(&self.app_handle, server_id, status, error, protocol_version);
     }
 
     fn emit_state_static(
@@ -370,18 +539,121 @@ impl MqttManager {
         server_id: i64,
         status: &str,
         error: Option<String>,
+        protocol_version: Option<MqttProtocolVersion>,
     ) {
-        let state = ConnectionState {
-            server_id,
-            status: status.to_string(),
-            error,
-        };
+        let state = ConnectionState::new(server_id, status, error, protocol_version);
         let _ = app_handle.emit("mqtt-connection-state", state);
     }
 
     pub fn is_connected(&self, server_id: i64) -> bool {
         let clients = self.clients.read();
         clients.contains_key(&server_id)
+    }
+
+    fn build_connection(
+        server: &MqttServer,
+        packet_size_limit: usize,
+    ) -> Result<ProtocolConnection, String> {
+        let protocol_version = MqttProtocolVersion::try_from(server.protocol_version.as_str())?;
+        if server.keep_alive < 0 {
+            return Err("MQTT keep alive cannot be negative".to_string());
+        }
+        if protocol_version == MqttProtocolVersion::V5_0 && server.keep_alive < 5 {
+            return Err("MQTT 5.0 keep alive must be at least 5 seconds".to_string());
+        }
+
+        let protocol =
+            server
+                .protocol
+                .as_deref()
+                .unwrap_or(if server.use_tls { "mqtts" } else { "mqtt" });
+        let broker_addr = Self::broker_addr(server, protocol);
+        let client_id = server
+            .client_id
+            .clone()
+            .unwrap_or_else(|| format!("mqtt_client_{}", uuid::Uuid::new_v4()));
+        let transport = Self::build_transport(server, protocol)?;
+
+        match protocol_version {
+            MqttProtocolVersion::V3_1_1 => {
+                let mut options = V3MqttOptions::new(client_id, broker_addr, server.port as u16);
+                options.set_keep_alive(Duration::from_secs(server.keep_alive as u64));
+                options.set_clean_session(server.clean_session);
+                options.set_max_packet_size(packet_size_limit, packet_size_limit);
+                if let Some(transport) = transport {
+                    options.set_transport(transport);
+                }
+                if let (Some(username), Some(password)) =
+                    (server.username.as_ref(), server.password.as_ref())
+                {
+                    if !username.is_empty() {
+                        options.set_credentials(username, password);
+                    }
+                }
+
+                let (client, eventloop) = V3AsyncClient::new(options, 100);
+                Ok(ProtocolConnection {
+                    client: ProtocolClient::V3_1_1(client),
+                    eventloop: ProtocolEventLoop::V3_1_1(Box::new(eventloop)),
+                    protocol_version,
+                })
+            }
+            MqttProtocolVersion::V5_0 => {
+                let packet_size_limit = u32::try_from(packet_size_limit)
+                    .map_err(|_| "MQTT packet size limit exceeds MQTT 5.0 range".to_string())?;
+                let mut options = V5MqttOptions::new(client_id, broker_addr, server.port as u16);
+                options.set_keep_alive(Duration::from_secs(server.keep_alive as u64));
+                options.set_clean_start(server.clean_session);
+                options.set_max_packet_size(Some(packet_size_limit));
+                if let Some(transport) = transport {
+                    options.set_transport(transport);
+                }
+                if let (Some(username), Some(password)) =
+                    (server.username.as_ref(), server.password.as_ref())
+                {
+                    if !username.is_empty() {
+                        options.set_credentials(username, password);
+                    }
+                }
+
+                let (client, eventloop) = V5AsyncClient::new(options, 100);
+                Ok(ProtocolConnection {
+                    client: ProtocolClient::V5_0(client),
+                    eventloop: ProtocolEventLoop::V5_0(Box::new(eventloop)),
+                    protocol_version,
+                })
+            }
+        }
+    }
+
+    fn build_transport(server: &MqttServer, protocol: &str) -> Result<Option<Transport>, String> {
+        match protocol {
+            "mqtt" => Ok(None),
+            "mqtts" => Self::build_tls_config(
+                server.ssl_secure,
+                server.alpn.as_deref(),
+                server.certificate_type.as_str(),
+                server.ca_cert.as_deref(),
+                server.client_cert.as_deref(),
+                server.client_key.as_deref(),
+                server.client_key_password.as_deref(),
+            )
+            .map(Transport::tls_with_config)
+            .map(Some),
+            "ws" => Ok(Some(Transport::Ws)),
+            "wss" => Self::build_tls_config(
+                server.ssl_secure,
+                server.alpn.as_deref(),
+                server.certificate_type.as_str(),
+                server.ca_cert.as_deref(),
+                server.client_cert.as_deref(),
+                server.client_key.as_deref(),
+                server.client_key_password.as_deref(),
+            )
+            .map(Transport::wss_with_config)
+            .map(Some),
+            protocol => Err(format!("Unsupported MQTT transport protocol: {}", protocol)),
+        }
     }
 
     fn broker_addr(server: &MqttServer, protocol: &str) -> String {
@@ -566,8 +838,12 @@ impl MqttManager {
 
 #[cfg(test)]
 mod tests {
-    use super::MqttManager;
+    use super::{ConnectionState, MqttCapability, MqttManager, MqttProtocolVersion};
     use crate::db::models::MqttServer;
+    use std::time::Duration;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+    use tokio::time::timeout;
 
     fn server(protocol: &str, websocket_path: Option<&str>) -> MqttServer {
         MqttServer {
@@ -594,6 +870,99 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    async fn capture_connect_protocol_level(protocol_version: &str) -> u8 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut server = server("mqtt", None);
+        server.host = address.ip().to_string();
+        server.port = address.port() as i32;
+        server.protocol_version = protocol_version.to_string();
+
+        let connection = MqttManager::build_connection(&server, 1024).unwrap();
+        let mut eventloop = connection.eventloop;
+        let poll_task = tokio::spawn(async move {
+            let _ = eventloop.poll().await;
+        });
+
+        let (mut socket, _) = timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .expect("client did not connect")
+            .unwrap();
+        let mut packet_prefix = [0_u8; 9];
+        timeout(
+            Duration::from_secs(2),
+            socket.read_exact(&mut packet_prefix),
+        )
+        .await
+        .expect("client did not send CONNECT")
+        .unwrap();
+        poll_task.abort();
+
+        assert_eq!(&packet_prefix[2..8], b"\0\x04MQTT");
+        packet_prefix[8]
+    }
+
+    #[tokio::test]
+    async fn mqtt_5_selection_sends_protocol_level_5() {
+        assert_eq!(capture_connect_protocol_level("5.0").await, 5);
+    }
+
+    #[tokio::test]
+    async fn mqtt_311_selection_sends_protocol_level_4() {
+        assert_eq!(capture_connect_protocol_level("3.1.1").await, 4);
+    }
+
+    #[test]
+    fn unsupported_protocol_version_is_rejected_before_connecting() {
+        let mut server = server("mqtt", None);
+        server.protocol_version = "4.0".to_string();
+
+        let error = MqttManager::build_connection(&server, 1024)
+            .err()
+            .expect("unsupported version should fail");
+
+        assert_eq!(
+            error,
+            "Unsupported MQTT protocol version: 4.0. Supported versions: 3.1.1, 5.0"
+        );
+    }
+
+    #[test]
+    fn mqtt_5_capabilities_are_not_enabled_for_mqtt_311() {
+        for capability in [
+            MqttCapability::PublishProperties,
+            MqttCapability::SessionExpiry,
+            MqttCapability::TopicAlias,
+        ] {
+            assert!(MqttProtocolVersion::V5_0.supports(capability));
+            assert!(!MqttProtocolVersion::V3_1_1.supports(capability));
+        }
+    }
+
+    #[test]
+    fn mqtt_5_keep_alive_below_library_minimum_is_rejected() {
+        let mut server = server("mqtt", None);
+        server.keep_alive = 4;
+
+        let error = MqttManager::build_connection(&server, 1024)
+            .err()
+            .expect("invalid keep alive should fail");
+
+        assert_eq!(error, "MQTT 5.0 keep alive must be at least 5 seconds");
+    }
+
+    #[test]
+    fn connection_state_reports_actual_protocol_version() {
+        let state = ConnectionState::new(1, "connected", None, Some(MqttProtocolVersion::V5_0));
+
+        let json = serde_json::to_value(state).unwrap();
+        assert_eq!(json["protocol_version"], "5.0");
+        assert_eq!(
+            json["capabilities"],
+            serde_json::json!(["publish_properties", "session_expiry", "topic_alias"])
+        );
     }
 
     #[test]
