@@ -130,7 +130,6 @@ import { Promotion, Position, Star, FolderOpened, Timer, Loading } from "@elemen
 import { ElMessage } from "element-plus";
 import { invoke } from "@tauri-apps/api/core";
 import { useServerStore } from "@/stores/server";
-import { useMessageStore } from "@/stores/message";
 import { useMqttStore } from "@/stores/mqtt";
 import { useAppStore } from "@/stores/app";
 import { useEnvStore } from "@/stores/env";
@@ -155,7 +154,6 @@ const formatOptions = [
 ];
 
 const serverStore = useServerStore();
-const messageStore = useMessageStore();
 const mqttStore = useMqttStore();
 const appStore = useAppStore();
 const envStore = useEnvStore();
@@ -166,7 +164,8 @@ const publishing = ref(false);
 const timedMessageDialogVisible = ref(false);
 const timedMessageInterval = ref(1);
 const timedMessageCount = ref(0);
-let timedMessageTimer: ReturnType<typeof setInterval> | null = null;
+let timedMessageTimer: ReturnType<typeof setTimeout> | null = null;
+let timedMessageActive = false;
 
 const emit = defineEmits<{
   saveTemplate: [data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: string }]
@@ -299,22 +298,28 @@ const startTimedMessage = () => {
 
   timedMessageDialogVisible.value = false;
   timedMessageCount.value = 0;
+  timedMessageActive = true;
   emit('update:timedMessageRunning', true);
 
-  // 立即发送第一条
-  sendOneTimedMessage();
-
-  // 设置定时器
-  const intervalMs = Math.round(timedMessageInterval.value * 1000);
-  timedMessageTimer = setInterval(() => {
-    sendOneTimedMessage();
-  }, intervalMs);
+  void runTimedMessageCycle();
 };
+
+async function runTimedMessageCycle() {
+  await sendOneTimedMessage();
+  if (!timedMessageActive) return;
+
+  const intervalMs = Math.round(timedMessageInterval.value * 1000);
+  timedMessageTimer = setTimeout(() => {
+    timedMessageTimer = null;
+    void runTimedMessageCycle();
+  }, intervalMs);
+}
 
 // 停止定时消息
 const stopTimedMessage = () => {
+  timedMessageActive = false;
   if (timedMessageTimer) {
-    clearInterval(timedMessageTimer);
+    clearTimeout(timedMessageTimer);
     timedMessageTimer = null;
   }
   emit('update:timedMessageRunning', false);
@@ -391,24 +396,12 @@ async function doPublishCore(): Promise<void> {
     throw error;
   }
 
-  // 调用 messageStore 发布消息（保存到数据库）
-  const history = await messageStore.publishMessage(serverId, {
-    topic: processedTopic,
-    payload: processedPayload,
-    qos: publishData.qos,
-    retain: publishData.retain,
-    format: payloadFormat.value,
-  });
-
-  // 同时添加到 mqttStore 的消息列表（用于实时显示）
-  mqttStore.addPublishMessage(serverId, {
-    id: history?.id,
+  await mqttStore.publishTrackedMessage(serverId, {
     topic: processedTopic,
     payload: processedPayload,
     qos: publishData.qos as 0 | 1 | 2,
     retain: publishData.retain,
-    payload_type: payloadFormat.value,
-    timestamp: history?.created_at,
+    format: payloadFormat.value,
     seq,
   });
 }

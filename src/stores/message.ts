@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import type { MessageHistory, PublishPayload } from "@/types/mqtt";
+import type { MessageHistory } from "@/types/mqtt";
 import { useAppStore } from "@/stores/app";
 
 export const useMessageStore = defineStore("message", () => {
@@ -90,18 +90,6 @@ export const useMessageStore = defineStore("message", () => {
     return allMessages.reverse();
   }
 
-  async function publishMessage(serverId: number, message: PublishPayload) {
-    const result = await invoke<MessageHistory>("publish_message", {
-      serverId,
-      message,
-    });
-
-    // 添加到消息列表
-    addMessage(serverId, result);
-
-    return result;
-  }
-
   function addMessage(serverId: number, message: MessageHistory) {
     const serverMessages = messages.value.get(serverId) || [];
     serverMessages.push(message);
@@ -174,7 +162,6 @@ export const useMessageStore = defineStore("message", () => {
     fetchMessageHistory,
     loadMoreMessageHistory,
     fetchAllMessageHistory,
-    publishMessage,
     addMessage,
     clearHistory,
     getMessages,

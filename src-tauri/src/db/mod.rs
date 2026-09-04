@@ -3,11 +3,13 @@ pub mod models;
 use models::{
     CommandTemplate, CreateEnvVariableRequest, CreateScriptRequest, CreateTemplateRequest,
     EnvVariable, MessageCleanupResult, MessageHistory, MqttServer, Script, Subscription,
-    UpdateEnvVariableRequest, UpdateScriptRequest, UpdateSubscriptionRequest, UpdateTemplateRequest,
+    UpdateEnvVariableRequest, UpdateScriptRequest, UpdateSubscriptionRequest,
+    UpdateTemplateRequest,
 };
 use parking_lot::RwLock;
 use rusqlite::{params, Connection, OpenFlags};
 use serde::de::DeserializeOwned;
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,6 +18,7 @@ use tauri::Manager;
 
 /// `CommandTemplate.server_id` for templates visible on every connection (not a real broker id).
 const GLOBAL_TEMPLATE_SERVER_ID: i64 = 0;
+const MESSAGE_DB_SCHEMA_VERSION: i64 = 2;
 pub const DEFAULT_MESSAGE_LIMIT: usize = 1000;
 pub const MIN_MESSAGE_LIMIT: usize = 100;
 pub const MAX_MESSAGE_LIMIT: usize = 10000;
@@ -117,6 +120,7 @@ impl Storage {
             file_path,
             message_db_path,
         };
+        storage.recover_incomplete_publishes()?;
         storage.cleanup_message_history(false)?;
 
         Ok(storage)
@@ -199,8 +203,11 @@ impl Storage {
 
     fn delete_messages_by_server(&self, server_id: i64) -> Result<(), String> {
         let conn = self.open_message_db()?;
-        conn.execute("DELETE FROM message_history WHERE server_id = ?", params![server_id])
-            .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM message_history WHERE server_id = ?",
+            params![server_id],
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -210,8 +217,8 @@ impl Storage {
 
     pub fn cleanup_message_history(&self, vacuum: bool) -> Result<MessageCleanupResult, String> {
         let conn = self.open_message_db()?;
-        let cutoff = chrono::Utc::now()
-            - chrono::Duration::days(self.get_message_retention_days() as i64);
+        let cutoff =
+            chrono::Utc::now() - chrono::Duration::days(self.get_message_retention_days() as i64);
         let deleted_by_age = conn
             .execute(
                 "DELETE FROM message_history WHERE created_at < ?",
@@ -246,8 +253,7 @@ impl Storage {
             .map_err(|e| e.to_string())?;
 
         if vacuum {
-            conn.execute_batch("VACUUM;")
-                .map_err(|e| e.to_string())?;
+            conn.execute_batch("VACUUM;").map_err(|e| e.to_string())?;
         }
 
         Ok(MessageCleanupResult {
@@ -386,7 +392,8 @@ impl Storage {
 
         let mut stmt = match conn.prepare(
             r#"
-            SELECT id, server_id, direction, topic, payload, payload_format, qos, retain, created_at
+            SELECT id, server_id, direction, topic, payload, payload_format, qos, retain, created_at,
+                   operation_id, publish_status, packet_id, publish_error, sent_at, confirmed_at
             FROM message_history
             WHERE server_id = ?
             ORDER BY created_at DESC, id DESC
@@ -408,6 +415,12 @@ impl Storage {
                 qos: row.get(6)?,
                 retain: row.get::<_, i64>(7)? != 0,
                 created_at: row.get(8)?,
+                operation_id: row.get(9)?,
+                publish_status: row.get(10)?,
+                packet_id: row.get(11)?,
+                publish_error: row.get(12)?,
+                sent_at: row.get(13)?,
+                confirmed_at: row.get(14)?,
             })
         }) {
             Ok(rows) => rows,
@@ -426,8 +439,9 @@ impl Storage {
         conn.execute(
             r#"
             INSERT INTO message_history (
-                server_id, direction, topic, payload, payload_format, qos, retain, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                server_id, direction, topic, payload, payload_format, qos, retain, created_at,
+                operation_id, publish_status, packet_id, publish_error, sent_at, confirmed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
             params![
                 msg.server_id,
@@ -438,12 +452,114 @@ impl Storage {
                 msg.qos,
                 if msg.retain { 1 } else { 0 },
                 msg.created_at,
+                msg.operation_id,
+                msg.publish_status,
+                msg.packet_id,
+                msg.publish_error,
+                msg.sent_at,
+                msg.confirmed_at,
             ],
         )
         .map_err(|e| e.to_string())?;
 
         msg.id = Some(conn.last_insert_rowid());
         Ok(msg)
+    }
+
+    pub fn update_publish_state(
+        &self,
+        operation_id: &str,
+        status: &str,
+        packet_id: Option<u16>,
+        error: Option<&str>,
+    ) -> Result<MessageHistory, String> {
+        let mut conn = self.open_message_db()?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let updated_at = chrono::Utc::now().to_rfc3339();
+        let affected = tx
+            .execute(
+                r#"
+                UPDATE message_history
+                SET publish_status = ?2,
+                    packet_id = COALESCE(?3, packet_id),
+                    publish_error = ?4,
+                    sent_at = CASE
+                        WHEN ?2 IN ('sent', 'confirmed') THEN COALESCE(sent_at, ?5)
+                        ELSE sent_at
+                    END,
+                    confirmed_at = CASE
+                        WHEN ?2 = 'confirmed' THEN COALESCE(confirmed_at, ?5)
+                        ELSE confirmed_at
+                    END
+                WHERE operation_id = ?1
+                "#,
+                params![
+                    operation_id,
+                    status,
+                    packet_id.map(i32::from),
+                    error,
+                    updated_at
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+
+        if affected == 0 {
+            return Err(format!("Publish operation not found: {operation_id}"));
+        }
+
+        let message = tx
+            .query_row(
+                r#"
+                SELECT id, server_id, direction, topic, payload, payload_format, qos, retain,
+                       created_at, operation_id, publish_status, packet_id, publish_error,
+                       sent_at, confirmed_at
+                FROM message_history
+                WHERE operation_id = ?1
+                "#,
+                params![operation_id],
+                |row| {
+                    Ok(MessageHistory {
+                        id: row.get(0)?,
+                        server_id: row.get(1)?,
+                        direction: row.get(2)?,
+                        topic: row.get(3)?,
+                        payload: row.get(4)?,
+                        payload_format: row.get(5)?,
+                        qos: row.get(6)?,
+                        retain: row.get::<_, i64>(7)? != 0,
+                        created_at: row.get(8)?,
+                        operation_id: row.get(9)?,
+                        publish_status: row.get(10)?,
+                        packet_id: row.get(11)?,
+                        publish_error: row.get(12)?,
+                        sent_at: row.get(13)?,
+                        confirmed_at: row.get(14)?,
+                    })
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+
+        Ok(message)
+    }
+
+    pub fn recover_incomplete_publishes(&self) -> Result<usize, String> {
+        let conn = self.open_message_db()?;
+        conn.execute(
+            r#"
+            UPDATE message_history
+            SET publish_status = 'failed',
+                publish_error = 'Application exited before publish confirmation'
+            WHERE direction = 'publish'
+              AND operation_id IS NOT NULL
+              AND (
+                publish_status = 'pending'
+                OR (publish_status = 'sent' AND qos IN (1, 2))
+              )
+            "#,
+            [],
+        )
+        .map_err(|e| e.to_string())
     }
 
     pub fn clear_messages(&self, server_id: i64) -> Result<(), String> {
@@ -764,7 +880,7 @@ fn initialize_message_db(message_db_path: &Path) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let conn = Connection::open(message_db_path).map_err(|e| e.to_string())?;
+    let mut conn = Connection::open(message_db_path).map_err(|e| e.to_string())?;
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -778,7 +894,13 @@ fn initialize_message_db(message_db_path: &Path) -> Result<(), String> {
           payload_format TEXT,
           qos INTEGER NOT NULL,
           retain INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL
+          created_at TEXT NOT NULL,
+          operation_id TEXT,
+          publish_status TEXT,
+          packet_id INTEGER,
+          publish_error TEXT,
+          sent_at TEXT,
+          confirmed_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_message_history_server_created_at
           ON message_history(server_id, created_at DESC, id DESC);
@@ -786,7 +908,69 @@ fn initialize_message_db(message_db_path: &Path) -> Result<(), String> {
           ON message_history(server_id, topic, created_at DESC, id DESC);
         "#,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    migrate_message_db_schema(&mut conn)
+}
+
+fn migrate_message_db_schema(conn: &mut Connection) -> Result<(), String> {
+    let existing_columns = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(message_history)")
+            .map_err(|e| e.to_string())?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<HashSet<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        columns
+    };
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for (column, definition) in [
+        ("operation_id", "TEXT"),
+        ("publish_status", "TEXT"),
+        ("packet_id", "INTEGER"),
+        ("publish_error", "TEXT"),
+        ("sent_at", "TEXT"),
+        ("confirmed_at", "TEXT"),
+    ] {
+        if !existing_columns.contains(column) {
+            tx.execute(
+                &format!("ALTER TABLE message_history ADD COLUMN {column} {definition}"),
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    tx.execute_batch(
+        r#"
+        UPDATE message_history
+          SET publish_status = 'sent'
+          WHERE direction = 'publish'
+            AND qos = 0
+            AND operation_id IS NULL
+            AND publish_status IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_message_history_operation_id
+          ON message_history(operation_id)
+          WHERE operation_id IS NOT NULL;
+        PRAGMA user_version = 2;
+        "#,
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    if version != MESSAGE_DB_SCHEMA_VERSION {
+        return Err(format!(
+            "Unexpected message database schema version: {version}"
+        ));
+    }
+
+    Ok(())
 }
 
 fn migrate_legacy_messages(
@@ -815,13 +999,19 @@ fn migrate_legacy_messages(
             .prepare(
                 r#"
                 INSERT INTO message_history (
-                    server_id, direction, topic, payload, payload_format, qos, retain, created_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    server_id, direction, topic, payload, payload_format, qos, retain, created_at,
+                    publish_status
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 "#,
             )
             .map_err(|e| e.to_string())?;
 
         for msg in legacy_messages {
+            let publish_status = (msg.direction == "publish" && msg.qos == 0).then_some("sent");
+            let created_at = msg
+                .created_at
+                .clone()
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
             stmt.execute(params![
                 msg.server_id,
                 msg.direction,
@@ -830,7 +1020,8 @@ fn migrate_legacy_messages(
                 msg.payload_format,
                 msg.qos,
                 if msg.retain { 1 } else { 0 },
-                msg.created_at,
+                created_at,
+                publish_status,
             ])
             .map_err(|e| e.to_string())?;
         }
@@ -1219,6 +1410,239 @@ mod tests {
 
         assert!(error.contains("could not be loaded"));
         assert!(error.contains("backup"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn initialize_message_db_upgrades_existing_publish_history_schema() {
+        let dir = test_dir("message-schema-upgrade");
+        let db_path = dir.join("messages.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE message_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              server_id INTEGER NOT NULL,
+              direction TEXT NOT NULL,
+              topic TEXT NOT NULL,
+              payload TEXT,
+              payload_format TEXT,
+              qos INTEGER NOT NULL,
+              retain INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL
+            );
+            INSERT INTO message_history (
+              server_id, direction, topic, payload, payload_format, qos, retain, created_at
+            ) VALUES
+              (7, 'publish', 'legacy/qos0', 'zero', 'text', 0, 0, '2026-09-04T00:00:00Z'),
+              (7, 'publish', 'legacy/qos1', 'one', 'text', 1, 0, '2026-09-04T00:00:00Z');
+            "#,
+        )
+        .unwrap();
+        drop(conn);
+
+        initialize_message_db(&db_path).unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(message_history)").unwrap();
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for expected in [
+            "operation_id",
+            "publish_status",
+            "packet_id",
+            "publish_error",
+            "sent_at",
+            "confirmed_at",
+        ] {
+            assert!(columns.iter().any(|column| column == expected));
+        }
+        let qos0_status: Option<String> = conn
+            .query_row(
+                "SELECT publish_status FROM message_history WHERE topic = 'legacy/qos0'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let qos1_status: Option<String> = conn
+            .query_row(
+                "SELECT publish_status FROM message_history WHERE topic = 'legacy/qos1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(qos0_status.as_deref(), Some("sent"));
+        assert_eq!(qos1_status, None);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn tracked_publish_state_updates_the_existing_history_row() {
+        let dir = test_dir("tracked-publish-state");
+        let db_path = dir.join("messages.sqlite");
+        initialize_message_db(&db_path).unwrap();
+        let storage = Storage {
+            data: RwLock::new(AppData::default()),
+            config: RwLock::new(AppConfig::default()),
+            config_path: dir.join("config.yaml"),
+            file_path: dir.join("data.yaml"),
+            message_db_path: db_path,
+        };
+        let pending = storage
+            .create_message(MessageHistory {
+                id: None,
+                server_id: 7,
+                direction: "publish".to_string(),
+                topic: "devices/1".to_string(),
+                payload: Some("on".to_string()),
+                payload_format: Some("text".to_string()),
+                qos: 1,
+                retain: false,
+                created_at: None,
+                operation_id: Some("op-1".to_string()),
+                publish_status: Some("pending".to_string()),
+                packet_id: None,
+                publish_error: None,
+                sent_at: None,
+                confirmed_at: None,
+            })
+            .unwrap();
+
+        let confirmed = storage
+            .update_publish_state("op-1", "confirmed", Some(41), None)
+            .unwrap();
+
+        assert_eq!(confirmed.id, pending.id);
+        assert_eq!(confirmed.publish_status.as_deref(), Some("confirmed"));
+        assert_eq!(confirmed.packet_id, Some(41));
+        assert!(confirmed.sent_at.is_some());
+        assert!(confirmed.confirmed_at.is_some());
+        assert_eq!(storage.get_messages(7, 10, 0).len(), 1);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn recovery_fails_incomplete_publishes_but_keeps_qos0_sent() {
+        let dir = test_dir("recover-incomplete-publishes");
+        let db_path = dir.join("messages.sqlite");
+        initialize_message_db(&db_path).unwrap();
+        let storage = Storage {
+            data: RwLock::new(AppData::default()),
+            config: RwLock::new(AppConfig::default()),
+            config_path: dir.join("config.yaml"),
+            file_path: dir.join("data.yaml"),
+            message_db_path: db_path,
+        };
+
+        for (operation_id, qos, status) in [
+            ("op-pending", 1, "pending"),
+            ("op-qos2-sent", 2, "sent"),
+            ("op-qos0-sent", 0, "sent"),
+        ] {
+            storage
+                .create_message(MessageHistory {
+                    id: None,
+                    server_id: 7,
+                    direction: "publish".to_string(),
+                    topic: "devices/1".to_string(),
+                    payload: Some("on".to_string()),
+                    payload_format: Some("text".to_string()),
+                    qos,
+                    retain: false,
+                    created_at: None,
+                    operation_id: Some(operation_id.to_string()),
+                    publish_status: Some(status.to_string()),
+                    packet_id: None,
+                    publish_error: None,
+                    sent_at: None,
+                    confirmed_at: None,
+                })
+                .unwrap();
+        }
+
+        assert_eq!(storage.recover_incomplete_publishes().unwrap(), 2);
+
+        let messages = storage.get_messages(7, 10, 0);
+        let status = |operation_id: &str| {
+            messages
+                .iter()
+                .find(|message| message.operation_id.as_deref() == Some(operation_id))
+                .unwrap()
+        };
+        assert_eq!(
+            status("op-pending").publish_status.as_deref(),
+            Some("failed")
+        );
+        assert!(status("op-pending")
+            .publish_error
+            .as_deref()
+            .unwrap()
+            .contains("exited"));
+        assert_eq!(
+            status("op-qos2-sent").publish_status.as_deref(),
+            Some("failed")
+        );
+        assert_eq!(
+            status("op-qos0-sent").publish_status.as_deref(),
+            Some("sent")
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_publish_migration_only_marks_qos0_as_sent() {
+        let dir = test_dir("legacy-publish-status");
+        let db_path = dir.join("messages.sqlite");
+        initialize_message_db(&db_path).unwrap();
+        let legacy_messages = [0, 1, 2]
+            .into_iter()
+            .map(|qos| MessageHistory {
+                id: None,
+                server_id: 7,
+                direction: "publish".to_string(),
+                topic: format!("legacy/{qos}"),
+                payload: Some("value".to_string()),
+                payload_format: Some("text".to_string()),
+                qos,
+                retain: false,
+                created_at: (qos != 0).then(|| "2026-09-04T00:00:00Z".to_string()),
+                operation_id: None,
+                publish_status: None,
+                packet_id: None,
+                publish_error: None,
+                sent_at: None,
+                confirmed_at: None,
+            })
+            .collect::<Vec<_>>();
+
+        migrate_legacy_messages(&legacy_messages, &db_path).unwrap();
+
+        let storage = Storage {
+            data: RwLock::new(AppData::default()),
+            config: RwLock::new(AppConfig::default()),
+            config_path: dir.join("config.yaml"),
+            file_path: dir.join("data.yaml"),
+            message_db_path: db_path,
+        };
+        let messages = storage.get_messages(7, 10, 0);
+        let status_for_qos = |qos| {
+            messages
+                .iter()
+                .find(|message| message.qos == qos)
+                .unwrap()
+                .publish_status
+                .as_deref()
+        };
+        assert_eq!(status_for_qos(0), Some("sent"));
+        assert_eq!(status_for_qos(1), None);
+        assert_eq!(status_for_qos(2), None);
 
         fs::remove_dir_all(dir).unwrap();
     }

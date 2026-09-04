@@ -69,6 +69,23 @@ export interface MqttMessage {
   payload_type?: "json" | "hex" | "text";
   /** 单调递增序列号，用于保证消息显示顺序 */
   seq?: number;
+  operation_id?: string;
+  publish_status?: PublishRuntimeStatus;
+  packet_id?: number;
+  publish_error?: string;
+  sent_at?: string;
+  confirmed_at?: string;
+}
+
+export type PublishRuntimeStatus = "pending" | "sent" | "confirmed" | "failed";
+
+export interface PublishRuntimeState {
+  operation_id: string;
+  server_id: number;
+  qos: 0 | 1 | 2;
+  status: PublishRuntimeStatus;
+  packet_id?: number;
+  error?: string;
 }
 
 /**
@@ -131,15 +148,22 @@ export interface MessageHistory {
   qos: number;
   retain: boolean;
   created_at?: string;
+  operation_id?: string;
+  publish_status?: PublishRuntimeStatus;
+  packet_id?: number;
+  publish_error?: string;
+  sent_at?: string;
+  confirmed_at?: string;
 }
 
 /**
  * 发布消息载荷
  */
 export interface PublishPayload {
+  operation_id: string;
   topic: string;
   payload: string;
-  qos: number;
+  qos: 0 | 1 | 2;
   retain: boolean;
   format: "text" | "json" | "hex";
 }

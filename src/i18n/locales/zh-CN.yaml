@@ -160,6 +160,14 @@ messages:
   direction:
     received: 接收
     sent: 发送
+  publishStatus:
+    label: 发布状态
+    pending: 等待发送
+    sent: 已发送
+    confirmed: 已确认
+    failed: 失败
+    untracked: 未跟踪
+    error: 失败原因
   clearConfirm: 确定要清空所有消息吗？
   clearTitle: 清空消息
   copied: 消息已复制

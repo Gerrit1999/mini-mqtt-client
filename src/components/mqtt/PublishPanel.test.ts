@@ -112,7 +112,7 @@ vi.mock("@/stores/message", () => ({
 
 vi.mock("@/stores/mqtt", () => ({
   useMqttStore: () => ({
-    publishMessage: mockPublishMessage,
+    publishTrackedMessage: mockPublishMessage,
     addPublishMessage: mockAddPublishMessage,
     reserveSeq: mockReserveSeq,
     getConnectionStatus: mockGetConnectionStatus,
@@ -376,6 +376,42 @@ describe("PublishPanel", () => {
 
       // 第3条应发送
       expect(mockPublishMessage).toHaveBeenCalledTimes(3);
+    });
+
+    it("Broker 确认较慢时不应重叠发送", async () => {
+      let resolveFirst!: () => void;
+      mockPublishMessage
+        .mockImplementationOnce(
+          () => new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          })
+        )
+        .mockResolvedValue(undefined);
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.publishData.topic = "test/topic";
+      await flushPromises();
+      await wrapper.find(".btn-timed-message").trigger("click");
+      await flushPromises();
+      vm.timedMessageInterval = 1;
+      const startBtn = wrapper.findAll(".el-dialog__footer button").find((btn) =>
+        btn.text().includes("开始发送")
+      );
+      await startBtn!.trigger("click");
+      await flushPromises();
+
+      expect(mockPublishMessage).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(2000);
+      await flushPromises();
+      expect(mockPublishMessage).toHaveBeenCalledTimes(1);
+
+      resolveFirst();
+      await flushPromises();
+      vi.advanceTimersByTime(1000);
+      await flushPromises();
+      expect(mockPublishMessage).toHaveBeenCalledTimes(2);
     });
 
     it("发送内容应包含当前面板的数据", async () => {

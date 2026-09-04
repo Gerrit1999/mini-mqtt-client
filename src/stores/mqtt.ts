@@ -6,9 +6,12 @@ import { ElMessage } from "element-plus";
 import type {
   ConnectionStatus,
   EnvVariable,
+  MessageHistory,
   MqttCapability,
   MqttMessage,
   MqttProtocolVersion,
+  PublishPayload,
+  PublishRuntimeState,
   SubscriptionOperationResult,
   SubscriptionRuntimeState,
 } from "@/types/mqtt";
@@ -48,6 +51,10 @@ interface EnvCache {
 }
 
 type StoredPayloadFormat = "json" | "text" | "hex";
+type TrackedPublishRequest = Omit<PublishPayload, "operation_id"> & {
+  seq?: number;
+  scriptError?: string;
+};
 
 // 脚本缓存有效期（毫秒）
 const SCRIPT_CACHE_TTL = 5000;
@@ -268,6 +275,42 @@ export const useMqttStore = defineStore("mqtt", () => {
     }
   }
 
+  function createOperationId(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function upsertTrackedPublish(
+    serverId: number,
+    operationId: string,
+    patch: Partial<MqttMessage>,
+    initial?: MqttMessage
+  ) {
+    const nextMap = new Map(messagesByServer.value);
+    const serverMessages = [...(nextMap.get(serverId) ?? [])];
+    const index = serverMessages.findIndex(
+      (message) => message.operation_id === operationId
+    );
+
+    if (index >= 0) {
+      serverMessages[index] = { ...serverMessages[index], ...patch };
+    } else if (initial) {
+      serverMessages.push(initial);
+    } else {
+      return;
+    }
+
+    serverMessages.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    const limit = appStore.messageLimit;
+    nextMap.set(
+      serverId,
+      serverMessages.length > limit ? serverMessages.slice(-limit) : serverMessages
+    );
+    messagesByServer.value = nextMap;
+  }
+
   // 初始化事件监听
   const initListeners = async () => {
     // 监听连接状态变化
@@ -334,6 +377,15 @@ export const useMqttStore = defineStore("mqtt", () => {
           duration: 5000,
         });
       }
+    });
+
+    await listen<PublishRuntimeState>("mqtt-publish-state", (event) => {
+      const state = event.payload;
+      upsertTrackedPublish(state.server_id, state.operation_id, {
+        publish_status: state.status,
+        packet_id: state.packet_id,
+        publish_error: state.error,
+      });
     });
 
     // 监听接收消息
@@ -421,40 +473,62 @@ export const useMqttStore = defineStore("mqtt", () => {
     await invoke("mqtt_disconnect", { serverId });
   };
 
-  // 发布消息
-  const publish = async (
+  const publishTrackedMessage = async (
     serverId: number,
-    topic: string,
-    payload: string | Uint8Array,
-    qos: 0 | 1 | 2 = 0,
-    retain: boolean = false
-  ) => {
-    const seq = nextSeq++; // 在异步调用前分配序列号
+    request: TrackedPublishRequest
+  ): Promise<MessageHistory> => {
+    const operationId = createOperationId();
+    const seq = request.seq ?? nextSeq++;
     const payloadBytes =
-      typeof payload === "string"
-        ? Array.from(textEncoder.encode(payload))
-        : Array.from(payload);
-
-    await invoke("mqtt_publish", {
-      serverId,
-      topic,
-      payload: payloadBytes,
-      qos,
-      retain,
-    });
-
-    // 添加到消息列表（使用批处理）
-    queueMessage({
+      request.format === "hex"
+        ? hexToBytes(request.payload)
+        : textEncoder.encode(request.payload);
+    const pendingMessage: MqttMessage = {
       server_id: serverId,
       direction: "publish",
-      topic,
-      payload:
-        typeof payload === "string" ? textEncoder.encode(payload) : payload,
-      qos,
-      retain,
+      topic: request.topic,
+      payload: payloadBytes,
+      qos: request.qos,
+      retain: request.retain,
       timestamp: new Date().toISOString(),
+      scriptError: request.scriptError,
+      payload_type: request.format,
       seq,
-    });
+      operation_id: operationId,
+      publish_status: "pending",
+    };
+    upsertTrackedPublish(serverId, operationId, pendingMessage, pendingMessage);
+
+    try {
+      const result = await invoke<MessageHistory>("publish_message", {
+        serverId,
+        message: {
+          operation_id: operationId,
+          topic: request.topic,
+          payload: request.payload,
+          qos: request.qos,
+          retain: request.retain,
+          format: request.format,
+        } satisfies PublishPayload,
+      });
+      upsertTrackedPublish(serverId, operationId, {
+        id: result.id,
+        timestamp: result.created_at,
+        publish_status: result.publish_status,
+        packet_id: result.packet_id,
+        publish_error: result.publish_error,
+        sent_at: result.sent_at,
+        confirmed_at: result.confirmed_at,
+      });
+      return result;
+    } catch (error) {
+      const publishError = error instanceof Error ? error.message : String(error);
+      upsertTrackedPublish(serverId, operationId, {
+        publish_status: "failed",
+        publish_error: publishError,
+      });
+      throw error;
+    }
   };
 
   // 订阅
@@ -599,7 +673,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     initListeners,
     connect,
     disconnect,
-    publish,
+    publishTrackedMessage,
     subscribe,
     unsubscribe,
     getSubscriptionState,

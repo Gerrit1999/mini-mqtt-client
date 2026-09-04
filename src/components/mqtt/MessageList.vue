@@ -122,11 +122,11 @@
         >
           <div
             class="message-item"
-            :class="[msg.direction, { 'has-error': msg.scriptError }]"
+            :class="[msg.direction, { 'has-error': msg.scriptError || msg.publish_error }]"
             @click="showDetail(msg)"
           >
             <div class="message-header">
-              <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError }]">
+              <span class="msg-direction" :class="[msg.direction, { 'has-error': msg.scriptError || msg.publish_error }]">
                 <el-icon v-if="msg.direction === 'publish'"><Top /></el-icon>
                 <el-icon v-else><Bottom /></el-icon>
                 {{ msg.direction === "publish" ? "PUB" : "RCV" }}
@@ -139,6 +139,15 @@
                 <span class="topic-text" v-html="highlightText(msg.topic)" />
               </span>
               <div class="msg-meta">
+                <el-tag
+                  v-if="msg.direction === 'publish'"
+                  size="small"
+                  effect="plain"
+                  :type="getPublishStatusTagType(msg)"
+                  class="publish-status-tag"
+                >
+                  {{ getPublishStatusLabel(msg) }}
+                </el-tag>
                 <el-tag
                   v-if="msg.scriptError"
                   size="small"
@@ -166,6 +175,10 @@
             <div v-if="msg.scriptError" class="message-error">
               <el-icon><WarningFilled /></el-icon>
               <span>{{ msg.scriptError }}</span>
+            </div>
+            <div v-if="msg.publish_error" class="message-error publish-error">
+              <el-icon><WarningFilled /></el-icon>
+              <span>{{ msg.publish_error }}</span>
             </div>
             <div
               class="message-body"
@@ -215,6 +228,14 @@
               {{ getFormatLabel(getMessageFormat(selectedMessage), selectedMessage) }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item
+            v-if="selectedMessage.direction === 'publish'"
+            :label="$t('messages.publishStatus.label')"
+          >
+            <el-tag size="small" :type="getPublishStatusTagType(selectedMessage)">
+              {{ getPublishStatusLabel(selectedMessage) }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item :label="$t('messages.payloadSize')">
             {{ formatPayloadSize(selectedMessage.payload) }}
           </el-descriptions-item>
@@ -228,6 +249,13 @@
                 @click="copyTopic"
               >{{ selectedMessage.topic }}</code>
             </el-tooltip>
+          </el-descriptions-item>
+          <el-descriptions-item
+            v-if="selectedMessage.publish_error"
+            :label="$t('messages.publishStatus.error')"
+            :span="3"
+          >
+            {{ selectedMessage.publish_error }}
           </el-descriptions-item>
         </el-descriptions>
 
@@ -409,13 +437,41 @@ function historyToRealtimeMessage(message: MessageHistory): MqttMessage {
     retain: message.retain,
     timestamp: message.created_at,
     payload_type: mapPayloadType(message.payload_format),
+    operation_id: message.operation_id,
+    publish_status: message.publish_status,
+    packet_id: message.packet_id,
+    publish_error: message.publish_error,
+    sent_at: message.sent_at,
+    confirmed_at: message.confirmed_at,
   };
 }
 
 function getMessageKey(msg: MqttMessage): string {
+  if (msg.operation_id) return `operation:${msg.operation_id}`;
   if (msg.id !== undefined) return `id:${msg.id}`;
   if (msg.seq !== undefined) return `seq:${msg.seq}`;
   return `fallback:${msg.direction}:${msg.topic}:${msg.timestamp ?? ""}:${msg.qos}:${msg.retain}`;
+}
+
+function getPublishStatusLabel(msg: MqttMessage): string {
+  return t(`messages.publishStatus.${msg.publish_status ?? "untracked"}`);
+}
+
+function getPublishStatusTagType(
+  msg: MqttMessage
+): "info" | "warning" | "success" | "danger" {
+  switch (msg.publish_status) {
+    case "pending":
+      return "info";
+    case "sent":
+      return "warning";
+    case "confirmed":
+      return "success";
+    case "failed":
+      return "danger";
+    default:
+      return "info";
+  }
 }
 
 function payloadToBytes(payload: string | Uint8Array | undefined): Uint8Array {
@@ -535,7 +591,29 @@ function mergeMessages(history: MqttMessage[], realtime: MqttMessage[]): MqttMes
     mergedMap.set(getDerivedMessageMeta(msg).key, msg);
   }
   for (const msg of realtime) {
-    mergedMap.set(getDerivedMessageMeta(msg).key, msg);
+    const key = getDerivedMessageMeta(msg).key;
+    const existing = mergedMap.get(key);
+    if (!existing) {
+      mergedMap.set(key, msg);
+      continue;
+    }
+
+    const statusRank = { pending: 0, sent: 1, confirmed: 2, failed: 2 } as const;
+    const existingRank = existing.publish_status
+      ? statusRank[existing.publish_status]
+      : -1;
+    const incomingRank = msg.publish_status ? statusRank[msg.publish_status] : -1;
+    const statusSource = existingRank > incomingRank ? existing : msg;
+    mergedMap.set(key, {
+      ...existing,
+      ...msg,
+      id: msg.id ?? existing.id,
+      publish_status: statusSource.publish_status,
+      packet_id: statusSource.packet_id,
+      publish_error: statusSource.publish_error,
+      sent_at: statusSource.sent_at,
+      confirmed_at: statusSource.confirmed_at,
+    });
   }
 
   return Array.from(mergedMap.values()).sort(compareMessages);

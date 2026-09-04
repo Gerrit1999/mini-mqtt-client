@@ -329,6 +329,10 @@ const logListRef = ref<HTMLElement | null>(null)
 
 // 定时器
 let publishTimeout: ReturnType<typeof setTimeout> | null = null
+const MAX_IN_FLIGHT_PUBLISHES = 10
+const inFlightPublishes = new Set<Promise<void>>()
+let publishRunId = 0
+let completionRequested = false
 
 // 监听对话框打开
 watch(() => props.visible, (visible) => {
@@ -483,16 +487,24 @@ async function handleStart() {
   successCount.value = 0
   failCount.value = 0
   logs.value = []
+  inFlightPublishes.clear()
+  completionRequested = false
+  const runId = ++publishRunId
 
   // 通知父组件运行状态变化
   emit('running-change', true)
 
-  await publishNext()
+  await publishNext(runId)
 }
 
 // 发布下一条
-async function publishNext() {
-  if (!isRunning.value) return
+async function publishNext(runId: number = publishRunId) {
+  if (!isRunning.value || runId !== publishRunId) return
+
+  if (inFlightPublishes.size >= MAX_IN_FLIGHT_PUBLISHES) {
+    publishTimeout = setTimeout(() => void publishNext(runId), config.value.interval)
+    return
+  }
 
   const commands = publishQueue.value
   if (commands.length === 0) {
@@ -506,7 +518,9 @@ async function publishNext() {
     return
   }
   currentCommand.value = command
-  
+
+  let processedTopic = command.topic
+  let processedPayload = command.payload
   try {
     // 确保加载环境变量
     if (envStore.variables.length === 0) {
@@ -514,8 +528,8 @@ async function publishNext() {
     }
     
     // 替换环境变量
-    const processedTopic = envStore.replaceVariables(command.topic)
-    let processedPayload = envStore.replaceVariables(command.payload)
+    processedTopic = envStore.replaceVariables(command.topic)
+    processedPayload = envStore.replaceVariables(command.payload)
     
     // 应用发送前处理脚本
     try {
@@ -535,29 +549,62 @@ async function publishNext() {
       console.error('脚本处理失败:', e)
     }
     
-    await mqttStore.publish(
-      props.serverId,
-      processedTopic,
-      processedPayload,
-      command.qos,
-      command.retain
-    )
-    successCount.value++
-    addLog(processedTopic, processedPayload, 'success')
   } catch (error: any) {
     failCount.value++
     addLog(command.topic, command.payload, 'error', error?.message)
+    advancePublishQueue(runId, commands.length)
+    return
   }
-  
+
+  if (!isRunning.value || runId !== publishRunId) return
+
+  let trackedPublish!: Promise<void>
+  trackedPublish = Promise.resolve()
+    .then(() => mqttStore.publishTrackedMessage(props.serverId, {
+      topic: processedTopic,
+      payload: processedPayload,
+      qos: command.qos,
+      retain: command.retain,
+      format: command.payload_type,
+    }))
+    .then(() => {
+      if (runId !== publishRunId) return
+      successCount.value++
+      addLog(processedTopic, processedPayload, 'success')
+    })
+    .catch((error: any) => {
+      if (runId !== publishRunId) return
+      failCount.value++
+      addLog(processedTopic, processedPayload, 'error', error?.message ?? String(error))
+    })
+    .finally(() => {
+      inFlightPublishes.delete(trackedPublish)
+      if (
+        runId === publishRunId &&
+        completionRequested &&
+        inFlightPublishes.size === 0
+      ) {
+        completePublishing(runId)
+      }
+    })
+  inFlightPublishes.add(trackedPublish)
   sentCount.value++
+  advancePublishQueue(runId, commands.length)
+}
+
+function advancePublishQueue(runId: number, commandCount: number) {
+  if (!isRunning.value || runId !== publishRunId) return
+
   currentIndex.value++
 
   // 检查是否完成一轮
-  if (currentIndex.value >= commands.length) {
+  if (currentIndex.value >= commandCount) {
     // 检查是否达到循环次数（先检查，保留 currentIndex 用于显示 100%）
     if (config.value.loopMode === 'count' && currentRound.value >= config.value.loopCount) {
-      stopPublishing(true)
-      ElMessage.success(t('success.published'))
+      completionRequested = true
+      if (inFlightPublishes.size === 0) {
+        completePublishing(runId)
+      }
       return
     }
 
@@ -566,15 +613,24 @@ async function publishNext() {
     
     // 每轮间隔
     if (config.value.roundInterval > 0) {
-      publishTimeout = setTimeout(() => publishNext(), config.value.roundInterval)
+      publishTimeout = setTimeout(() => void publishNext(runId), config.value.roundInterval)
       return
     }
   }
   
   // 继续下一条
   if (isRunning.value) {
-    publishTimeout = setTimeout(() => publishNext(), config.value.interval)
+    publishTimeout = setTimeout(() => void publishNext(runId), config.value.interval)
   }
+}
+
+function completePublishing(runId: number) {
+  if (runId !== publishRunId || !isRunning.value) return
+  isRunning.value = false
+  isCompleted.value = true
+  completionRequested = false
+  emit('running-change', false)
+  ElMessage.success(t('success.published'))
 }
 
 // 停止发布
@@ -584,6 +640,9 @@ function handleStop() {
 }
 
 function stopPublishing(keepView: boolean = false) {
+  publishRunId++
+  completionRequested = false
+  inFlightPublishes.clear()
   isRunning.value = false
   if (keepView) {
     isCompleted.value = true

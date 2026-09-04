@@ -77,6 +77,18 @@ pub struct MessageHistory {
     pub qos: i32,
     pub retain: bool,
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+    #[serde(default)]
+    pub publish_status: Option<String>,
+    #[serde(default)]
+    pub packet_id: Option<i32>,
+    #[serde(default)]
+    pub publish_error: Option<String>,
+    #[serde(default)]
+    pub sent_at: Option<String>,
+    #[serde(default)]
+    pub confirmed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -88,6 +100,7 @@ pub struct MessageCleanupResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishPayload {
+    pub operation_id: String,
     pub topic: String,
     pub payload: String,
     pub qos: i32,
