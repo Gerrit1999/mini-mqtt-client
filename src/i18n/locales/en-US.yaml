@@ -72,6 +72,30 @@ sidebar:
     newVersionFound: New Version Found
     confirmDownload: "New version {version} is available. Install it and restart now?"
     installNow: Install and Restart
+  topicTree:
+    searchPlaceholder: Search subscription topics
+    emptyLevel: (empty level)
+    noSubscriptions: No subscriptions
+    noMatches: No matching subscriptions
+    publishLoaded: Loaded into the publish panel
+    status:
+      active: Active
+      pending: Pending
+      failed: Failed
+      disabled: Disabled
+    actions:
+      enable: "Enable subscription {topic}"
+      disable: "Disable subscription {topic}"
+      more: "Subscription actions for {topic}"
+      retry: "Retry subscription {topic}"
+      publish: Use for publish
+      edit: Edit
+      delete: Delete
+    publishDialog:
+      title: Create Publish Topic
+      filter: Subscription Topic Filter
+      topic: Concrete Publish Topic
+      placeholder: Replace + and # with concrete levels
 
 settings:
   title: Settings
