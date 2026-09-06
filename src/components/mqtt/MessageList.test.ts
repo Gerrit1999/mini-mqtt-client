@@ -33,6 +33,7 @@ const mockFetchAllMessageHistory = vi.fn(() => Promise.resolve([] as MessageHist
 const mockLoadMoreMessageHistory = vi.fn(() => Promise.resolve());
 const mockClearHistory = vi.fn(() => Promise.resolve());
 const mockGetHasMoreHistory = vi.fn(() => false);
+const mockSetCopyToPublish = vi.fn();
 
 vi.mock("@/stores/server", () => ({
   useServerStore: () => ({
@@ -66,7 +67,7 @@ vi.mock("@/stores/app", () => ({
     autoScroll: true,
     messageLimit: 1000,
     setAutoScroll: vi.fn(),
-    setCopyToPublish: vi.fn(),
+    setCopyToPublish: mockSetCopyToPublish,
     getDateLocale: () => "zh-CN",
   }),
 }));
@@ -226,6 +227,10 @@ describe("MessageList Topic 筛选", () => {
     mockFetchAllMessageHistory.mockResolvedValue([]);
     mockSave.mockResolvedValue(null);
     mockWriteTextFile.mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn(() => Promise.resolve()) },
+    });
   });
 
   function createWrapper() {
@@ -286,6 +291,52 @@ describe("MessageList Topic 筛选", () => {
         "history/topic",
         "sensor/temp",
       ]);
+    });
+
+    it("应将 Base64 历史恢复为原始字节并保留格式", async () => {
+      mockHistoryMessages.mockReturnValue([
+        {
+          id: 12,
+          server_id: 1,
+          direction: "publish",
+          topic: "binary/topic",
+          payload: "AP+AQQo=",
+          payload_format: "base64",
+          qos: 0,
+          retain: false,
+          created_at: "2024-01-01T00:00:00Z",
+        },
+      ]);
+
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const message = (wrapper.vm as any).messages[0] as MqttMessage;
+      expect(Array.from(message.payload ?? [])).toEqual([0x00, 0xff, 0x80, 0x41, 0x0a]);
+      expect(message.payload_type).toBe("base64");
+    });
+
+    it("损坏的 Base64 历史应回退为文本而不影响列表", async () => {
+      mockHistoryMessages.mockReturnValue([
+        {
+          id: 13,
+          server_id: 1,
+          direction: "publish",
+          topic: "legacy/topic",
+          payload: "not base64!",
+          payload_format: "base64",
+          qos: 0,
+          retain: false,
+          created_at: "2024-01-01T00:00:00Z",
+        },
+      ]);
+
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const message = (wrapper.vm as any).messages[0] as MqttMessage;
+      expect(new TextDecoder().decode(message.payload)).toBe("not base64!");
+      expect(message.payload_type).toBe("text");
     });
 
     it("应按 operation ID 合并历史与实时发布状态", async () => {
@@ -501,6 +552,91 @@ describe("MessageList Topic 筛选", () => {
     });
   });
 
+  describe("Base64 详情与复制", () => {
+    it("应保留 Base64 格式复制到发布面板", async () => {
+      mockHistoryMessages.mockReturnValue([
+        {
+          id: 201,
+          server_id: 1,
+          direction: "publish",
+          topic: "binary/topic",
+          payload: "AP+AQQo=",
+          payload_format: "base64",
+          qos: 1,
+          retain: false,
+          created_at: "2024-01-01T00:00:00Z",
+        },
+      ]);
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.showDetail(vm.messages[0]);
+      await flushPromises();
+
+      expect(vm.detailPayloadFormat).toBe("base64");
+      expect(wrapper.find(".payload-format-selector").exists()).toBe(true);
+      vm.copyPayload();
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("AP+AQQo=");
+
+      vm.copyToPublish();
+      expect(mockSetCopyToPublish).toHaveBeenCalledWith({
+        topic: "binary/topic",
+        payload: "AP+AQQo=",
+        qos: 1,
+        retain: false,
+        payloadType: "base64",
+      });
+    });
+
+    it("应允许把原始二进制字节切换为 Base64 后复制", async () => {
+      mockMessages.mockReturnValue([
+        {
+          id: 202,
+          server_id: 1,
+          direction: "receive",
+          topic: "binary/topic",
+          payload: new Uint8Array([0x00, 0xff, 0x80, 0x41, 0x0a]),
+          payload_type: "hex",
+          qos: 0,
+          retain: false,
+        },
+      ]);
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.showDetail(vm.messages[0]);
+      vm.detailPayloadFormat = "base64";
+      await flushPromises();
+      vm.copyPayload();
+
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("AP+AQQo=");
+    });
+
+    it("应能按 Base64 字节表示搜索消息", async () => {
+      mockMessages.mockReturnValue([
+        {
+          id: 203,
+          server_id: 1,
+          direction: "receive",
+          topic: "binary/topic",
+          payload: new Uint8Array([0x00, 0xff, 0x80, 0x41, 0x0a]),
+          qos: 0,
+          retain: false,
+        },
+      ]);
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.searchKeyword = "AP+A";
+      await flushPromises();
+
+      expect(vm.filteredMessages).toHaveLength(1);
+    });
+  });
+
   describe("导出", () => {
     it("应导出完整本地历史，而不是当前保留窗口", async () => {
       mockHistoryMessages.mockReturnValue([]);
@@ -530,7 +666,70 @@ describe("MessageList Topic 筛选", () => {
 
       const [savedPath, content] = mockWriteTextFile.mock.calls[0];
       expect(savedPath).toBe("/tmp/messages.json");
-      expect(content).toContain('"topic": "history/topic"');
+      const [item] = JSON.parse(content);
+      expect(item).toMatchObject({
+        topic: "history/topic",
+        payloadText: "from-history",
+        payloadTextEncoding: "utf-8",
+        payloadBase64: "ZnJvbS1oaXN0b3J5",
+      });
+    });
+
+    it("JSON 导出应无损保留非 UTF-8 Payload", async () => {
+      mockFetchAllMessageHistory.mockResolvedValue([
+        {
+          id: 102,
+          server_id: 1,
+          direction: "publish",
+          topic: "binary/topic",
+          payload: "AP+AQQo=",
+          payload_format: "base64",
+          qos: 0,
+          retain: false,
+          created_at: "2024-01-01T00:00:00Z",
+        },
+      ]);
+      mockSave.mockResolvedValue("/tmp/messages.json");
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      await (wrapper.vm as any).handleExportCommand("json");
+
+      const [, content] = mockWriteTextFile.mock.calls[0];
+      const [item] = JSON.parse(content);
+      expect(item).toMatchObject({
+        payloadType: "base64",
+        payloadBase64: "AP+AQQo=",
+        payloadTextEncoding: "utf-8-lossy",
+      });
+    });
+
+    it("CSV 导出应包含 Base64 字节表示和文本编码列", async () => {
+      mockFetchAllMessageHistory.mockResolvedValue([
+        {
+          id: 103,
+          server_id: 1,
+          direction: "publish",
+          topic: "binary/topic",
+          payload: "AP+AQQo=",
+          payload_format: "base64",
+          qos: 0,
+          retain: false,
+          created_at: "2024-01-01T00:00:00Z",
+        },
+      ]);
+      mockSave.mockResolvedValue("/tmp/messages.csv");
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      await (wrapper.vm as any).handleExportCommand("csv");
+
+      const [, content] = mockWriteTextFile.mock.calls[0];
+      const [header] = content.split("\n");
+      expect(header).toContain("payloadBase64");
+      expect(header).toContain("payloadTextEncoding");
+      expect(content).toContain('"AP+AQQo="');
+      expect(content).toContain('"utf-8-lossy"');
     });
   });
 });

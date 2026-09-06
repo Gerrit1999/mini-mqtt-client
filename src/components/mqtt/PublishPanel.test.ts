@@ -78,6 +78,7 @@ function createTestI18n() {
           selectServer: "请先选择一个服务器",
           connectFailed: "连接失败",
           hexInvalid: "HEX 格式无效",
+          base64Invalid: "Base64 格式无效",
           jsonInvalid: "JSON 格式无效",
         },
         success: {
@@ -199,6 +200,16 @@ describe("PublishPanel", () => {
 
       expect(wrapper.find(".btn-timed-message").exists()).toBe(true);
       expect(wrapper.find(".btn-scheduled-publish").exists()).toBe(true);
+    });
+
+    it("应提供 Base64 Payload 格式", async () => {
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      expect((wrapper.vm as any).formatOptions).toContainEqual({
+        label: "Base64",
+        value: "base64",
+      });
     });
   });
 
@@ -701,6 +712,52 @@ describe("PublishPanel", () => {
 
       expect(mockPublishMessage).not.toHaveBeenCalled();
       expect(wrapper.find(".el-dialog").exists()).toBe(true);
+    });
+
+    it("Base64 格式无效时应阻止开始", async () => {
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.publishData.topic = "test/topic";
+      vm.payloadFormat = "base64";
+      vm.publishData.payload = "not base64!";
+      await flushPromises();
+
+      await wrapper.find(".btn-timed-message").trigger("click");
+      await flushPromises();
+      const startBtn = wrapper.findAll(".el-dialog__footer button").find((btn) =>
+        btn.text().includes("开始发送")
+      );
+      await startBtn!.trigger("click");
+      await flushPromises();
+
+      expect(mockPublishMessage).not.toHaveBeenCalled();
+      expect(wrapper.find(".el-dialog").exists()).toBe(true);
+    });
+
+    it("Base64 格式应接受空白和缺失 padding", async () => {
+      mockPublishMessage.mockResolvedValue(undefined);
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.publishData.topic = "test/topic";
+      vm.payloadFormat = "base64";
+      vm.publishData.payload = "SGVs\n bG8";
+      await flushPromises();
+
+      const sendButton = wrapper.find(".action-row-bottom .el-button--primary");
+      await sendButton.trigger("click");
+      await flushPromises();
+
+      expect(mockPublishMessage).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          payload: "SGVs\n bG8",
+          format: "base64",
+        })
+      );
     });
   });
 });

@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import i18n, { getActualLocale, type Locale, type ActualLocale } from "@/i18n";
+import type { PayloadFormat } from "@/types/mqtt";
 
 export type Theme = "light" | "dark" | "auto";
 export type ViewType = "messages" | "templates";
@@ -33,7 +34,7 @@ export interface CopyToPublishData {
   payload: string;
   qos: number;
   retain: boolean;
-  payloadType?: string; // "json" | "hex" | "text"
+  payloadType?: PayloadFormat;
 }
 
 export const useAppStore = defineStore("app", () => {

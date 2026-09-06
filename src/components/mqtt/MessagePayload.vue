@@ -10,7 +10,7 @@
     </div>
 
     <!-- 二进制/HEX 格式 -->
-    <div v-else-if="effectiveFormat === 'binary'" class="payload-content hex-content">
+    <div v-else-if="effectiveFormat === 'hex'" class="payload-content hex-content">
       <!-- 预览模式：只显示简单的 HEX 字符串 -->
       <div v-if="preview" class="hex-preview-simple">
         <span v-if="shouldHighlight" v-html="highlightText(simpleHexPreview)" />
@@ -33,6 +33,12 @@
       </div>
     </div>
 
+    <!-- Base64 格式 -->
+    <div v-else-if="effectiveFormat === 'base64'" class="payload-content base64-content">
+      <pre v-if="shouldHighlight" v-html="highlightText(base64Payload)" />
+      <pre v-else>{{ base64Payload }}</pre>
+    </div>
+
     <!-- 纯文本格式 -->
     <div v-else class="payload-content text-content">
       <pre
@@ -47,13 +53,13 @@
 <script setup lang="ts">
 import { parse as parseLosslessJson, stringify as stringifyLosslessJson } from "lossless-json";
 import { computed } from "vue";
-
-type PayloadFormat = "json" | "binary" | "text";
+import type { PayloadFormat } from "@/types/mqtt";
+import { detectPayloadFormat, encodePayload } from "@/utils/payloadCodec";
 
 const props = defineProps<{
   payload: string | Uint8Array | undefined;
   preview?: boolean;
-  payloadType?: "json" | "hex" | "text";
+  payloadType?: PayloadFormat;
   formatJson?: boolean;
   highlightKeyword?: string;
   searchMatchCase?: boolean;
@@ -66,72 +72,30 @@ const shouldHighlight = computed(() => Boolean(props.highlightKeyword?.trim()));
 // 将 payload 转换为字符串
 const payloadString = computed(() => {
   if (!props.payload) return "";
-  if (props.payload instanceof Uint8Array) {
-    return new TextDecoder().decode(props.payload);
-  }
-  return String(props.payload);
+  return typeof props.payload === "string"
+    ? props.payload
+    : new TextDecoder().decode(props.payload);
 });
 
 // 将 payload 转换为字节数组
 const payloadBytes = computed(() => {
   if (!props.payload) return new Uint8Array();
-  if (props.payload instanceof Uint8Array) {
-    return props.payload;
-  }
-  return new TextEncoder().encode(props.payload);
+  return typeof props.payload === "string"
+    ? new TextEncoder().encode(props.payload)
+    : props.payload;
 });
 
 // 自动检测格式
 const detectedFormat = computed<PayloadFormat>(() => {
-  if (!props.payload) return "text";
-
-  const str = payloadString.value;
-
-  // 尝试检测 JSON
-  if (str.trim()) {
-    const trimmed = str.trim();
-    if (
-      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-      (trimmed.startsWith("[") && trimmed.endsWith("]"))
-    ) {
-      try {
-        JSON.parse(trimmed);
-        return "json";
-      } catch {
-        // 不是有效的 JSON
-      }
-    }
-  }
-
-  // 检测二进制数据（包含不可打印字符）
-  const bytes = payloadBytes.value;
-  if (bytes.length > 0) {
-    let nonPrintableCount = 0;
-    for (const byte of bytes) {
-      // 检查是否为不可打印字符（排除常见的空白字符）
-      if ((byte < 32 || byte > 126) && byte !== 9 && byte !== 10 && byte !== 13) {
-        nonPrintableCount++;
-      }
-    }
-    // 如果超过 10% 的字符是不可打印的，则认为是二进制
-    if (nonPrintableCount / bytes.length > 0.1) {
-      return "binary";
-    }
-  }
-
-  return "text";
+  return detectPayloadFormat(payloadBytes.value);
 });
 
 // 有效格式（优先使用指定的 payloadType，否则使用自动检测）
 const effectiveFormat = computed<PayloadFormat>(() => {
-  if (props.payloadType) {
-    // hex 类型映射为 binary 显示
-    if (props.payloadType === "hex") return "binary";
-    if (props.payloadType === "json") return "json";
-    return "text";
-  }
-  return detectedFormat.value;
+  return props.payloadType ?? detectedFormat.value;
 });
+
+const base64Payload = computed(() => encodePayload(payloadBytes.value, "base64"));
 
 // 简单的 HEX 预览（用于列表预览，不包含 offset 和 ASCII）
 const simpleHexPreview = computed(() => {
@@ -401,6 +365,12 @@ defineExpose({
 .text-content {
   pre {
     color: var(--app-text-color);
+  }
+}
+
+.base64-content {
+  pre {
+    color: var(--msg-publish);
   }
 }
 

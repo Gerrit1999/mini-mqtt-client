@@ -372,6 +372,7 @@ errors:
   inputName: 请输入名称
   inputValue: 请输入值
   hexInvalid: HEX 格式无效
+  base64Invalid: Base64 格式无效
   jsonInvalid: JSON 格式无效
   openFolderFailed: 打开文件夹失败
   selectFolderFailed: 选择文件夹失败

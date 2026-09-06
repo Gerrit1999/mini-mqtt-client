@@ -10,6 +10,7 @@ import type {
   MqttCapability,
   MqttMessage,
   MqttProtocolVersion,
+  PayloadFormat,
   PublishPayload,
   PublishRuntimeState,
   SubscriptionOperationResult,
@@ -20,6 +21,12 @@ import type { Script } from "@/stores/script";
 import { handleScriptError } from "@/utils/errorHandler";
 import i18n from "@/i18n";
 import { useAppStore } from "@/stores/app";
+import {
+  decodePayload,
+  detectPayloadFormat,
+  encodePayload,
+  type DetectedPayloadFormat,
+} from "@/utils/payloadCodec";
 
 interface ConnectionState {
   server_id: number;
@@ -52,8 +59,8 @@ interface EnvCache {
   timestamp: number;
 }
 
-type StoredPayloadFormat = "json" | "text" | "hex";
-type TrackedPublishRequest = Omit<PublishPayload, "operation_id"> & {
+type StoredPayloadFormat = DetectedPayloadFormat;
+type TrackedPublishRequest = Omit<PublishPayload, "operation_id" | "payload_bytes"> & {
   seq?: number;
   scriptError?: string;
 };
@@ -63,8 +70,6 @@ const SCRIPT_CACHE_TTL = 5000;
 
 export const useMqttStore = defineStore("mqtt", () => {
   const appStore = useAppStore();
-  const textEncoder = new TextEncoder();
-  const strictTextDecoder = new TextDecoder("utf-8", { fatal: true });
   // 连接状态
   const connectionStates = ref<
     Map<
@@ -174,56 +179,11 @@ export const useMqttStore = defineStore("mqtt", () => {
     receivedCountByServer.value = nextMap;
   }
 
-  function bytesToHex(payload: Uint8Array): string {
-    return Array.from(payload)
-      .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
-      .join("");
-  }
-
   function detectStoredPayloadFormat(
     payloadBytes: Uint8Array
   ): { payload: string; format: StoredPayloadFormat } {
-    if (payloadBytes.length === 0) {
-      return { payload: "", format: "text" };
-    }
-
-    let decoded: string | null = null;
-    try {
-      decoded = strictTextDecoder.decode(payloadBytes);
-    } catch {
-      decoded = null;
-    }
-
-    if (decoded !== null) {
-      let nonPrintableCount = 0;
-      for (const byte of payloadBytes) {
-        if ((byte < 32 || byte > 126) && byte !== 9 && byte !== 10 && byte !== 13) {
-          nonPrintableCount++;
-        }
-      }
-
-      if (nonPrintableCount / payloadBytes.length > 0.1) {
-        return { payload: bytesToHex(payloadBytes), format: "hex" };
-      }
-
-      const trimmed = decoded.trim();
-      if (
-        trimmed &&
-        ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-          (trimmed.startsWith("[") && trimmed.endsWith("]")))
-      ) {
-        try {
-          JSON.parse(trimmed);
-          return { payload: decoded, format: "json" };
-        } catch {
-          // fall through to plain text
-        }
-      }
-
-      return { payload: decoded, format: "text" };
-    }
-
-    return { payload: bytesToHex(payloadBytes), format: "hex" };
+    const format = detectPayloadFormat(payloadBytes);
+    return { payload: encodePayload(payloadBytes, format), format };
   }
 
   // 批量处理消息队列
@@ -493,10 +453,7 @@ export const useMqttStore = defineStore("mqtt", () => {
   ): Promise<MessageHistory> => {
     const operationId = createOperationId();
     const seq = request.seq ?? nextSeq++;
-    const payloadBytes =
-      request.format === "hex"
-        ? hexToBytes(request.payload)
-        : textEncoder.encode(request.payload);
+    const payloadBytes = decodePayload(request.payload, request.format);
     const pendingMessage: MqttMessage = {
       server_id: serverId,
       direction: "publish",
@@ -520,6 +477,7 @@ export const useMqttStore = defineStore("mqtt", () => {
           operation_id: operationId,
           topic: request.topic,
           payload: request.payload,
+          payload_bytes: Array.from(payloadBytes),
           qos: request.qos,
           retain: request.retain,
           format: request.format,
@@ -633,16 +591,6 @@ export const useMqttStore = defineStore("mqtt", () => {
     receivedCountByServer.value = newCountMap;
   };
 
-  // 将 HEX 字符串转换为字节数组
-  const hexToBytes = (hex: string): Uint8Array => {
-    const cleanHex = hex.replace(/\s/g, "");
-    const bytes = new Uint8Array(cleanHex.length / 2);
-    for (let i = 0; i < cleanHex.length; i += 2) {
-      bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
-    }
-    return bytes;
-  };
-
   // 添加发布消息到列表（用于UI显示）
   const addPublishMessage = (
     serverId: number,
@@ -653,20 +601,12 @@ export const useMqttStore = defineStore("mqtt", () => {
       qos: 0 | 1 | 2;
       retain: boolean;
       scriptError?: string;
-      payload_type?: "json" | "hex" | "text";
+      payload_type?: PayloadFormat;
       timestamp?: string;
       seq?: number;
     }
   ) => {
-    // 根据 payload_type 决定如何编码 payload
-    let payloadBytes: Uint8Array;
-    if (msg.payload_type === "hex") {
-      // HEX 格式：将 HEX 字符串转换为实际字节
-      payloadBytes = hexToBytes(msg.payload);
-    } else {
-      // 其他格式：直接用 TextEncoder 编码
-      payloadBytes = textEncoder.encode(msg.payload);
-    }
+    const payloadBytes = decodePayload(msg.payload, msg.payload_type ?? "text");
 
     // 使用批处理队列
     queueMessage({

@@ -20,7 +20,7 @@
 - 支持通配符订阅 (`+` / `#`)
 - 支持 QoS 0/1/2 级别
 - 支持 Retain 消息
-- 消息格式切换：JSON / HEX / Text
+- 消息格式切换：JSON / HEX / Base64 / Text
 
 <!-- 消息列表截图 -->
 ![消息列表](docs/screenshots/messages.png)

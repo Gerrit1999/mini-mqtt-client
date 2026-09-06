@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import type { PayloadFormat } from '@/types/mqtt'
 
 /** Shared across all connections; real broker ids start at 1. */
 export const GLOBAL_TEMPLATE_SERVER_ID = 0
@@ -15,7 +16,7 @@ export interface CommandTemplate {
   name: string
   topic: string
   payload: string
-  payload_type: 'json' | 'hex' | 'text'
+  payload_type: PayloadFormat
   qos: 0 | 1 | 2
   retain: boolean
   description?: string
@@ -31,7 +32,7 @@ export interface CreateTemplateRequest {
   name: string
   topic: string
   payload: string
-  payload_type: string
+  payload_type: PayloadFormat
   qos: number
   retain: boolean
   description?: string
@@ -43,7 +44,7 @@ export interface UpdateTemplateRequest {
   name?: string
   topic?: string
   payload?: string
-  payload_type?: string
+  payload_type?: PayloadFormat
   qos?: number
   retain?: boolean
   description?: string

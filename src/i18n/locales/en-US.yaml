@@ -372,6 +372,7 @@ errors:
   inputName: Please enter name
   inputValue: Please enter value
   hexInvalid: Invalid HEX format
+  base64Invalid: Invalid Base64 format
   jsonInvalid: Invalid JSON format
   openFolderFailed: Failed to open folder
   selectFolderFailed: Failed to select folder

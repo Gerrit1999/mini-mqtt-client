@@ -137,10 +137,10 @@ import { ScriptEngine } from "@/utils/scriptEngine";
 import type { Script } from "@/stores/script";
 import { validatePublishTopic, handleMqttError } from "@/utils/mqttErrorHandler";
 import { handleScriptError } from "@/utils/errorHandler";
+import { decodePayload } from "@/utils/payloadCodec";
+import type { PayloadFormat } from "@/types/mqtt";
 
 const { t } = useI18n();
-
-type PayloadFormat = "json" | "hex" | "text";
 
 const props = defineProps<{
   scheduledPublishRunning: boolean;
@@ -150,8 +150,9 @@ const props = defineProps<{
 const formatOptions = [
   { label: "JSON", value: "json" },
   { label: "HEX", value: "hex" },
+  { label: "Base64", value: "base64" },
   { label: "Text", value: "text" },
-];
+] satisfies Array<{ label: string; value: PayloadFormat }>;
 
 const serverStore = useServerStore();
 const mqttStore = useMqttStore();
@@ -168,7 +169,7 @@ let timedMessageTimer: ReturnType<typeof setTimeout> | null = null;
 let timedMessageActive = false;
 
 const emit = defineEmits<{
-  saveTemplate: [data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: string }]
+  saveTemplate: [data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: PayloadFormat }]
   openTemplates: []
   scheduledPublish: []
   'update:timedMessageRunning': [value: boolean]
@@ -186,7 +187,7 @@ watch(
 
       // 设置格式类型
       if (data.payloadType) {
-        payloadFormat.value = data.payloadType as PayloadFormat;
+        payloadFormat.value = data.payloadType;
       } else if (data.payload.trim()) {
         // 自动检测格式
         try {
@@ -231,6 +232,21 @@ watch(
 const payloadPlaceholder = computed(() => {
   return t('publish.payloadPlaceholder');
 });
+
+function validatePayload(): boolean {
+  try {
+    decodePayload(publishData.payload, payloadFormat.value);
+    return true;
+  } catch {
+    const errorKey = payloadFormat.value === "json"
+      ? "errors.jsonInvalid"
+      : payloadFormat.value === "hex"
+        ? "errors.hexInvalid"
+        : "errors.base64Invalid";
+    ElMessage.warning(t(errorKey));
+    return false;
+  }
+}
 
 // 打开模板管理
 const handleOpenTemplates = () => {
@@ -278,23 +294,7 @@ const startTimedMessage = () => {
     return;
   }
 
-  // 验证格式
-  if (payloadFormat.value === "hex") {
-    const hex = publishData.payload.replace(/\s/g, "");
-    if (!/^[0-9A-Fa-f]*$/.test(hex)) {
-      ElMessage.warning(t('errors.hexInvalid'));
-      return;
-    }
-  }
-
-  if (payloadFormat.value === "json" && publishData.payload.trim()) {
-    try {
-      JSON.parse(publishData.payload);
-    } catch {
-      ElMessage.warning(t('errors.jsonInvalid'));
-      return;
-    }
-  }
+  if (!validatePayload()) return;
 
   timedMessageDialogVisible.value = false;
   timedMessageCount.value = 0;
@@ -434,23 +434,7 @@ const handlePublish = async () => {
     return;
   }
 
-  // 验证格式
-  if (payloadFormat.value === "hex") {
-    const hex = publishData.payload.replace(/\s/g, "");
-    if (!/^[0-9A-Fa-f]*$/.test(hex)) {
-      ElMessage.warning(t('errors.hexInvalid'));
-      return;
-    }
-  }
-
-  if (payloadFormat.value === "json" && publishData.payload.trim()) {
-    try {
-      JSON.parse(publishData.payload);
-    } catch {
-      ElMessage.warning(t('errors.jsonInvalid'));
-      return;
-    }
-  }
+  if (!validatePayload()) return;
 
   publishing.value = true;
   try {

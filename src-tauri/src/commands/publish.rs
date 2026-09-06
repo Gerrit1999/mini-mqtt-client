@@ -3,6 +3,13 @@ use crate::db::Storage;
 use crate::mqtt::{MqttManager, PublishRuntimeStatus};
 use tauri::State;
 
+fn validate_payload_format(format: &str) -> Result<(), String> {
+    match format {
+        "text" | "json" | "hex" | "base64" => Ok(()),
+        _ => Err(format!("Unsupported payload format: {format}")),
+    }
+}
+
 #[tauri::command]
 pub async fn publish_message(
     storage: State<'_, Storage>,
@@ -17,12 +24,8 @@ pub async fn publish_message(
     if !(0..=2).contains(&message.qos) {
         return Err("Invalid QoS".to_string());
     }
-
-    let payload_bytes = match message.format.as_str() {
-        "hex" => hex::decode(message.payload.replace(" ", ""))
-            .map_err(|e| format!("HEX decode failed: {}", e))?,
-        _ => message.payload.as_bytes().to_vec(),
-    };
+    validate_payload_format(&message.format)?;
+    let payload_bytes = message.payload_bytes;
 
     let history = MessageHistory {
         id: None,
@@ -132,4 +135,24 @@ pub async fn cleanup_message_history(
     vacuum: Option<bool>,
 ) -> Result<MessageCleanupResult, String> {
     storage.cleanup_message_history(vacuum.unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_payload_format;
+
+    #[test]
+    fn accepts_supported_payload_formats() {
+        for format in ["text", "json", "hex", "base64"] {
+            assert_eq!(validate_payload_format(format), Ok(()));
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_payload_formats() {
+        assert_eq!(
+            validate_payload_format("cbor"),
+            Err("Unsupported payload format: cbor".to_string())
+        );
+    }
 }

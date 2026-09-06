@@ -4,6 +4,7 @@
 export type MqttTransportProtocol = "mqtt" | "mqtts" | "ws" | "wss";
 export type MqttCertificateType = "ca_signed" | "self_signed";
 export type MqttProtocolVersion = "3.1.1" | "5.0";
+export type PayloadFormat = "text" | "json" | "hex" | "base64";
 export type MqttCapability =
   | "publish_properties"
   | "session_expiry"
@@ -66,7 +67,7 @@ export interface MqttMessage {
   /** 脚本处理错误信息 */
   scriptError?: string;
   /** 消息格式类型（发送时用户选择的格式） */
-  payload_type?: "json" | "hex" | "text";
+  payload_type?: PayloadFormat;
   /** 单调递增序列号，用于保证消息显示顺序 */
   seq?: number;
   operation_id?: string;
@@ -143,7 +144,7 @@ export interface MessageHistory {
   server_id: number;
   topic: string;
   payload?: string;
-  payload_format?: "text" | "json" | "hex";
+  payload_format?: PayloadFormat;
   direction: "publish" | "receive";
   qos: number;
   retain: boolean;
@@ -165,7 +166,8 @@ export interface PublishPayload {
   payload: string;
   qos: 0 | 1 | 2;
   retain: boolean;
-  format: "text" | "json" | "hex";
+  format: PayloadFormat;
+  payload_bytes: number[];
 }
 
 /**
