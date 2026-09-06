@@ -197,71 +197,27 @@
             </el-icon>
             <span class="section-title">{{ $t('sidebar.subscription') }}</span>
           </div>
-          <el-button type="primary" size="small" :icon="Plus" circle @click="handleAddSubscription" />
+          <el-button
+            type="primary"
+            size="small"
+            :icon="Plus"
+            circle
+            :aria-label="$t('sidebar.addSubscription')"
+            @click="handleAddSubscription"
+          />
         </div>
 
-        <div class="subscription-list" v-show="!isSubscriptionListCollapsed">
-          <div
-            v-for="sub in currentSubscriptions"
-            :key="sub.id"
-            class="subscription-item"
-            :class="{
-              inactive: !sub.is_active,
-              pending: isSubscriptionPending(sub),
-              failed: getSubscriptionRuntimeState(sub)?.status === 'failed',
-            }"
-          >
-            <!-- 第一行：颜色 + Topic + 开关 -->
-            <div class="sub-row-1">
-              <span 
-                v-if="sub.color" 
-                class="sub-color-indicator" 
-                :style="{ backgroundColor: sub.color }"
-              />
-              <el-tooltip :content="sub.topic" placement="top" :show-after="500">
-                <span class="sub-topic text-ellipsis">{{ sub.topic }}</span>
-              </el-tooltip>
-              <el-switch
-                :model-value="sub.is_active"
-                size="small"
-                :disabled="isSubscriptionPending(sub)"
-                @change="(val: string | number | boolean) => handleToggleSubscription(sub, Boolean(val))"
-              />
-            </div>
-            <!-- 第二行：QoS + 操作按钮 -->
-            <div class="sub-row-2">
-              <div class="subscription-runtime">
-                <el-icon v-if="isSubscriptionPending(sub)" class="subscription-state-icon pending-icon">
-                  <Loading />
-                </el-icon>
-                <el-tooltip
-                  v-else-if="getSubscriptionRuntimeState(sub)?.status === 'failed'"
-                  :content="getSubscriptionRuntimeState(sub)?.error"
-                  placement="top"
-                >
-                  <el-icon class="subscription-state-icon failed-icon">
-                    <WarningFilled />
-                  </el-icon>
-                </el-tooltip>
-                <el-tag
-                  size="small"
-                  effect="plain"
-                  :type="getSubscriptionQosTagType(sub)"
-                >
-                  {{ getSubscriptionQosLabel(sub) }}
-                </el-tag>
-              </div>
-              <div class="sub-actions">
-                <el-button text size="small" :icon="Edit" :disabled="isSubscriptionPending(sub)" @click="handleEditSubscription(sub)" />
-                <el-button text size="small" type="danger" :icon="Close" :disabled="isSubscriptionPending(sub)" @click="handleDeleteSubscription(sub)" />
-              </div>
-            </div>
-          </div>
-
-          <div v-if="currentSubscriptions.length === 0" class="empty-hint">
-            {{ $t('sidebar.addSubscriptionHint') }}
-          </div>
-        </div>
+        <SubscriptionTopicTree
+          v-show="!isSubscriptionListCollapsed"
+          :subscriptions="currentSubscriptions"
+          :runtime-states="currentSubscriptionStates"
+          :loading="subscriptionStore.loading"
+          @toggle="handleToggleSubscription"
+          @edit="handleEditSubscription"
+          @delete="handleDeleteSubscription"
+          @retry="handleRetrySubscription"
+          @publish="handleUseSubscriptionForPublish"
+        />
       </div>
     </div>
 
@@ -341,6 +297,34 @@
     </el-dialog>
 
     <el-dialog
+      v-model="showPublishTopicDialog"
+      :title="$t('sidebar.topicTree.publishDialog.title')"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-position="top">
+        <el-form-item :label="$t('sidebar.topicTree.publishDialog.filter')">
+          <el-input :model-value="publishSubscription?.topic" readonly />
+        </el-form-item>
+        <el-form-item :label="$t('sidebar.topicTree.publishDialog.topic')">
+          <el-input
+            v-model="publishTopicDraft"
+            :placeholder="$t('sidebar.topicTree.publishDialog.placeholder')"
+            @keyup.enter="handleConfirmPublishTopic"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showPublishTopicDialog = false">
+          {{ $t('common.cancel') }}
+        </el-button>
+        <el-button type="primary" @click="handleConfirmPublishTopic">
+          {{ $t('sidebar.topicTree.actions.publish') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="showMoveServerDialog"
       :title="$t('sidebar.actions.moveToGroup')"
       width="420px"
@@ -395,8 +379,6 @@ import {
   Folder,
   FolderAdd,
   FolderOpened,
-  Loading,
-  WarningFilled,
 } from "@element-plus/icons-vue";
 import { useAppStore } from "@/stores/app";
 import { useServerStore } from "@/stores/server";
@@ -404,6 +386,8 @@ import { useSubscriptionStore } from "@/stores/subscription";
 import { useMqttStore } from "@/stores/mqtt";
 import { ElMessage, ElMessageBox } from "element-plus";
 import ServerFormDialog from "@/components/mqtt/ServerFormDialog.vue";
+import SubscriptionTopicTree from "@/components/mqtt/SubscriptionTopicTree.vue";
+import { validatePublishTopic } from "@/utils/mqttErrorHandler";
 import type { MqttServer, Subscription } from "@/types/mqtt";
 
 const { t } = useI18n();
@@ -442,37 +426,11 @@ const currentSubscriptions = computed(() => {
   return subscriptionStore.getSubscriptionsByServer(serverId);
 });
 
-const getSubscriptionRuntimeState = (sub: Subscription) => {
+const currentSubscriptionStates = computed(() => {
   const serverId = serverStore.activeServerId;
-  if (!serverId) return undefined;
-  return mqttStore.getSubscriptionState(serverId, sub.topic);
-};
-
-const isSubscriptionPending = (sub: Subscription): boolean =>
-  getSubscriptionRuntimeState(sub)?.status === "pending";
-
-const getSubscriptionQosLabel = (sub: Subscription): string => {
-  const state = getSubscriptionRuntimeState(sub);
-  if (state?.status !== "active" || state.granted_qos === undefined) {
-    return `Q${sub.qos}`;
-  }
-  return state.granted_qos === sub.qos
-    ? `Q${state.granted_qos}`
-    : `Q${sub.qos} → Q${state.granted_qos}`;
-};
-
-const getSubscriptionQosTagType = (sub: Subscription) => {
-  switch (getSubscriptionRuntimeState(sub)?.status) {
-    case "active":
-      return "success";
-    case "pending":
-      return "warning";
-    case "failed":
-      return "danger";
-    default:
-      return "info";
-  }
-};
+  if (!serverId) return new Map();
+  return mqttStore.subscriptionStates.get(serverId) ?? new Map();
+});
 
 const ungroupedServers = computed(() => {
   return serverStore.servers.filter(
@@ -718,6 +676,9 @@ const subLoading = ref(false);
 const isEditingSubscription = ref(false);
 const editingSubscriptionId = ref<number | null>(null);
 const editingOldTopic = ref("");
+const showPublishTopicDialog = ref(false);
+const publishSubscription = ref<Subscription | null>(null);
+const publishTopicDraft = ref("");
 
 // 预设颜色选项
 const colorOptions = [
@@ -790,6 +751,58 @@ const handleToggleSubscription = async (sub: Subscription, isActive: boolean) =>
   } catch (error) {
     ElMessage.error(`${t('errors.subscribeFailed')}: ${error}`);
   }
+};
+
+const handleRetrySubscription = async (sub: Subscription) => {
+  const serverId = serverStore.activeServerId;
+  if (!serverId) return;
+
+  try {
+    await subscriptionStore.retrySubscription(serverId, sub);
+    ElMessage.success(
+      sub.is_active ? t('success.resumed') : t('success.paused')
+    );
+  } catch (error) {
+    ElMessage.error(`${t('errors.subscribeFailed')}: ${error}`);
+  }
+};
+
+function copySubscriptionToPublish(sub: Subscription, topic: string) {
+  appStore.setCopyToPublish({
+    topic,
+    payload: "",
+    qos: sub.qos,
+    retain: false,
+    payloadType: "text",
+  });
+  ElMessage.success(t('sidebar.topicTree.publishLoaded'));
+}
+
+const handleUseSubscriptionForPublish = (sub: Subscription) => {
+  const validation = validatePublishTopic(sub.topic);
+  if (validation.valid) {
+    copySubscriptionToPublish(sub, sub.topic);
+    return;
+  }
+
+  publishSubscription.value = sub;
+  publishTopicDraft.value = sub.topic;
+  showPublishTopicDialog.value = true;
+};
+
+const handleConfirmPublishTopic = () => {
+  const sub = publishSubscription.value;
+  if (!sub) return;
+
+  const validation = validatePublishTopic(publishTopicDraft.value);
+  if (!validation.valid) {
+    ElMessage.warning(validation.error || t('errors.inputTopic'));
+    return;
+  }
+
+  copySubscriptionToPublish(sub, publishTopicDraft.value);
+  showPublishTopicDialog.value = false;
+  publishSubscription.value = null;
 };
 
 const handleConfirmSubscription = async () => {
@@ -971,8 +984,7 @@ const handleConfirmSubscription = async () => {
   transition: color 0.2s ease;
 }
 
-.server-list,
-.subscription-list {
+.server-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1103,124 +1115,8 @@ const handleConfirmSubscription = async () => {
   font-size: 11px;
 }
 
-.subscription-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--app-border-color);
-  transition: all 0.2s ease;
-
-  &:hover {
-    background-color: var(--sidebar-hover);
-    border-color: var(--el-color-primary-light-5);
-
-    .sub-actions {
-      opacity: 1;
-    }
-  }
-
-  &.inactive {
-    opacity: 0.6;
-  }
-
-  &.pending {
-    border-color: var(--el-color-warning-light-5);
-  }
-
-  &.failed {
-    border-color: var(--el-color-danger-light-5);
-  }
-}
-
-.sub-row-1 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  
-  .el-switch {
-    flex-shrink: 0;
-    margin-left: auto;
-  }
-}
-
-.sub-row-2 {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.subscription-runtime {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.subscription-state-icon {
-  flex-shrink: 0;
-  font-size: 14px;
-}
-
-.pending-icon {
-  color: var(--el-color-warning);
-  animation: subscription-spin 1s linear infinite;
-}
-
-.failed-icon {
-  color: var(--el-color-danger);
-}
-
-@keyframes subscription-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.sub-row-2-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sub-color-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.sub-topic {
-  font-size: 12px;
-  font-family: "Fira Code", "Consolas", monospace;
-  color: var(--app-text-color);
-  flex: 1;
-  min-width: 0;
-}
-
-.sub-actions {
-  display: flex;
-  gap: 0;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  
-  .el-button {
-    padding: 4px;
-  }
-}
-
 .empty-state {
   padding: 16px 0;
-}
-
-.empty-hint {
-  text-align: center;
-  padding: 12px;
-  font-size: 12px;
-  color: var(--app-text-secondary);
 }
 
 .sidebar-footer {

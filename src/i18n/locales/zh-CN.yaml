@@ -72,6 +72,30 @@ sidebar:
     newVersionFound: 发现新版本
     confirmDownload: 发现新版本 {version}，是否安装并重启应用？
     installNow: 安装并重启
+  topicTree:
+    searchPlaceholder: 搜索订阅 Topic
+    emptyLevel: （空层级）
+    noSubscriptions: 暂无订阅
+    noMatches: 未找到匹配的订阅
+    publishLoaded: 已填入发布面板
+    status:
+      active: 已生效
+      pending: 待确认
+      failed: 失败
+      disabled: 已停用
+    actions:
+      enable: "启用订阅 {topic}"
+      disable: "停用订阅 {topic}"
+      more: "订阅 {topic} 的操作"
+      retry: "重试订阅 {topic}"
+      publish: 用于发布
+      edit: 编辑
+      delete: 删除
+    publishDialog:
+      title: 生成发布 Topic
+      filter: 订阅 Topic Filter
+      topic: 具体发布 Topic
+      placeholder: 将 + 和 # 替换为具体层级
 
 settings:
   title: 系统设置

@@ -1,7 +1,11 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import type { Subscription, UpdateSubscriptionRequest } from "@/types/mqtt";
+import type {
+  Subscription,
+  SubscriptionOperationResult,
+  UpdateSubscriptionRequest,
+} from "@/types/mqtt";
 import { validateSubscribeTopic } from "@/utils/mqttErrorHandler";
 import { useEnvStore } from "@/stores/env";
 
@@ -122,6 +126,24 @@ export const useSubscriptionStore = defineStore("subscription", () => {
     return result;
   }
 
+  async function retrySubscription(
+    serverId: number,
+    subscription: Subscription
+  ): Promise<SubscriptionOperationResult> {
+    if (subscription.is_active) {
+      return invoke<SubscriptionOperationResult>("mqtt_subscribe", {
+        serverId,
+        topic: subscription.topic,
+        qos: subscription.qos,
+      });
+    }
+
+    return invoke<SubscriptionOperationResult>("mqtt_unsubscribe", {
+      serverId,
+      topic: subscription.topic,
+    });
+  }
+
   // 根据 topic 获取订阅（用于消息列表查找颜色）
   function getSubscriptionByTopic(serverId: number, topic: string): Subscription | undefined {
     const serverSubs = subscriptions.value.get(serverId) || [];
@@ -174,6 +196,7 @@ export const useSubscriptionStore = defineStore("subscription", () => {
     removeSubscription,
     toggleSubscription,
     updateSubscription,
+    retrySubscription,
     getSubscriptionByTopic,
   };
 });
