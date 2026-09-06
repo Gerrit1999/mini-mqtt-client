@@ -21,9 +21,16 @@ header:
   disconnect: Disconnect
   connecting: Connecting
   settings: Settings
+  connectionError:
+    connectionLost: Connection lost: {details}
+    connectFailed: Connection attempt failed: {details}
+    connectionRefused: Connection refused: {details}
+    unknown: Connection error: {details}
   status:
     connected: Connected
     connecting: Connecting...
+    reconnecting: Reconnecting · attempt {attempt}
+    retryingIn: Retry in {seconds}s
     disconnected: Disconnected
     error: Connection Error
 

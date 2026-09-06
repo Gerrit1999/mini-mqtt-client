@@ -9,6 +9,13 @@
           <span class="server-address">
             {{ formatServerAddress(activeServer.server) }}
           </span>
+          <span
+            v-if="connectionStatus === 'reconnecting'"
+            class="reconnect-detail"
+            :title="localizedConnectionError"
+          >
+            {{ reconnectDetail }}
+          </span>
         </div>
         <el-tag :type="statusTagType" size="small" effect="plain">
           {{ statusText }}
@@ -49,7 +56,7 @@
           {{ $t('header.connect') }}
         </el-button>
         <el-button
-          v-else-if="connectionStatus === 'connected'"
+          v-else-if="connectionStatus === 'connected' || connectionStatus === 'reconnecting'"
           type="danger"
           size="small"
           plain
@@ -70,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Connection,
@@ -80,14 +87,12 @@ import {
 import { ElMessage } from "element-plus";
 import { useServerStore } from "@/stores/server";
 import { useMqttStore } from "@/stores/mqtt";
-import { useSubscriptionStore } from "@/stores/subscription";
 import type { MqttServer } from "@/types/mqtt";
 
 const { t } = useI18n();
 
 const serverStore = useServerStore();
 const mqttStore = useMqttStore();
-const subscriptionStore = useSubscriptionStore();
 const connecting = ref(false);
 
 // 格式化服务器地址为 协议://host:port 格式
@@ -110,10 +115,57 @@ const connectionStatus = computed(() => {
   return mqttStore.getConnectionStatus(activeServer.value.server.id);
 });
 
+const connectionError = computed(() => {
+  const serverId = activeServer.value?.server.id;
+  return serverId ? mqttStore.getConnectionError(serverId) : undefined;
+});
+
+const localizedConnectionError = computed(() => {
+  const error = connectionError.value;
+  if (!error) return undefined;
+
+  const mappings = [
+    ["Connection error:", "header.connectionError.connectionLost"],
+    ["Failed to connect:", "header.connectionError.connectFailed"],
+    ["Connection refused:", "header.connectionError.connectionRefused"],
+  ] as const;
+  for (const [prefix, key] of mappings) {
+    if (error.startsWith(prefix)) {
+      return t(key, { details: error.slice(prefix.length).trim() });
+    }
+  }
+
+  return t('header.connectionError.unknown', { details: error });
+});
+
+const reconnectAttempt = computed(() => {
+  const serverId = activeServer.value?.server.id;
+  return serverId ? mqttStore.getReconnectAttempt(serverId) : undefined;
+});
+
+const retryInSeconds = computed(() => {
+  const serverId = activeServer.value?.server.id;
+  const retryInMs = serverId ? mqttStore.getRetryInMs(serverId) : undefined;
+  return retryInMs === undefined ? undefined : Number((retryInMs / 1000).toFixed(1));
+});
+
+const reconnectDetail = computed(() => {
+  const details = [];
+  if (retryInSeconds.value !== undefined) {
+    details.push(t('header.status.retryingIn', { seconds: retryInSeconds.value }));
+  }
+  if (localizedConnectionError.value) {
+    details.push(localizedConnectionError.value);
+  }
+  return details.join(" · ");
+});
+
 const displayedProtocolVersion = computed(() => {
   const server = activeServer.value?.server;
   if (!server?.id) return server?.protocol_version;
-  if (connectionStatus.value !== "connected") return server.protocol_version;
+  if (connectionStatus.value !== "connected" && connectionStatus.value !== "reconnecting") {
+    return server.protocol_version;
+  }
   return mqttStore.getConnectionProtocolVersion(server.id) ?? server.protocol_version;
 });
 
@@ -123,6 +175,8 @@ const statusText = computed(() => {
       return t('header.status.connected');
     case "connecting":
       return t('header.status.connecting');
+    case "reconnecting":
+      return t('header.status.reconnecting', { attempt: reconnectAttempt.value ?? 1 });
     case "error":
       return t('header.status.error');
     default:
@@ -135,36 +189,12 @@ const statusTagType = computed(() => {
     case "connected":
       return "success";
     case "connecting":
+    case "reconnecting":
       return "warning";
     case "error":
       return "danger";
     default:
       return "info";
-  }
-});
-
-// 监听连接状态变化，自动订阅活跃的订阅
-watch(connectionStatus, async (newStatus, oldStatus) => {
-  if (newStatus === "connected" && oldStatus !== "connected") {
-    const serverId = activeServer.value?.server.id;
-    if (!serverId) return;
-
-    // 获取所有活跃的订阅
-    const subscriptions = subscriptionStore.getSubscriptionsByServer(serverId);
-    const activeSubscriptions = subscriptions.filter((sub) => sub.is_active);
-
-    // 自动订阅
-    for (const sub of activeSubscriptions) {
-      try {
-        await mqttStore.subscribe(serverId, sub.topic, sub.qos as 0 | 1 | 2);
-      } catch (e) {
-        console.error(`自动订阅失败: ${sub.topic}`, e);
-      }
-    }
-
-    if (activeSubscriptions.length > 0) {
-      // ElMessage.success(`已自动订阅 ${activeSubscriptions.length} 个主题`);
-    }
   }
 });
 
@@ -243,6 +273,16 @@ const handleSettings = () => {
   line-height: 1.3;
 }
 
+.reconnect-detail {
+  max-width: min(42vw, 520px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--status-error);
+  line-height: 1.3;
+}
+
 .header-center {
   display: flex;
   align-items: center;
@@ -271,7 +311,8 @@ const handleSettings = () => {
     box-shadow: 0 0 6px var(--status-connected);
   }
 
-  &.connecting {
+  &.connecting,
+  &.reconnecting {
     background-color: var(--status-connecting);
     animation: pulse 1.5s infinite;
   }

@@ -174,6 +174,7 @@ export interface PublishPayload {
 export type ConnectionStatus =
   | "disconnected"
   | "connecting"
+  | "reconnecting"
   | "connected"
   | "error";
 
