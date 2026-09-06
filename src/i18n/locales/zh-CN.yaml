@@ -21,9 +21,16 @@ header:
   disconnect: 断开
   connecting: 连接中
   settings: 设置
+  connectionError:
+    connectionLost: 连接已中断：{details}
+    connectFailed: 连接尝试失败：{details}
+    connectionRefused: 连接被拒绝：{details}
+    unknown: 连接错误：{details}
   status:
     connected: 已连接
     connecting: 连接中...
+    reconnecting: 正在重连 · 第 {attempt} 次
+    retryingIn: {seconds} 秒后重试
     disconnected: 未连接
     error: 连接错误
 

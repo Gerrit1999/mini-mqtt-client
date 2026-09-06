@@ -118,6 +118,42 @@ describe("useMqttStore", () => {
         "Unsupported MQTT protocol version: 4.0. Supported versions: 3.1.1, 5.0"
       );
     });
+
+    it("保存重连进度和最近错误且保留活跃订阅状态", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      subscriptionStateListener!({
+        payload: {
+          server_id: 1,
+          topic: "sensor/+",
+          operation: "subscribe",
+          status: "active",
+          requested_qos: 1,
+          granted_qos: 1,
+          operation_id: "op-active",
+        },
+      });
+
+      connectionStateListener!({
+        payload: {
+          server_id: 1,
+          status: "reconnecting",
+          error: "Connection error: network unavailable",
+          protocol_version: "5.0",
+          capabilities: ["publish_properties", "session_expiry", "topic_alias"],
+          reconnect_attempt: 3,
+          retry_in_ms: 1750,
+        },
+      });
+
+      expect(store.getConnectionStatus(1)).toBe("reconnecting");
+      expect(store.getConnectionError(1)).toBe(
+        "Connection error: network unavailable"
+      );
+      expect(store.getReconnectAttempt(1)).toBe(3);
+      expect(store.getRetryInMs(1)).toBe(1750);
+      expect(store.getSubscriptionState(1, "sensor/+")?.status).toBe("active");
+    });
   });
 
   describe("订阅运行状态", () => {

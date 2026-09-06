@@ -27,6 +27,8 @@ interface ConnectionState {
   error?: string;
   protocol_version?: MqttProtocolVersion;
   capabilities?: MqttCapability[];
+  reconnect_attempt?: number;
+  retry_in_ms?: number;
 }
 
 interface ReceivedMessage {
@@ -72,6 +74,8 @@ export const useMqttStore = defineStore("mqtt", () => {
         error?: string;
         protocolVersion?: MqttProtocolVersion;
         capabilities: MqttCapability[];
+        reconnectAttempt?: number;
+        retryInMs?: number;
       }
     >
   >(new Map());
@@ -315,12 +319,22 @@ export const useMqttStore = defineStore("mqtt", () => {
   const initListeners = async () => {
     // 监听连接状态变化
     await listen<ConnectionState>("mqtt-connection-state", (event) => {
-      const { server_id, status, error, protocol_version, capabilities } = event.payload;
+      const {
+        server_id,
+        status,
+        error,
+        protocol_version,
+        capabilities,
+        reconnect_attempt,
+        retry_in_ms,
+      } = event.payload;
       connectionStates.value.set(server_id, {
         status: status as ConnectionStatus,
         error,
         protocolVersion: protocol_version,
         capabilities: capabilities ?? [],
+        reconnectAttempt: reconnect_attempt,
+        retryInMs: retry_in_ms,
       });
 
       if (status === "disconnected" || status === "error") {
@@ -562,6 +576,14 @@ export const useMqttStore = defineStore("mqtt", () => {
     return connectionStates.value.get(serverId)?.error;
   };
 
+  const getReconnectAttempt = (serverId: number): number | undefined => {
+    return connectionStates.value.get(serverId)?.reconnectAttempt;
+  };
+
+  const getRetryInMs = (serverId: number): number | undefined => {
+    return connectionStates.value.get(serverId)?.retryInMs;
+  };
+
   const getConnectionProtocolVersion = (
     serverId: number
   ): MqttProtocolVersion | undefined => {
@@ -679,6 +701,8 @@ export const useMqttStore = defineStore("mqtt", () => {
     getSubscriptionState,
     getConnectionStatus,
     getConnectionError,
+    getReconnectAttempt,
+    getRetryInMs,
     getConnectionProtocolVersion,
     supportsCapability,
     getServerMessages,
