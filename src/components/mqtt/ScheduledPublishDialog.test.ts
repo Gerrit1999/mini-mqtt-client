@@ -96,17 +96,20 @@ function createTestI18n() {
 
 // Mock mqtt store - use a factory that creates fresh mocks each time
 const mockPublish = vi.fn();
+const mockPublishRequest = vi.fn();
 
 vi.mock("@/stores/mqtt", () => ({
   useMqttStore: () => ({
-    publishTrackedMessage: (serverId: number, request: any) =>
-      mockPublish(
+    publishTrackedMessage: (serverId: number, request: any) => {
+      mockPublishRequest(serverId, request);
+      return mockPublish(
         serverId,
         request.topic,
         request.payload,
         request.qos,
         request.retain
-      ),
+      );
+    },
     reserveSeq: vi.fn(() => 0),
     getConnectionStatus: vi.fn(() => "connected"),
   }),
@@ -332,6 +335,42 @@ describe("ScheduledPublishDialog", () => {
   });
 
   describe("定时发布执行", () => {
+    it("应保留 Base64 模板格式交给发布 store", async () => {
+      const store = useTemplateStore();
+      store.templates = [
+        {
+          id: 4,
+          server_id: GLOBAL_TEMPLATE_SERVER_ID,
+          name: "二进制命令",
+          topic: "device/001/binary",
+          payload: "AP+AQQo=",
+          payload_type: "base64",
+          qos: 1,
+          retain: false,
+          use_count: 0,
+        },
+      ];
+      mockPublish.mockResolvedValue(undefined);
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const vm = wrapper.vm as any;
+      vm.config.loopMode = "count";
+      vm.config.loopCount = 1;
+      vm.selectedIds = [4];
+      await vm.handleStart();
+      await flushPromises();
+
+      expect(mockPublishRequest).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          topic: "device/001/binary",
+          payload: "AP+AQQo=",
+          format: "base64",
+        })
+      );
+    });
+
     it("开始发布后应切换到运行视图", async () => {
       setupTemplates();
       mockPublish.mockResolvedValue(undefined);

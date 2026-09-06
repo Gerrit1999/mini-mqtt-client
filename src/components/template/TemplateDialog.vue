@@ -105,6 +105,7 @@
             <el-radio-button value="json">JSON</el-radio-button>
             <el-radio-button value="text">TEXT</el-radio-button>
             <el-radio-button value="hex">HEX</el-radio-button>
+            <el-radio-button value="base64">Base64</el-radio-button>
           </el-radio-group>
         </div>
 
@@ -174,6 +175,8 @@ import {
   type CommandTemplate,
   GLOBAL_TEMPLATE_SERVER_ID
 } from '@/stores/template'
+import type { PayloadFormat } from '@/types/mqtt'
+import { decodePayload } from '@/utils/payloadCodec'
 
 const { t } = useI18n()
 
@@ -203,7 +206,7 @@ const form = ref({
   category: '',
   description: '',
   topic: '',
-  payload_type: 'json' as 'json' | 'text' | 'hex',
+  payload_type: 'json' as PayloadFormat,
   payload: '',
   qos: 0 as 0 | 1 | 2,
   retain: false
@@ -230,6 +233,8 @@ const payloadPlaceholder = computed(() => {
       return '{\n  "action": "start",\n  "value": 100\n}'
     case 'hex':
       return '48 65 6C 6C 6F 20 57 6F 72 6C 64'
+    case 'base64':
+      return 'SGVsbG8gV29ybGQ='
     default:
       return t('publish.payloadPlaceholder')
   }
@@ -278,7 +283,7 @@ watch(() => form.value.payload_type, () => {
 
 // 监听payload变化
 watch(() => form.value.payload, () => {
-  if (form.value.payload_type === 'json') {
+  if (form.value.payload_type !== 'text') {
     validatePayload()
   } else {
     payloadError.value = ''
@@ -302,26 +307,19 @@ function resetForm() {
 
 // 验证payload格式
 function validatePayload(): boolean {
-  if (form.value.payload_type === 'json' && form.value.payload.trim()) {
-    try {
-      JSON.parse(form.value.payload)
-      payloadError.value = ''
-      return true
-    } catch (e) {
-      payloadError.value = t('errors.jsonInvalid')
-      return false
-    }
-  } else if (form.value.payload_type === 'hex' && form.value.payload.trim()) {
-    const hex = form.value.payload.replace(/\s/g, '')
-    if (!/^[0-9A-Fa-f]*$/.test(hex)) {
-      payloadError.value = t('errors.hexInvalid')
-      return false
-    }
+  try {
+    decodePayload(form.value.payload, form.value.payload_type)
     payloadError.value = ''
     return true
+  } catch {
+    const errorKey = form.value.payload_type === 'json'
+      ? 'errors.jsonInvalid'
+      : form.value.payload_type === 'hex'
+        ? 'errors.hexInvalid'
+        : 'errors.base64Invalid'
+    payloadError.value = t(errorKey)
+    return false
   }
-  payloadError.value = ''
-  return true
 }
 
 // 格式化JSON

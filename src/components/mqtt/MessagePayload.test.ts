@@ -34,3 +34,17 @@ describe("MessagePayload JSON formatting", () => {
     );
   });
 });
+
+describe("MessagePayload Base64 display", () => {
+  it("renders arbitrary payload bytes as canonical Base64", () => {
+    const wrapper = mount(MessagePayload, {
+      props: {
+        payload: new Uint8Array([0x00, 0xff, 0x80, 0x41, 0x0a]),
+        payloadType: "base64",
+        preview: false,
+      },
+    });
+
+    expect(wrapper.find("pre").text()).toBe("AP+AQQo=");
+  });
+});

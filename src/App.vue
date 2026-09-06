@@ -82,6 +82,7 @@ import { useMqttStore } from "@/stores/mqtt";
 import { useServerStore } from "@/stores/server";
 import { useTemplateStore, type CommandTemplate, GLOBAL_TEMPLATE_SERVER_ID } from "@/stores/template";
 import { ElMessage } from "element-plus";
+import type { PayloadFormat } from "@/types/mqtt";
 
 const { t } = useI18n();
 
@@ -130,7 +131,7 @@ onMounted(() => {
 });
 
 // 处理保存模板请求
-function handleSaveTemplate(data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: string }) {
+function handleSaveTemplate(data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: PayloadFormat }) {
   if (!activeServerId.value) {
     ElMessage.warning(t('errors.selectServer'));
     return;
@@ -142,7 +143,7 @@ function handleSaveTemplate(data: { topic: string; payload: string; qos: number;
     name: "",
     topic: data.topic,
     payload: data.payload,
-    payload_type: data.payloadType as 'json' | 'text' | 'hex',
+    payload_type: data.payloadType,
     qos: data.qos as 0 | 1 | 2,
     retain: data.retain,
     use_count: 0,

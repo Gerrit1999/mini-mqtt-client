@@ -23,13 +23,14 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import MessageList from "./MessageList.vue";
 import PublishPanel from "./PublishPanel.vue";
+import type { PayloadFormat } from "@/types/mqtt";
 
 interface SaveTemplateData {
   topic: string;
   payload: string;
   qos: number;
   retain: boolean;
-  payloadType: string;
+  payloadType: PayloadFormat;
 }
 
 defineProps<{

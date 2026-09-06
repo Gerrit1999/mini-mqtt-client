@@ -263,6 +263,19 @@
           <div class="payload-header">
             <span class="section-title">{{ $t('publish.payload') }}</span>
             <div class="payload-actions">
+              <el-radio-group
+                v-model="detailPayloadFormat"
+                class="payload-format-selector"
+                size="small"
+              >
+                <el-radio-button
+                  v-for="option in detailPayloadFormatOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </el-radio-button>
+              </el-radio-group>
               <el-button size="small" text :icon="CopyDocument" @click="copyPayload">
                 {{ $t('messages.copyPayload') }}
               </el-button>
@@ -279,7 +292,7 @@
           <MessagePayload
             :payload="selectedMessage.payload"
             :preview="false"
-            :payload-type="selectedMessage.payload_type"
+            :payload-type="detailPayloadFormat"
             :format-json="formatJsonPayload"
             :highlight-keyword="searchKeyword.trim()"
             :search-match-case="searchMatchCase"
@@ -316,17 +329,23 @@ import { useMessageStore } from "@/stores/message";
 import { useAppStore } from "@/stores/app";
 import { useSubscriptionStore } from "@/stores/subscription";
 import MessagePayload from "./MessagePayload.vue";
-import type { MessageHistory, MqttMessage } from "@/types/mqtt";
+import type { MessageHistory, MqttMessage, PayloadFormat } from "@/types/mqtt";
+import {
+  decodePayload,
+  detectPayloadFormat,
+  encodePayload,
+  isValidUtf8,
+} from "@/utils/payloadCodec";
 
 const { t } = useI18n();
 
-type PayloadFormat = "json" | "binary" | "text";
 type DirectionFilter = "all" | "publish" | "receive";
 type ExportFormat = "json" | "csv";
 interface DerivedMessageMeta {
   key: string;
   payloadText: string;
   payloadHex?: string;
+  payloadBase64?: string;
   format: PayloadFormat;
   timestampValue: number;
 }
@@ -395,48 +414,63 @@ const selectedTopics = ref<string[]>([]);
 const formatJsonPayload = ref(false);
 const showDetailDialog = ref(false);
 const selectedMessage = ref<MqttMessage | null>(null);
+const detailPayloadFormat = ref<PayloadFormat>("text");
+const detailPayloadFormatOptions = [
+  { label: "TEXT", value: "text" },
+  { label: "JSON", value: "json" },
+  { label: "HEX", value: "hex" },
+  { label: "Base64", value: "base64" },
+] satisfies Array<{ label: string; value: PayloadFormat }>;
 
 function mapPayloadType(
   payloadFormat?: MessageHistory["payload_format"]
 ): MqttMessage["payload_type"] | undefined {
-  if (payloadFormat === "json" || payloadFormat === "hex" || payloadFormat === "text") {
+  if (
+    payloadFormat === "json" ||
+    payloadFormat === "hex" ||
+    payloadFormat === "base64" ||
+    payloadFormat === "text"
+  ) {
     return payloadFormat;
   }
   return undefined;
 }
 
-function historyPayloadToBytes(
+function decodeHistoryPayload(
   payload?: string,
   payloadFormat?: MessageHistory["payload_format"]
-): Uint8Array | undefined {
-  if (payload === undefined) return undefined;
-  if (payloadFormat !== "hex") {
-    return textEncoder.encode(payload);
+): Pick<MqttMessage, "payload" | "payload_type"> {
+  if (payload === undefined) return {};
+
+  const payloadType = mapPayloadType(payloadFormat);
+  if (!payloadType) {
+    return { payload: textEncoder.encode(payload) };
   }
 
-  const cleanHex = payload.replace(/\s/g, "");
-  if (cleanHex.length === 0 || cleanHex.length % 2 !== 0 || /[^0-9a-fA-F]/.test(cleanHex)) {
-    return textEncoder.encode(payload);
+  try {
+    return {
+      payload: decodePayload(payload, payloadType),
+      payload_type: payloadType,
+    };
+  } catch {
+    return {
+      payload: textEncoder.encode(payload),
+      payload_type: "text",
+    };
   }
-
-  const bytes = new Uint8Array(cleanHex.length / 2);
-  for (let i = 0; i < cleanHex.length; i += 2) {
-    bytes[i / 2] = parseInt(cleanHex.slice(i, i + 2), 16);
-  }
-  return bytes;
 }
 
 function historyToRealtimeMessage(message: MessageHistory): MqttMessage {
+  const decodedPayload = decodeHistoryPayload(message.payload, message.payload_format);
   return {
     id: message.id,
     server_id: message.server_id,
     direction: message.direction as "publish" | "receive",
     topic: message.topic,
-    payload: historyPayloadToBytes(message.payload, message.payload_format),
+    ...decodedPayload,
     qos: message.qos as 0 | 1 | 2,
     retain: message.retain,
     timestamp: message.created_at,
-    payload_type: mapPayloadType(message.payload_format),
     operation_id: message.operation_id,
     publish_status: message.publish_status,
     packet_id: message.packet_id,
@@ -476,14 +510,7 @@ function getPublishStatusTagType(
 
 function payloadToBytes(payload: string | Uint8Array | undefined): Uint8Array {
   if (!payload) return new Uint8Array();
-  if (payload instanceof Uint8Array) return payload;
-  return textEncoder.encode(payload);
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
-    .join(" ");
+  return typeof payload === "string" ? textEncoder.encode(payload) : payload;
 }
 
 function formatNumberWithCommas(value: number): string {
@@ -503,18 +530,13 @@ function formatPayloadSize(payload: string | Uint8Array | undefined): string {
 
 function buildDerivedMessageMeta(msg: MqttMessage): DerivedMessageMeta {
   const payloadBytes = payloadToBytes(msg.payload);
-  const payloadText =
-    msg.payload instanceof Uint8Array ? textDecoder.decode(msg.payload) : String(msg.payload ?? "");
+  const payloadText = textDecoder.decode(payloadBytes);
 
   let format: PayloadFormat;
-  if (msg.payload_type === "hex") {
-    format = "binary";
-  } else if (msg.payload_type === "json") {
-    format = "json";
-  } else if (msg.payload_type === "text") {
-    format = "text";
+  if (msg.payload_type) {
+    format = msg.payload_type;
   } else {
-    format = detectPayloadFormat(payloadText, payloadBytes);
+    format = detectPayloadFormat(payloadBytes);
   }
 
   return {
@@ -540,8 +562,19 @@ function getDerivedPayloadHex(msg: MqttMessage): string {
     return meta.payloadHex;
   }
 
-  meta.payloadHex = bytesToHex(payloadToBytes(msg.payload));
+  const compactHex = encodePayload(payloadToBytes(msg.payload), "hex");
+  meta.payloadHex = compactHex.match(/.{2}/g)?.join(" ") ?? "";
   return meta.payloadHex;
+}
+
+function getDerivedPayloadBase64(msg: MqttMessage): string {
+  const meta = getDerivedMessageMeta(msg);
+  if (meta.payloadBase64 !== undefined) {
+    return meta.payloadBase64;
+  }
+
+  meta.payloadBase64 = encodePayload(payloadToBytes(msg.payload), "base64");
+  return meta.payloadBase64;
 }
 
 function compareMessages(a: MqttMessage, b: MqttMessage): number {
@@ -663,7 +696,8 @@ function applyMessageFilters(source: MqttMessage[]): MqttMessage[] {
       return (
         matchesSearchField(m.topic, regex) ||
         matchesSearchField(meta.payloadText, regex) ||
-        matchesSearchField(getDerivedPayloadHex(m), regex)
+        matchesSearchField(getDerivedPayloadHex(m), regex) ||
+        matchesSearchField(getDerivedPayloadBase64(m), regex)
       );
     });
   }
@@ -772,48 +806,6 @@ function highlightText(text: string): string {
   return highlighted;
 }
 
-// 检测 payload 格式（自动检测，用于接收的消息）
-function detectPayloadFormat(
-  payload: string | Uint8Array | undefined,
-  bytesArg?: Uint8Array
-): PayloadFormat {
-  if (!payload) return "text";
-
-  const str = typeof payload === "string" ? payload : textDecoder.decode(payload);
-  const bytes = bytesArg ?? payloadToBytes(payload);
-
-  // 尝试检测 JSON
-  if (str.trim()) {
-    const trimmed = str.trim();
-    if (
-      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-      (trimmed.startsWith("[") && trimmed.endsWith("]"))
-    ) {
-      try {
-        JSON.parse(trimmed);
-        return "json";
-      } catch {
-        // 不是有效的 JSON
-      }
-    }
-  }
-
-  // 检测二进制数据
-  if (bytes.length > 0) {
-    let nonPrintableCount = 0;
-    for (const byte of bytes) {
-      if ((byte < 32 || byte > 126) && byte !== 9 && byte !== 10 && byte !== 13) {
-        nonPrintableCount++;
-      }
-    }
-    if (nonPrintableCount / bytes.length > 0.1) {
-      return "binary";
-    }
-  }
-
-  return "text";
-}
-
 // 获取消息的显示格式（优先使用保存的类型，否则自动检测）
 function getMessageFormat(msg: MqttMessage): PayloadFormat {
   return getDerivedMessageMeta(msg).format;
@@ -825,7 +817,8 @@ function getFormatTagType(
 ): "info" | "success" | "warning" {
   const types: Record<PayloadFormat, "info" | "success" | "warning"> = {
     json: "success",
-    binary: "warning",
+    hex: "warning",
+    base64: "warning",
     text: "info",
   };
   return types[format];
@@ -833,10 +826,10 @@ function getFormatTagType(
 
 // 获取格式标签文本
 function getFormatLabel(format: PayloadFormat, _msg?: MqttMessage): string {
-  // binary 格式统一显示为 HEX
   const labels: Record<PayloadFormat, string> = {
     json: "JSON",
-    binary: "HEX",
+    hex: "HEX",
+    base64: "BASE64",
     text: "TEXT",
   };
   return labels[format];
@@ -912,16 +905,18 @@ const handleClear = async () => {
 
 function showDetail(message: MqttMessage) {
   selectedMessage.value = message;
+  detailPayloadFormat.value = getMessageFormat(message);
   showDetailDialog.value = true;
+}
+
+function encodeMessagePayload(msg: MqttMessage, format: PayloadFormat): string {
+  if (format === "hex") return getDerivedPayloadHex(msg);
+  return encodePayload(payloadToBytes(msg.payload), format);
 }
 
 function copyPayload() {
   if (selectedMessage.value) {
-    const format = getMessageFormat(selectedMessage.value);
-    // 二进制数据复制为 HEX 格式
-    const payload = format === "binary" 
-      ? getDerivedPayloadHex(selectedMessage.value)
-      : getDerivedMessageMeta(selectedMessage.value).payloadText;
+    const payload = encodeMessagePayload(selectedMessage.value, detailPayloadFormat.value);
     navigator.clipboard.writeText(payload);
     ElMessage.success(t('success.copied'));
   }
@@ -939,18 +934,14 @@ async function copyTopic() {
 
 function copyToPublish() {
   if (selectedMessage.value) {
-    const format = getMessageFormat(selectedMessage.value);
-    // 二进制数据使用 HEX 格式复制到发布面板
-    const payload = format === "binary" 
-      ? getDerivedPayloadHex(selectedMessage.value)
-      : getDerivedMessageMeta(selectedMessage.value).payloadText;
+    const format = detailPayloadFormat.value;
+    const payload = encodeMessagePayload(selectedMessage.value, format);
     appStore.setCopyToPublish({
       topic: selectedMessage.value.topic,
       payload: payload,
       qos: selectedMessage.value.qos,
       retain: selectedMessage.value.retain,
-      // 二进制数据设置为 hex 类型
-      payloadType: format === "binary" ? "hex" : format,
+      payloadType: format,
     });
     ElMessage.success(t('messages.copied'));
     showDetailDialog.value = false;
@@ -965,6 +956,8 @@ interface ExportMessageItem {
   retain: boolean;
   payloadType: PayloadFormat;
   payloadText: string;
+  payloadTextEncoding: "utf-8" | "utf-8-lossy";
+  payloadBase64: string;
   payloadHex?: string;
   scriptError?: string;
 }
@@ -972,6 +965,7 @@ interface ExportMessageItem {
 function toExportMessage(msg: MqttMessage): ExportMessageItem {
   const meta = getDerivedMessageMeta(msg);
   const format = meta.format;
+  const payloadBytes = payloadToBytes(msg.payload);
   const item: ExportMessageItem = {
     timestamp: msg.timestamp ?? "",
     direction: msg.direction,
@@ -980,9 +974,11 @@ function toExportMessage(msg: MqttMessage): ExportMessageItem {
     retain: msg.retain,
     payloadType: format,
     payloadText: meta.payloadText,
+    payloadTextEncoding: isValidUtf8(payloadBytes) ? "utf-8" : "utf-8-lossy",
+    payloadBase64: getDerivedPayloadBase64(msg),
     scriptError: msg.scriptError,
   };
-  if (format === "binary") {
+  if (format === "hex") {
     item.payloadHex = getDerivedPayloadHex(msg);
   }
   return item;
@@ -1037,6 +1033,8 @@ async function exportAsCsv(items: ExportMessageItem[]): Promise<string | null> {
     "payloadText",
     "payloadHex",
     "scriptError",
+    "payloadTextEncoding",
+    "payloadBase64",
   ].join(",");
   const rows = items.map((item) =>
     [
@@ -1049,6 +1047,8 @@ async function exportAsCsv(items: ExportMessageItem[]): Promise<string | null> {
       toCsvValue(item.payloadText),
       toCsvValue(item.payloadHex ?? ""),
       toCsvValue(item.scriptError ?? ""),
+      toCsvValue(item.payloadTextEncoding),
+      toCsvValue(item.payloadBase64),
     ].join(",")
   );
   return saveContentToFile([header, ...rows].join("\n"), "csv");

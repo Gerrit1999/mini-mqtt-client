@@ -2332,7 +2332,6 @@ name = "mini-mqtt-client"
 version = "1.7.3"
 dependencies = [
  "chrono",
- "hex",
  "parking_lot",
  "pem",
  "pkcs8",

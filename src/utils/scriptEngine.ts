@@ -1,5 +1,6 @@
 import type { Script } from "@/stores/script";
 import { errorHandler, ErrorType } from "@/utils/errorHandler";
+import { decodePayload, encodePayload } from "@/utils/payloadCodec";
 import { deflate, gzip, inflate, ungzip } from "pako";
 
 /**
@@ -24,14 +25,14 @@ class CryptoUtils {
    * Uint8Array 转 Base64
    */
   static bytesToBase64(bytes: Uint8Array): string {
-    return btoa(String.fromCharCode(...bytes));
+    return encodePayload(bytes, "base64");
   }
 
   /**
    * Base64 转 Uint8Array
    */
   static base64ToBytes(base64: string): Uint8Array {
-    return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    return decodePayload(base64, "base64");
   }
 
   /**

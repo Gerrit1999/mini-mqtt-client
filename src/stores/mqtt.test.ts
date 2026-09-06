@@ -343,6 +343,62 @@ describe("useMqttStore", () => {
         packet_id: 41,
       });
     });
+
+    it("Base64 发布使用同一组原始字节更新 pending 并调用后端", async () => {
+      const store = useMqttStore();
+      mockedInvoke.mockResolvedValue({
+        id: 10,
+        server_id: 1,
+        direction: "publish",
+        topic: "binary/topic",
+        payload: "AP+AQQo=",
+        payload_format: "base64",
+        qos: 0,
+        retain: false,
+        publish_status: "sent",
+      });
+
+      const publishPromise = store.publishTrackedMessage(1, {
+        topic: "binary/topic",
+        payload: " AP+A\nQQo ",
+        qos: 0,
+        retain: false,
+        format: "base64",
+      });
+
+      expect(Array.from(store.getServerMessages(1)[0].payload ?? [])).toEqual([
+        0x00, 0xff, 0x80, 0x41, 0x0a,
+      ]);
+
+      await publishPromise;
+
+      expect(mockedInvoke).toHaveBeenCalledWith("publish_message", {
+        serverId: 1,
+        message: expect.objectContaining({
+          topic: "binary/topic",
+          payload: " AP+A\nQQo ",
+          payload_bytes: [0x00, 0xff, 0x80, 0x41, 0x0a],
+          format: "base64",
+        }),
+      });
+    });
+
+    it("非法 Base64 在创建 pending 或调用后端前失败", async () => {
+      const store = useMqttStore();
+
+      await expect(
+        store.publishTrackedMessage(1, {
+          topic: "binary/topic",
+          payload: "TQ=",
+          qos: 0,
+          retain: false,
+          format: "base64",
+        })
+      ).rejects.toThrow("Invalid BASE64 payload");
+
+      expect(store.getServerMessages(1)).toEqual([]);
+      expect(mockedInvoke).not.toHaveBeenCalled();
+    });
   });
 
   describe("queueMessage seq", () => {

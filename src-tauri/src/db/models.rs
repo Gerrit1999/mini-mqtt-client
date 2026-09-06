@@ -73,7 +73,7 @@ pub struct MessageHistory {
     pub topic: String,
     pub payload: Option<String>,
     #[serde(default)]
-    pub payload_format: Option<String>, // "text", "json", "hex"
+    pub payload_format: Option<String>, // "text", "json", "hex", "base64"
     pub qos: i32,
     pub retain: bool,
     pub created_at: Option<String>,
@@ -103,9 +103,10 @@ pub struct PublishPayload {
     pub operation_id: String,
     pub topic: String,
     pub payload: String,
+    pub payload_bytes: Vec<u8>,
     pub qos: i32,
     pub retain: bool,
-    pub format: String, // "json" | "hex" | "text"
+    pub format: String, // "json" | "hex" | "text" | "base64"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,7 +117,7 @@ pub struct CommandTemplate {
     pub name: String,
     pub topic: String,
     pub payload: String,
-    pub payload_type: String, // "json" | "hex" | "text"
+    pub payload_type: String, // "json" | "hex" | "text" | "base64"
     pub qos: i32,
     pub retain: bool,
     pub description: Option<String>,
