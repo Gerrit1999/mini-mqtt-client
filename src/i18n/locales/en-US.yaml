@@ -22,10 +22,10 @@ header:
   connecting: Connecting
   settings: Settings
   connectionError:
-    connectionLost: Connection lost: {details}
-    connectFailed: Connection attempt failed: {details}
-    connectionRefused: Connection refused: {details}
-    unknown: Connection error: {details}
+    connectionLost: "Connection lost: {details}"
+    connectFailed: "Connection attempt failed: {details}"
+    connectionRefused: "Connection refused: {details}"
+    unknown: "Connection error: {details}"
   status:
     connected: Connected
     connecting: Connecting...
