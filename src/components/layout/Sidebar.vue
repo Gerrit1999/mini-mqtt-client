@@ -31,7 +31,13 @@
             <span class="section-title">{{ $t('sidebar.server') }}</span>
           </div>
           <el-dropdown trigger="click" @command="handleCreateMenuCommand">
-            <el-button type="primary" size="small" :icon="Plus" circle />
+            <el-button
+              class="section-add-button"
+              type="primary"
+              size="small"
+              :icon="Plus"
+              circle
+            />
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="connection">
@@ -198,6 +204,7 @@
             <span class="section-title">{{ $t('sidebar.subscription') }}</span>
           </div>
           <el-button
+            class="section-add-button"
             type="primary"
             size="small"
             :icon="Plus"
@@ -982,6 +989,19 @@ const handleConfirmSubscription = async () => {
   letter-spacing: 0.5px;
   color: var(--app-text-secondary);
   transition: color 0.2s ease;
+}
+
+.section-add-button.el-button.is-circle {
+  flex: 0 0 var(--app-control-height-xs);
+  width: var(--app-control-height-xs);
+  min-width: var(--app-control-height-xs);
+  max-width: var(--app-control-height-xs);
+  height: var(--app-control-height-xs);
+  min-height: var(--app-control-height-xs);
+  max-height: var(--app-control-height-xs);
+  padding: 0;
+  border-radius: 50%;
+  font-size: 13px;
 }
 
 .server-list {

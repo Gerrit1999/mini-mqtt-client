@@ -737,7 +737,9 @@ const handlePublish = async () => {
   top: 6px;
   right: 6px;
   width: 28px;
+  min-width: 28px;
   height: 28px;
+  min-height: 28px;
   margin: 0;
   padding: 0;
   border-radius: 5px;

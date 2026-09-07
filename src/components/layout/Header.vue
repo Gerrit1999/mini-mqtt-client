@@ -289,6 +289,15 @@ const handleSettings = () => {
   gap: 8px;
 }
 
+.header-left,
+.header-center {
+  :deep(.el-tag) {
+    height: var(--app-control-height-small);
+    padding: 0 var(--app-control-padding-x-small);
+    border-radius: var(--app-control-radius);
+  }
+}
+
 .header-right {
   display: flex;
   align-items: center;
