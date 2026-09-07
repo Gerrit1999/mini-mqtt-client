@@ -387,6 +387,9 @@ errors:
   publishFailed: Publish failed
   subscribeFailed: Subscribe failed
   unsubscribeFailed: Unsubscribe failed
+  subscriptionNotAuthorized: 'Broker denied subscription to topic "{topic}" (QoS {qos}): this account is not authorized (NotAuthorized). Check the Broker ACL or use an allowed topic filter.'
+  subscribeFailedDetail: 'Failed to subscribe to topic "{topic}" (QoS {qos}): {reason}'
+  unsubscribeFailedDetail: 'Failed to unsubscribe from topic "{topic}": {reason}'
   saveFailed: Save failed
   deleteFailed: Delete failed
   loadFailed: Load failed

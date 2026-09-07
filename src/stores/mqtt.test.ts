@@ -4,6 +4,10 @@ import { useMqttStore } from "./mqtt";
 import { invoke } from "@tauri-apps/api/core";
 import { ElMessage } from "element-plus";
 
+const { translate } = vi.hoisted(() => ({
+  translate: vi.fn((key: string) => key),
+}));
+
 // 保存 mqtt-message 的 listener 回调
 let mqttMessageListener: ((event: { payload: any }) => Promise<void>) | null = null;
 let connectionStateListener: ((event: { payload: any }) => void) | null = null;
@@ -43,7 +47,7 @@ vi.mock("element-plus", async (importOriginal) => {
 vi.mock("@/i18n", () => ({
   default: {
     global: {
-      t: vi.fn((key: string) => key),
+      t: translate,
     },
   },
 }));
@@ -226,8 +230,43 @@ describe("useMqttStore", () => {
         operation_id: "op-2",
       });
       expect(ElMessage.error).toHaveBeenCalledWith({
-        message: "errors.subscribeFailed: Subscription acknowledgement timed out",
-        duration: 5000,
+        message: "errors.subscribeFailedDetail",
+        duration: 8000,
+        showClose: true,
+      });
+      expect(translate).toHaveBeenCalledWith("errors.subscribeFailedDetail", {
+        topic: "sensor/+",
+        qos: 1,
+        reason: "Subscription acknowledgement timed out",
+      });
+    });
+
+    it("订阅无权限时展示 Topic、QoS 和 ACL 建议而不是连接失败", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+
+      subscriptionStateListener!({
+        payload: {
+          server_id: 1,
+          topic: "#",
+          operation: "subscribe",
+          status: "failed",
+          requested_qos: 0,
+          error: "Broker rejected subscription: [NotAuthorized]",
+          operation_id: "op-not-authorized",
+        },
+      });
+
+      expect(store.getConnectionStatus(1)).toBe("disconnected");
+      expect(translate).toHaveBeenCalledWith(
+        "errors.subscriptionNotAuthorized",
+        { topic: "#", qos: 0 }
+      );
+      expect(translate).not.toHaveBeenCalledWith("errors.connectFailed");
+      expect(ElMessage.error).toHaveBeenCalledWith({
+        message: "errors.subscriptionNotAuthorized",
+        duration: 8000,
+        showClose: true,
       });
     });
 

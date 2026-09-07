@@ -387,6 +387,9 @@ errors:
   publishFailed: 发布失败
   subscribeFailed: 订阅失败
   unsubscribeFailed: 取消订阅失败
+  subscriptionNotAuthorized: 'Broker 拒绝订阅 Topic "{topic}"（QoS {qos}）：当前账号没有权限（NotAuthorized）。请检查 Broker ACL，或改用账号允许的 Topic Filter。'
+  subscribeFailedDetail: '订阅 Topic "{topic}"（QoS {qos}）失败：{reason}'
+  unsubscribeFailedDetail: '取消订阅 Topic "{topic}" 失败：{reason}'
   saveFailed: 保存失败
   deleteFailed: 删除失败
   loadFailed: 加载失败
