@@ -1,46 +1,95 @@
 <template>
   <div class="publish-panel-wrapper">
-    <div class="publish-panel app-card">
+    <div
+      class="publish-panel app-card"
+      :class="[
+        `is-${props.layout}`,
+        { 'is-collapsed': props.collapsed },
+      ]"
+    >
       <div class="panel-header">
-      <span class="panel-title">
-        <el-icon><Promotion /></el-icon>
-        {{ $t('publish.send') }}
-      </span>
-      <div class="header-actions">
-        <el-select v-model="payloadFormat" size="small" style="width: 90px">
-          <el-option
-            v-for="opt in formatOptions"
-            :key="opt.value"
-            :label="opt.label"
-            :value="opt.value"
-          />
-        </el-select>
-        <el-select v-model="publishData.qos" size="small" style="width: 100px">
-          <el-option :value="0" label="QoS 0" />
-          <el-option :value="1" label="QoS 1" />
-          <el-option :value="2" label="QoS 2" />
-        </el-select>
-        <el-checkbox v-model="publishData.retain">Retain</el-checkbox>
-      </div>
-    </div>
-
-    <div class="publish-form">
-      <div class="form-row payload-row">
-        <!-- 左列：Topic 输入 -->
-        <div class="topic-input">
-          <el-input
-            v-model="publishData.topic"
-            :placeholder="$t('publish.topicPlaceholder')"
-            size="default"
+        <span class="panel-title">
+          <el-icon><Promotion /></el-icon>
+          <span class="panel-title-label">{{ $t('publish.title') }}</span>
+        </span>
+        <div class="panel-header-actions">
+          <div v-if="!props.collapsed" class="header-actions">
+            <div class="publish-option format-option">
+              <el-select v-model="payloadFormat">
+                <el-option
+                  v-for="opt in formatOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+            </div>
+            <div class="publish-option qos-option">
+              <el-select v-model="publishData.qos">
+                <el-option :value="0" label="QoS 0" />
+                <el-option :value="1" label="QoS 1" />
+                <el-option :value="2" label="QoS 2" />
+              </el-select>
+            </div>
+            <div class="retain-option">
+              <el-checkbox v-model="publishData.retain">Retain</el-checkbox>
+            </div>
+          </div>
+          <el-tooltip
+            :content="props.collapsed ? $t('publish.expandPanel') : $t('publish.collapsePanel')"
+            placement="top"
           >
-            <template #prefix>
-              <el-icon><Position /></el-icon>
-            </template>
-          </el-input>
+            <el-button
+              text
+              class="collapse-button"
+              :icon="collapseIcon"
+              :aria-label="props.collapsed ? $t('publish.expandPanel') : $t('publish.collapsePanel')"
+              :aria-expanded="!props.collapsed"
+              @click="emit('toggleCollapse')"
+            />
+          </el-tooltip>
+        </div>
+      </div>
+
+      <div v-if="!props.collapsed" class="publish-form">
+        <div class="topic-row">
+          <div class="topic-input">
+            <el-input
+              v-model="publishData.topic"
+              :placeholder="$t('publish.topicPlaceholder')"
+              size="default"
+            >
+              <template #prefix>
+                <span class="topic-prefix">Topic</span>
+              </template>
+            </el-input>
+          </div>
+
+          <el-button
+            class="btn-timed-message"
+            :icon="props.timedMessageRunning ? Loading : Timer"
+            :type="props.timedMessageRunning ? 'danger' : 'default'"
+            :class="{ 'is-running': props.timedMessageRunning }"
+            @click="handleTimedMessage"
+          >
+            {{ props.timedMessageRunning ? $t('timedMessage.stop') : $t('publish.timedMessage') }}
+          </el-button>
+
+          <el-button
+            class="btn-scheduled-publish"
+            :icon="props.scheduledPublishRunning ? Loading : Timer"
+            :type="props.scheduledPublishRunning ? 'primary' : 'default'"
+            :class="{ 'is-running': props.scheduledPublishRunning }"
+            @click="handleScheduledPublish"
+          >
+            {{ props.scheduledPublishRunning ? $t('scheduled.running') : $t('publish.scheduledPublish') }}
+          </el-button>
         </div>
 
-        <!-- 左列：Payload 输入 -->
-        <div class="payload-input-wrapper">
+        <div
+          class="payload-input-wrapper"
+          :class="{ 'has-format-action': payloadFormat === 'json' }"
+        >
           <el-input
             v-model="publishData.payload"
             type="textarea"
@@ -48,39 +97,40 @@
             resize="none"
             class="payload-input"
           />
+          <el-tooltip
+            v-if="payloadFormat === 'json'"
+            :content="$t('publish.formatJson')"
+            placement="top"
+          >
+            <el-button
+              text
+              class="payload-format-button"
+              :icon="MagicStick"
+              :aria-label="$t('publish.formatJson')"
+              @click="formatJsonPayload"
+            />
+          </el-tooltip>
         </div>
 
-        <!-- 右列：定时消息 -->
-        <el-button
-          class="btn-timed-message"
-          :icon="props.timedMessageRunning ? Loading : Timer"
-          :type="props.timedMessageRunning ? 'danger' : 'default'"
-          :class="{ 'is-running': props.timedMessageRunning }"
-          @click="handleTimedMessage"
-        >
-          {{ props.timedMessageRunning ? $t('timedMessage.stop') : $t('publish.timedMessage') }}
-        </el-button>
-
-        <!-- 右列：定时发布 -->
-        <el-button
-          class="btn-scheduled-publish"
-          :icon="props.scheduledPublishRunning ? Loading : Timer"
-          :type="props.scheduledPublishRunning ? 'primary' : 'default'"
-          :class="{ 'is-running': props.scheduledPublishRunning }"
-          @click="handleScheduledPublish"
-        >
-          {{ props.scheduledPublishRunning ? $t('scheduled.running') : $t('publish.scheduledPublish') }}
-        </el-button>
-
-        <!-- 右列底：模板/收藏/发送 -->
         <div class="action-row-bottom">
           <el-tooltip :content="$t('publish.openTemplates')" placement="top">
-            <el-button :icon="FolderOpened" @click="handleOpenTemplates" />
+            <el-button
+              class="icon-action"
+              :icon="FolderOpened"
+              :aria-label="$t('publish.openTemplates')"
+              @click="handleOpenTemplates"
+            />
           </el-tooltip>
           <el-tooltip :content="$t('publish.saveTemplate')" placement="top">
-            <el-button :icon="Star" @click="handleSaveTemplate" />
+            <el-button
+              class="icon-action"
+              :icon="Star"
+              :aria-label="$t('publish.saveTemplate')"
+              @click="handleSaveTemplate"
+            />
           </el-tooltip>
           <el-button
+            class="send-button"
             type="primary"
             :icon="Promotion"
             :loading="publishing"
@@ -92,7 +142,6 @@
         </div>
       </div>
     </div>
-  </div>
 
     <!-- 定时消息配置对话框 -->
     <el-dialog
@@ -126,7 +175,18 @@
 <script setup lang="ts">
 import { reactive, ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Promotion, Position, Star, FolderOpened, Timer, Loading } from "@element-plus/icons-vue";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Promotion,
+  Star,
+  FolderOpened,
+  Timer,
+  Loading,
+  MagicStick,
+} from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { invoke } from "@tauri-apps/api/core";
 import { useServerStore } from "@/stores/server";
@@ -139,13 +199,25 @@ import { validatePublishTopic, handleMqttError } from "@/utils/mqttErrorHandler"
 import { handleScriptError } from "@/utils/errorHandler";
 import { decodePayload } from "@/utils/payloadCodec";
 import type { PayloadFormat } from "@/types/mqtt";
+import type { ContentLayout } from "@/stores/app";
 
 const { t } = useI18n();
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
+  collapsed: boolean;
+  layout?: ContentLayout;
   scheduledPublishRunning: boolean;
   timedMessageRunning: boolean;
-}>();
+}>(), {
+  layout: "horizontal",
+});
+
+const collapseIcon = computed(() => {
+  if (props.layout === "horizontal") {
+    return props.collapsed ? ArrowLeft : ArrowRight;
+  }
+  return props.collapsed ? ArrowUp : ArrowDown;
+});
 
 const formatOptions = [
   { label: "JSON", value: "json" },
@@ -172,6 +244,7 @@ const emit = defineEmits<{
   saveTemplate: [data: { topic: string; payload: string; qos: number; retain: boolean; payloadType: PayloadFormat }]
   openTemplates: []
   scheduledPublish: []
+  toggleCollapse: []
   'update:timedMessageRunning': [value: boolean]
 }>();
 
@@ -232,6 +305,16 @@ watch(
 const payloadPlaceholder = computed(() => {
   return t('publish.payloadPlaceholder');
 });
+
+function formatJsonPayload() {
+  if (!publishData.payload.trim()) return;
+
+  try {
+    publishData.payload = JSON.stringify(JSON.parse(publishData.payload), null, 2);
+  } catch {
+    ElMessage.warning(t("errors.jsonInvalid"));
+  }
+}
 
 function validatePayload(): boolean {
   try {
@@ -449,84 +532,246 @@ const handlePublish = async () => {
 </script>
 
 <style scoped lang="scss">
+.publish-panel-wrapper {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .publish-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
+  min-height: 52px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--app-border-color);
 }
 
 .panel-title {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
-  font-weight: 600;
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--app-text-color);
+
+  .el-icon {
+    color: var(--primary-color);
+  }
+}
+
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
+}
+
+.publish-option,
+.retain-option {
+  height: 32px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 6px;
+  background-color: var(--card-bg);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.publish-option {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+
+  &:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--primary-light);
+  }
+
+  :deep(.el-select) {
+    height: 100%;
+  }
+
+  :deep(.el-select__wrapper) {
+    min-height: 30px;
+    padding-left: 6px;
+    border-radius: 0;
+    box-shadow: none !important;
+    background-color: transparent;
+  }
+}
+
+.format-option {
+  width: 112px;
+}
+
+.qos-option {
+  width: 120px;
+}
+
+.retain-option {
+  display: flex;
+  align-items: center;
+  min-width: 96px;
+  padding: 0 12px;
+
+  :deep(.el-checkbox) {
+    height: 100%;
+    margin-right: 0;
+  }
+
+  :deep(.el-checkbox__label) {
+    color: var(--app-text-color);
+  }
+}
+
+.collapse-button {
+  width: 32px;
+  height: 32px;
+  margin-left: 0;
+  color: var(--app-text-secondary);
+}
+
+.publish-panel.is-collapsed .panel-header {
+  border-bottom: 0;
+}
+
+.publish-panel.is-horizontal.is-collapsed .panel-header {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+}
+
+.publish-panel.is-horizontal.is-collapsed .panel-title {
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
+
+.publish-panel.is-horizontal.is-collapsed .panel-title-label {
+  display: none;
+}
+
+.publish-panel.is-horizontal.is-collapsed .panel-header-actions {
+  width: auto;
 }
 
 .publish-form {
-  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 16px 12px;
   flex: 1;
   min-height: 0;
 }
 
-.payload-row {
+.topic-row {
   display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto auto 1fr;
-  gap: 10px;
-  height: 100%;
-  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
 }
 
 .topic-input {
-  grid-column: 1;
-  grid-row: 1;
+  min-width: 0;
+
+  :deep(.el-input__wrapper) {
+    min-height: 32px;
+    border-radius: 6px;
+  }
+}
+
+.btn-timed-message,
+.btn-scheduled-publish {
+  min-width: 112px;
+  height: 32px;
+  margin-left: 0 !important;
+  border-radius: 6px;
+}
+
+.topic-prefix {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-text-secondary);
+
+  &::after {
+    width: 1px;
+    height: 16px;
+    background-color: var(--app-border-color);
+    content: "";
+  }
 }
 
 .payload-input-wrapper {
-  grid-column: 1;
-  grid-row: 2 / 4;
+  position: relative;
+  flex: 1;
   min-height: 0;
 }
 
-.btn-timed-message {
-  grid-column: 2;
-  grid-row: 1;
-}
+.payload-format-button {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  border-radius: 5px;
+  color: var(--app-text-secondary);
+  background-color: var(--card-bg);
 
-.btn-scheduled-publish {
-  grid-column: 2;
-  grid-row: 2;
-  margin-left: 0 !important;
+  &:hover,
+  &:focus-visible {
+    color: var(--primary-color);
+    background-color: var(--primary-light);
+  }
 }
 
 .action-row-bottom {
-  grid-column: 2;
-  grid-row: 3;
   display: flex;
-  gap: 10px;
-  align-self: end;
+  justify-content: flex-end;
+  gap: 8px;
 
   .el-button {
-    flex: 1;
+    height: 32px;
+    margin-left: 0;
+    border-radius: 6px;
   }
+}
+
+.icon-action {
+  width: 32px;
+  padding: 0;
+}
+
+.send-button {
+  width: 160px;
 }
 
 .payload-input {
@@ -536,9 +781,14 @@ const handlePublish = async () => {
 .payload-input :deep(.el-textarea),
 .payload-input :deep(.el-textarea__inner) {
   height: 100%;
-  min-height: 96px;
+  min-height: 72px;
+  padding: 10px 12px;
+  border-radius: 6px;
 }
 
+.payload-input-wrapper.has-format-action .payload-input :deep(.el-textarea__inner) {
+  padding-right: 44px;
+}
 
 .is-running {
   :deep(.el-icon) {
@@ -555,5 +805,66 @@ const handlePublish = async () => {
   margin-left: 8px;
   font-size: 12px;
   color: var(--app-text-secondary);
+}
+
+@container (max-width: 600px) {
+  .publish-panel:not(.is-collapsed) .panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .publish-panel:not(.is-collapsed) .header-actions {
+    width: 100%;
+  }
+
+  .publish-panel:not(.is-collapsed) .panel-header-actions {
+    width: 100%;
+  }
+
+  .publish-option,
+  .retain-option {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .topic-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .topic-input {
+    grid-column: 1 / -1;
+  }
+
+  .btn-timed-message,
+  .btn-scheduled-publish {
+    min-width: 0;
+  }
+
+}
+
+@container (max-width: 380px) {
+  .publish-panel:not(.is-collapsed) .header-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    flex: 1;
+  }
+
+  .publish-panel:not(.is-collapsed) .retain-option {
+    grid-column: 1 / -1;
+  }
+
+  .topic-row {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-input {
+    grid-column: auto;
+  }
+
+  .btn-timed-message,
+  .btn-scheduled-publish {
+    width: 100%;
+  }
 }
 </style>

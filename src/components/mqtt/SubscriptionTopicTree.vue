@@ -50,9 +50,9 @@
               @keydown.stop
             >
               <span
-                v-if="subscription.color"
                 class="subscription-color"
-                :style="{ backgroundColor: subscription.color }"
+                :class="{ 'subscription-color--empty': !subscription.color }"
+                :style="subscription.color ? { backgroundColor: subscription.color } : undefined"
                 aria-hidden="true"
               />
 
@@ -65,6 +65,7 @@
                   class="subscription-status"
                   :class="`subscription-status--${displayStatus(subscription)}`"
                   :title="statusTooltip(subscription)"
+                  :aria-label="statusTooltip(subscription)"
                   :data-testid="`subscription-status-${subscription.id}`"
                 >
                   <el-icon>
@@ -73,7 +74,7 @@
                     <WarningFilled v-else-if="displayStatus(subscription) === 'failed'" />
                     <RemoveFilled v-else />
                   </el-icon>
-                  <span>{{ statusLabel(subscription) }}</span>
+                  <span class="visually-hidden">{{ statusLabel(subscription) }}</span>
                 </span>
               </el-tooltip>
 
@@ -99,20 +100,22 @@
                 <span class="subscription-toggle-knob" aria-hidden="true" />
               </button>
 
-              <el-tooltip
-                v-if="displayStatus(subscription) === 'failed'"
-                :content="retryLabel(subscription)"
-                placement="top"
-              >
-                <el-button
-                  class="topic-node-action"
-                  text
-                  size="small"
-                  :icon="RefreshRight"
-                  :aria-label="retryLabel(subscription)"
-                  @click.stop="emit('retry', subscription)"
-                />
-              </el-tooltip>
+              <span class="topic-node-retry-slot">
+                <el-tooltip
+                  v-if="displayStatus(subscription) === 'failed'"
+                  :content="retryLabel(subscription)"
+                  placement="top"
+                >
+                  <el-button
+                    class="topic-node-action"
+                    text
+                    size="small"
+                    :icon="RefreshRight"
+                    :aria-label="retryLabel(subscription)"
+                    @click.stop="emit('retry', subscription)"
+                  />
+                </el-tooltip>
+              </span>
 
               <el-dropdown
                 trigger="click"
@@ -311,9 +314,15 @@ function handleAction(command: string, subscription: Subscription) {
 
 :deep(.el-tree-node__content) {
   height: auto;
-  min-height: 30px;
-  padding-right: 2px;
+  min-height: 32px;
+  padding-right: 4px;
   border-radius: 4px;
+}
+
+:deep(.el-tree-node__expand-icon) {
+  width: 18px;
+  padding: 5px 3px;
+  box-sizing: border-box;
 }
 
 :deep(.el-tree-node__content:focus-within) {
@@ -321,24 +330,20 @@ function handleAction(command: string, subscription: Subscription) {
 }
 
 .topic-tree-node {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
+  column-gap: 6px;
   width: 100%;
   min-width: 0;
-  padding: 2px 0;
-}
-
-.topic-tree-node--configured .topic-node-label {
-  flex-basis: 100%;
+  min-height: 28px;
 }
 
 .topic-node-label {
-  flex: 1;
-  min-width: 24px;
+  min-width: 0;
   font-family: "Fira Code", "Consolas", monospace;
   font-size: 12px;
+  line-height: 20px;
 }
 
 .topic-node-label--empty {
@@ -347,20 +352,17 @@ function handleAction(command: string, subscription: Subscription) {
 }
 
 .topic-node-configurations {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  display: grid;
+  justify-items: end;
   gap: 2px;
-  width: 100%;
   min-width: 0;
 }
 
 .topic-node-configuration {
-  display: flex;
+  display: grid;
+  grid-template-columns: 7px 14px minmax(28px, max-content) 28px 24px 24px;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 3px;
+  column-gap: 3px;
   max-width: 100%;
 }
 
@@ -368,19 +370,34 @@ function handleAction(command: string, subscription: Subscription) {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  flex-shrink: 0;
+}
+
+.subscription-color--empty {
+  visibility: hidden;
 }
 
 .subscription-status {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  font-size: 10px;
-  white-space: nowrap;
+  justify-content: center;
+  width: 14px;
+  height: 20px;
 
   .el-icon {
-    font-size: 12px;
+    font-size: 13px;
   }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .subscription-status--active {
@@ -404,9 +421,14 @@ function handleAction(command: string, subscription: Subscription) {
 }
 
 .subscription-qos {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
   height: 20px;
   padding: 0 4px;
   font-size: 10px;
+  line-height: 18px;
 }
 
 .subscription-toggle {
@@ -453,8 +475,19 @@ function handleAction(command: string, subscription: Subscription) {
 
 .topic-node-action {
   width: 24px;
+  min-width: 24px;
   height: 24px;
+  min-height: 24px;
   padding: 4px;
+  margin: 0;
+}
+
+.topic-node-retry-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
 }
 
 @keyframes subscription-topic-spin {

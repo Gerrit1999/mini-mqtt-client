@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import PublishPanel from "./PublishPanel.vue";
-import ElementPlus from "element-plus";
+import ElementPlus, { ElMessage } from "element-plus";
 import { createI18n } from "vue-i18n";
 
 // Mock Tauri API
@@ -49,6 +49,7 @@ function createTestI18n() {
     messages: {
       "zh-CN": {
         publish: {
+          title: "发布消息",
           send: "发送",
           topicPlaceholder: "请输入 Topic",
           payloadPlaceholder: "请输入消息内容",
@@ -56,6 +57,9 @@ function createTestI18n() {
           timedMessage: "定时消息",
           saveTemplate: "保存模板",
           openTemplates: "命令模板",
+          formatJson: "格式化 JSON",
+          collapsePanel: "收起发送区",
+          expandPanel: "展开发送区",
         },
         timedMessage: {
           title: "定时消息",
@@ -164,6 +168,7 @@ describe("PublishPanel", () => {
     const i18n = createTestI18n();
     return mount(PublishPanel, {
       props: {
+        collapsed: false,
         scheduledPublishRunning: false,
         timedMessageRunning: false,
         ...props,
@@ -181,7 +186,8 @@ describe("PublishPanel", () => {
       await flushPromises();
 
       expect(wrapper.find(".publish-panel").exists()).toBe(true);
-      expect(wrapper.find(".panel-title").text()).toContain("发送");
+      expect(wrapper.find(".panel-title").text()).toContain("发布消息");
+      expect(wrapper.find(".panel-title .el-icon").exists()).toBe(true);
     });
 
     it("应渲染发送按钮", async () => {
@@ -210,6 +216,71 @@ describe("PublishPanel", () => {
         label: "Base64",
         value: "base64",
       });
+    });
+
+    it("下拉框不应显示序号", async () => {
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      expect(wrapper.find(".option-step").exists()).toBe(false);
+    });
+
+    it("仅 JSON 格式应显示格式化按钮", async () => {
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      const formatButton = wrapper.find(".payload-format-button");
+      expect(formatButton.exists()).toBe(true);
+      expect(formatButton.attributes("aria-label")).toBe("格式化 JSON");
+
+      (wrapper.vm as any).payloadFormat = "text";
+      await flushPromises();
+
+      expect(wrapper.find(".payload-format-button").exists()).toBe(false);
+    });
+
+    it("点击格式化按钮应美化 JSON", async () => {
+      const wrapper = createWrapper();
+      const vm = wrapper.vm as any;
+      vm.publishData.payload = '{"device":"sensor-1","online":true}';
+      await flushPromises();
+
+      await wrapper.find(".payload-format-button").trigger("click");
+
+      expect(vm.publishData.payload).toBe(
+        '{\n  "device": "sensor-1",\n  "online": true\n}'
+      );
+    });
+
+    it("JSON 无效时应保留内容并提示", async () => {
+      const warningSpy = vi.spyOn(ElMessage, "warning");
+      const wrapper = createWrapper();
+      const vm = wrapper.vm as any;
+      vm.publishData.payload = "{invalid json";
+      await flushPromises();
+
+      await wrapper.find(".payload-format-button").trigger("click");
+
+      expect(vm.publishData.payload).toBe("{invalid json");
+      expect(warningSpy).toHaveBeenCalledWith("JSON 格式无效");
+      warningSpy.mockRestore();
+    });
+
+    it("收起时应隐藏发送表单", async () => {
+      const wrapper = createWrapper({ collapsed: true });
+      await flushPromises();
+
+      expect(wrapper.find(".publish-form").exists()).toBe(false);
+      expect(wrapper.find(".header-actions").exists()).toBe(false);
+    });
+
+    it("点击收起按钮应通知父组件", async () => {
+      const wrapper = createWrapper();
+      await flushPromises();
+
+      await wrapper.find(".collapse-button").trigger("click");
+
+      expect(wrapper.emitted("toggleCollapse")).toHaveLength(1);
     });
   });
 

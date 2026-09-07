@@ -6,10 +6,28 @@
   --sidebar-width: 280px;
   --header-height: 56px;
   --command-bar-height: 48px;
+
+  // 控件规范
+  --app-control-height-xs: 24px;
+  --app-control-height-small: 28px;
+  --app-control-height: 32px;
+  --app-control-height-large: 40px;
+  --app-control-radius: 6px;
+  --app-control-gap: 8px;
+  --app-control-padding-x-small: 10px;
+  --app-control-padding-x: 12px;
+  --app-control-bg: var(--card-bg);
+  --app-control-hover-bg: var(--sidebar-hover);
+  --app-control-disabled-bg: #f1f5f9;
+  --app-control-disabled-text: #94a3b8;
+  --app-control-focus-ring: 0 0 0 2px var(--primary-light);
+  --app-control-transition: border-color 0.2s ease, box-shadow 0.2s ease,
+    background-color 0.2s ease, color 0.2s ease;
   
   // 浅色主题
   --app-bg-color: #f8fafc;
   --app-text-color: #1e293b;
+  --app-text-primary: var(--app-text-color);
   --app-text-secondary: #64748b;
   --app-border-color: #e2e8f0;
   
@@ -36,6 +54,16 @@
   --primary-color: #3b82f6;
   --primary-hover: #2563eb;
   --primary-light: #dbeafe;
+
+  // Element Plus 组件尺寸与主题映射
+  --el-component-size: var(--app-control-height);
+  --el-component-size-small: var(--app-control-height-small);
+  --el-component-size-large: var(--app-control-height-large);
+  --el-border-radius-base: var(--app-control-radius);
+  --el-border-radius-small: var(--app-control-radius);
+  --el-color-primary: var(--primary-color);
+  --el-color-primary-dark-2: var(--primary-hover);
+  --el-color-primary-light-9: var(--primary-light);
   
   // 模板相关颜色
   --template-json: #3b82f6;
@@ -56,6 +84,9 @@ html.dark {
   
   --card-bg: #1e293b;
   --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+
+  --app-control-disabled-bg: #27364a;
+  --app-control-disabled-text: #64748b;
   
   --primary-light: #1e3a5f;
   

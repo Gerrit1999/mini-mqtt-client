@@ -58,6 +58,22 @@
         </el-radio-group>
       </div>
 
+      <!-- 内容布局 -->
+      <div class="setting-section">
+        <div class="setting-header">
+          <div class="setting-title">{{ $t('settings.layout.title') }}</div>
+          <div class="setting-desc">{{ $t('settings.layout.desc') }}</div>
+        </div>
+        <el-radio-group v-model="currentContentLayout" class="theme-radio-group">
+          <el-radio-button value="horizontal">
+            {{ $t('settings.layout.horizontal') }}
+          </el-radio-button>
+          <el-radio-button value="vertical">
+            {{ $t('settings.layout.vertical') }}
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+
       <!-- 消息设置 -->
       <div class="setting-section">
         <div class="setting-header">
@@ -245,7 +261,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { getVersion } from '@tauri-apps/api/app'
-import { useAppStore, type Theme, type Locale } from '@/stores/app'
+import { useAppStore, type ContentLayout, type Theme, type Locale } from '@/stores/app'
 import { useMqttStore } from '@/stores/mqtt'
 import { useMessageStore } from '@/stores/message'
 
@@ -282,6 +298,8 @@ const currentTheme = ref<Theme>('light')
 const originalTheme = ref<Theme>('light')
 const currentLocale = ref<Locale>('auto')
 const originalLocale = ref<Locale>('auto')
+const currentContentLayout = ref<ContentLayout>('horizontal')
+const originalContentLayout = ref<ContentLayout>('horizontal')
 const currentMessageLimit = ref(1000)
 const originalMessageLimit = ref(1000)
 const currentMqttPacketSizeLimitKb = ref(1024)
@@ -304,6 +322,7 @@ const updateInfo = computed(() => appStore.updateInfo)
 const hasChanges = computed(() => {
   return currentTheme.value !== originalTheme.value || 
          currentLocale.value !== originalLocale.value ||
+         currentContentLayout.value !== originalContentLayout.value ||
          currentMessageLimit.value !== originalMessageLimit.value ||
          currentMqttPacketSizeLimitKb.value !== originalMqttPacketSizeLimitKb.value ||
          currentMessageRetentionDays.value !== originalMessageRetentionDays.value ||
@@ -317,6 +336,8 @@ async function loadSettings() {
   originalTheme.value = appStore.theme
   currentLocale.value = appStore.locale
   originalLocale.value = appStore.locale
+  currentContentLayout.value = appStore.contentLayout
+  originalContentLayout.value = appStore.contentLayout
   currentMessageLimit.value = appStore.messageLimit
   originalMessageLimit.value = appStore.messageLimit
   currentMqttPacketSizeLimitKb.value = appStore.mqttPacketSizeLimitKb
@@ -505,6 +526,11 @@ async function handleSave() {
       mqttStore.applyMessageLimit()
       messageStore.applyMessageLimit()
       originalMessageLimit.value = settings.message_limit
+    }
+
+    if (currentContentLayout.value !== originalContentLayout.value) {
+      appStore.setContentLayout(currentContentLayout.value)
+      originalContentLayout.value = currentContentLayout.value
     }
 
     if (currentMqttPacketSizeLimitKb.value !== originalMqttPacketSizeLimitKb.value) {

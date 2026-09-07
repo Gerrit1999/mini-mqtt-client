@@ -10,6 +10,7 @@ import type { PayloadFormat } from "@/types/mqtt";
 
 export type Theme = "light" | "dark" | "auto";
 export type ViewType = "messages" | "templates";
+export type ContentLayout = "horizontal" | "vertical";
 export type { Locale, ActualLocale };
 
 // 版本更新信息
@@ -59,6 +60,9 @@ export const useAppStore = defineStore("app", () => {
 
   // 消息列表自动滚动到底部
   const autoScroll = ref(true);
+
+  // 消息区与发送区布局
+  const contentLayout = ref<ContentLayout>("horizontal");
 
   // 每个 server 保留的消息上限
   const messageLimit = ref(1000);
@@ -239,6 +243,18 @@ export const useAppStore = defineStore("app", () => {
     saveAutoScroll();
   };
 
+  // 设置并保存消息区与发送区布局
+  const setContentLayout = (value: ContentLayout) => {
+    contentLayout.value = value;
+    localStorage.setItem("mqtt-client-content-layout", value);
+  };
+
+  // 初始化布局设置，默认使用左右布局
+  const initContentLayout = () => {
+    const stored = localStorage.getItem("mqtt-client-content-layout");
+    contentLayout.value = stored === "vertical" ? "vertical" : "horizontal";
+  };
+
   const initAppSettings = async () => {
     try {
       const settings = await invoke<AppSettings>("get_app_settings");
@@ -363,6 +379,7 @@ export const useAppStore = defineStore("app", () => {
     currentView,
     copyToPublishData,
     autoScroll,
+    contentLayout,
     messageLimit,
     mqttPacketSizeLimitKb,
     messageRetentionDays,
@@ -383,6 +400,8 @@ export const useAppStore = defineStore("app", () => {
     clearCopyToPublish,
     setAutoScroll,
     initAutoScroll,
+    setContentLayout,
+    initContentLayout,
     initAppSettings,
     setMessageLimit,
     setMqttPacketSizeLimitKb,

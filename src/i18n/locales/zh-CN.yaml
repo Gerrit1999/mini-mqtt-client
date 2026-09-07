@@ -30,7 +30,7 @@ header:
     connected: 已连接
     connecting: 连接中...
     reconnecting: 正在重连 · 第 {attempt} 次
-    retryingIn: {seconds} 秒后重试
+    retryingIn: "{seconds} 秒后重试"
     disconnected: 未连接
     error: 连接错误
 
@@ -111,6 +111,11 @@ settings:
     zhCN: 中文
     enUS: English
     auto: 跟随系统
+  layout:
+    title: 内容布局
+    desc: 设置消息区与发送区的排列方式
+    horizontal: 左右布局
+    vertical: 上下布局
   storage:
     title: 数据存储
     desc: 配置、脚本和消息历史等数据的存储文件夹
@@ -156,6 +161,7 @@ settings:
     installConfirm: 发现新版本 {version}，安装完成后将重启应用，是否继续？
 
 publish:
+  title: 发布消息
   topic: Topic
   payload: Payload
   qos: QoS
@@ -170,7 +176,10 @@ publish:
   payloadType: 格式
   topicPlaceholder: 请输入 Topic
   payloadPlaceholder: 请输入消息内容
+  formatJson: 格式化 JSON
   type: 类型
+  collapsePanel: 收起发送区
+  expandPanel: 展开发送区
 
 messages:
   title: 消息列表
@@ -387,6 +396,9 @@ errors:
   publishFailed: 发布失败
   subscribeFailed: 订阅失败
   unsubscribeFailed: 取消订阅失败
+  subscriptionNotAuthorized: 'Broker 拒绝订阅 Topic "{topic}"（QoS {qos}）：当前账号没有权限（NotAuthorized）。请检查 Broker ACL，或改用账号允许的 Topic Filter。'
+  subscribeFailedDetail: '订阅 Topic "{topic}"（QoS {qos}）失败：{reason}'
+  unsubscribeFailedDetail: '取消订阅 Topic "{topic}" 失败：{reason}'
   saveFailed: 保存失败
   deleteFailed: 删除失败
   loadFailed: 加载失败

@@ -49,12 +49,211 @@ body {
   color: white;
 }
 
-// Element Plus 覆盖样式
+// Element Plus 控件规范
+.el-button {
+  min-height: var(--app-control-height);
+  border-radius: var(--app-control-radius);
+  font-weight: 500;
+  transition: var(--app-control-transition);
+}
+
+.el-button--small {
+  height: var(--app-control-height-small);
+  min-height: var(--app-control-height-small);
+  padding-right: var(--app-control-padding-x-small);
+  padding-left: var(--app-control-padding-x-small);
+}
+
+.el-button--large {
+  min-height: var(--app-control-height-large);
+  border-radius: 8px;
+}
+
+.el-button.is-circle {
+  width: var(--app-control-height);
+  min-width: var(--app-control-height);
+  padding: 0;
+}
+
+:where(.el-button:has(> .el-icon):not(:has(> span))) {
+  width: var(--app-control-height);
+  min-width: var(--app-control-height);
+  padding: 0;
+}
+
+.el-button--small.is-circle,
+:where(.el-button--small:has(> .el-icon):not(:has(> span))) {
+  width: var(--app-control-height-small);
+  min-width: var(--app-control-height-small);
+}
+
+.el-button:focus-visible {
+  outline: none;
+  box-shadow: var(--app-control-focus-ring);
+}
+
 .el-button--primary {
   --el-button-bg-color: var(--primary-color);
   --el-button-border-color: var(--primary-color);
   --el-button-hover-bg-color: var(--primary-hover);
   --el-button-hover-border-color: var(--primary-hover);
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner,
+.el-input-number,
+.el-date-editor.el-input__wrapper,
+.el-date-editor.el-range-editor {
+  border-radius: var(--app-control-radius);
+  transition: var(--app-control-transition);
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-textarea__inner:focus,
+.el-input-number:focus-within,
+.el-date-editor.el-input__wrapper.is-focus,
+.el-date-editor.el-range-editor.is-active {
+  box-shadow:
+    0 0 0 1px var(--primary-color) inset,
+    var(--app-control-focus-ring) !important;
+}
+
+.el-input.is-disabled .el-input__wrapper,
+.el-textarea.is-disabled .el-textarea__inner,
+.el-select__wrapper.is-disabled,
+.el-input-number.is-disabled {
+  background-color: var(--app-control-disabled-bg);
+  color: var(--app-control-disabled-text);
+}
+
+.el-checkbox,
+.el-radio {
+  min-height: var(--app-control-height);
+  margin-right: 0;
+}
+
+.el-checkbox__inner,
+.el-radio__inner {
+  transition: var(--app-control-transition);
+}
+
+.el-checkbox__input.is-focus .el-checkbox__inner,
+.el-radio__input.is-focus .el-radio__inner {
+  box-shadow: var(--app-control-focus-ring);
+}
+
+.el-radio-group {
+  gap: var(--app-control-gap);
+}
+
+.el-radio-button__inner {
+  min-height: var(--app-control-height);
+  padding: 7px var(--app-control-padding-x);
+  border-radius: var(--app-control-radius) !important;
+  transition: var(--app-control-transition);
+}
+
+.el-radio-button--small .el-radio-button__inner {
+  min-height: var(--app-control-height-small);
+  padding: 5px var(--app-control-padding-x-small);
+}
+
+.el-radio-button.is-active
+  .el-radio-button__original-radio:not(:disabled)
+  + .el-radio-button__inner {
+  box-shadow: none;
+}
+
+.el-switch__core {
+  border-radius: 999px;
+  transition: var(--app-control-transition);
+}
+
+.el-switch--small {
+  height: var(--app-control-height);
+  line-height: 20px;
+}
+
+.el-switch--small .el-switch__core {
+  min-width: 36px;
+  height: 20px;
+  border-radius: 10px;
+}
+
+.el-switch--small .el-switch__core .el-switch__action {
+  width: 16px;
+  height: 16px;
+}
+
+.el-switch--small.is-checked .el-switch__core .el-switch__action {
+  left: calc(100% - 17px);
+}
+
+.el-color-picker__trigger {
+  border-radius: var(--app-control-radius);
+}
+
+.el-pagination button,
+.el-pager li {
+  min-width: var(--app-control-height);
+  height: var(--app-control-height);
+  border-radius: var(--app-control-radius);
+}
+
+.el-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  border-radius: 10px;
+}
+
+.el-dialog__header {
+  flex-shrink: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--app-border-color);
+}
+
+.el-dialog__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.el-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--app-border-color);
+}
+
+.el-dialog__footer .el-button + .el-button {
+  margin-left: 0 !important;
+}
+
+.el-drawer,
+.el-popover.el-popper,
+.el-dropdown__popper .el-popper__arrow::before,
+.el-dropdown-menu {
+  border-color: var(--app-border-color);
+}
+
+.el-popover.el-popper,
+.el-dropdown-menu {
+  border-radius: 8px;
+}
+
+.el-dropdown-menu__item,
+.el-select-dropdown__item {
+  border-radius: var(--app-control-radius);
+}
+
+.el-upload-dragger {
+  border-radius: 8px;
+  transition: var(--app-control-transition);
 }
 
 // 卡片通用样式

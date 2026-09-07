@@ -68,6 +68,31 @@ type TrackedPublishRequest = Omit<PublishPayload, "operation_id" | "payload_byte
 // 脚本缓存有效期（毫秒）
 const SCRIPT_CACHE_TTL = 5000;
 
+function formatSubscriptionFailure(state: SubscriptionRuntimeState): string {
+  const reason = state.error ?? "Unknown error";
+
+  if (state.operation === "unsubscribe") {
+    return i18n.global.t("errors.unsubscribeFailedDetail", {
+      topic: state.topic,
+      reason,
+    });
+  }
+
+  const qos = state.requested_qos ?? "-";
+  if (/not[\s_-]*authorized/i.test(reason)) {
+    return i18n.global.t("errors.subscriptionNotAuthorized", {
+      topic: state.topic,
+      qos,
+    });
+  }
+
+  return i18n.global.t("errors.subscribeFailedDetail", {
+    topic: state.topic,
+    qos,
+    reason,
+  });
+}
+
 export const useMqttStore = defineStore("mqtt", () => {
   const appStore = useAppStore();
   // 连接状态
@@ -342,13 +367,10 @@ export const useMqttStore = defineStore("mqtt", () => {
       subscriptionStates.value = nextStates;
 
       if (state.status === "failed" && state.error) {
-        const errorKey =
-          state.operation === "unsubscribe"
-            ? "errors.unsubscribeFailed"
-            : "errors.subscribeFailed";
         ElMessage.error({
-          message: `${i18n.global.t(errorKey)}: ${state.error}`,
-          duration: 5000,
+          message: formatSubscriptionFailure(state),
+          duration: 8000,
+          showClose: true,
         });
       }
     });

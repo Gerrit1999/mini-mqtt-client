@@ -22,10 +22,10 @@ header:
   connecting: Connecting
   settings: Settings
   connectionError:
-    connectionLost: Connection lost: {details}
-    connectFailed: Connection attempt failed: {details}
-    connectionRefused: Connection refused: {details}
-    unknown: Connection error: {details}
+    connectionLost: "Connection lost: {details}"
+    connectFailed: "Connection attempt failed: {details}"
+    connectionRefused: "Connection refused: {details}"
+    unknown: "Connection error: {details}"
   status:
     connected: Connected
     connecting: Connecting...
@@ -111,6 +111,11 @@ settings:
     zhCN: Chinese
     enUS: English
     auto: Follow System
+  layout:
+    title: Content Layout
+    desc: Choose how the messages and publish panels are arranged
+    horizontal: Side by Side
+    vertical: Stacked
   storage:
     title: Data Storage
     desc: Storage folder for configuration, scripts, and message history
@@ -156,6 +161,7 @@ settings:
     installConfirm: "New version {version} is available. The app will restart after installation. Continue?"
 
 publish:
+  title: Publish Message
   topic: Topic
   payload: Payload
   qos: QoS
@@ -170,7 +176,10 @@ publish:
   payloadType: Format
   topicPlaceholder: Enter topic
   payloadPlaceholder: Enter message content
+  formatJson: Format JSON
   type: Type
+  collapsePanel: Collapse publish panel
+  expandPanel: Expand publish panel
 
 messages:
   title: Messages
@@ -387,6 +396,9 @@ errors:
   publishFailed: Publish failed
   subscribeFailed: Subscribe failed
   unsubscribeFailed: Unsubscribe failed
+  subscriptionNotAuthorized: 'Broker denied subscription to topic "{topic}" (QoS {qos}): this account is not authorized (NotAuthorized). Check the Broker ACL or use an allowed topic filter.'
+  subscribeFailedDetail: 'Failed to subscribe to topic "{topic}" (QoS {qos}): {reason}'
+  unsubscribeFailedDetail: 'Failed to unsubscribe from topic "{topic}": {reason}'
   saveFailed: Save failed
   deleteFailed: Delete failed
   loadFailed: Load failed

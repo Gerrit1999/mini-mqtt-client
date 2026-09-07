@@ -15,37 +15,41 @@
         </el-tag>
       </span>
       <div class="header-actions">
-        <el-select
-          v-model="selectedTopics"
-          :placeholder="$t('publish.topic')"
-          multiple
-          filterable
-          clearable
-          collapse-tags
-          collapse-tags-tooltip
-          size="small"
-          style="width: 140px"
-        >
-          <el-option
-            v-for="topic in topics"
-            :key="topic"
-            :label="topic"
-            :value="topic"
-          />
-        </el-select>
-        <el-input
-          v-model="searchKeyword"
+        <div class="message-control topic-filter-control">
+          <el-select
+            v-model="selectedTopics"
+            :placeholder="$t('publish.topic')"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            class="topic-filter"
+          >
+            <el-option
+              v-for="topic in topics"
+              :key="topic"
+              :label="topic"
+              :value="topic"
+            />
+          </el-select>
+        </div>
+        <div
+          class="message-control message-search-control"
           :class="{ 'is-invalid-regex': isRegexInvalid }"
-          :placeholder="$t('template.searchPlaceholder')"
-          :prefix-icon="Search"
-          size="small"
-          style="width: 160px"
-          clearable
-          :title="isRegexInvalid ? t('messages.search.invalidRegex') : ''"
-        />
+        >
+          <el-input
+            v-model="searchKeyword"
+            class="message-search"
+            :placeholder="$t('template.searchPlaceholder')"
+            :prefix-icon="Search"
+            clearable
+            :title="isRegexInvalid ? t('messages.search.invalidRegex') : ''"
+          />
+        </div>
         <el-popover placement="bottom" trigger="click" :width="220">
           <template #reference>
-            <el-button size="small">.*</el-button>
+            <el-button class="toolbar-button search-options-button">.*</el-button>
           </template>
           <div class="search-options">
             <el-checkbox v-model="searchMatchCase">{{ t('messages.search.matchCase') }}</el-checkbox>
@@ -54,7 +58,7 @@
           </div>
         </el-popover>
         <el-dropdown @command="handleFilterCommand">
-          <el-button size="small">
+          <el-button class="toolbar-button direction-filter-button">
             {{ filterLabel }}
             <el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
@@ -66,33 +70,43 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <div class="format-toggle">
+        <div class="format-toggle toolbar-control">
           <span class="format-toggle-label">{{ $t('messages.formatJson') }}</span>
           <el-switch v-model="formatJsonPayload" size="small" />
         </div>
-        <el-divider direction="vertical" />
-        <el-tooltip :content="$t('messages.autoScroll')" placement="top">
-          <el-button
-            text
-            size="small"
-            :icon="Bottom"
-            :type="appStore.autoScroll ? 'primary' : 'default'"
-            @click="appStore.setAutoScroll(!appStore.autoScroll)"
-          />
-        </el-tooltip>
-        <el-divider direction="vertical" />
-        <el-tooltip :content="$t('messages.clear')" placement="top">
-          <el-button text size="small" :icon="Delete" @click="handleClear" />
-        </el-tooltip>
-        <el-dropdown trigger="click" @command="handleExportCommand">
-          <el-button text size="small" :icon="Download" :title="$t('messages.export')" />
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="json">JSON</el-dropdown-item>
-              <el-dropdown-item command="csv">CSV</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <div class="toolbar-actions">
+          <el-tooltip :content="$t('messages.autoScroll')" placement="top">
+            <el-button
+              class="toolbar-icon-action"
+              :class="{ 'is-active': appStore.autoScroll }"
+              :icon="Bottom"
+              :aria-label="$t('messages.autoScroll')"
+              @click="appStore.setAutoScroll(!appStore.autoScroll)"
+            />
+          </el-tooltip>
+          <el-tooltip :content="$t('messages.clear')" placement="top">
+            <el-button
+              class="toolbar-icon-action"
+              :icon="Delete"
+              :aria-label="$t('messages.clear')"
+              @click="handleClear"
+            />
+          </el-tooltip>
+          <el-dropdown trigger="click" @command="handleExportCommand">
+            <el-button
+              class="toolbar-icon-action"
+              :icon="Download"
+              :aria-label="$t('messages.export')"
+              :title="$t('messages.export')"
+            />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="json">JSON</el-dropdown-item>
+                <el-dropdown-item command="csv">CSV</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </div>
     </div>
 
@@ -1105,41 +1119,138 @@ watch(
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
+  min-height: 52px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--app-border-color);
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .panel-title {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
-  font-weight: 600;
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--app-text-color);
+
+  .el-icon {
+    color: var(--primary-color);
+  }
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.topic-filter {
+  width: 100%;
+}
+
+.message-search {
+  width: 100%;
+}
+
+.message-control,
+.toolbar-control {
+  height: 32px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 6px;
+  background-color: var(--card-bg);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
+}
+
+.message-control {
+  overflow: hidden;
+
+  &:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--primary-light);
+  }
+
+  :deep(.el-select),
+  :deep(.el-input) {
+    height: 100%;
+  }
+
+  :deep(.el-select__wrapper),
+  :deep(.el-input__wrapper) {
+    min-height: 30px;
+    border-radius: 0;
+    box-shadow: none !important;
+    background-color: transparent;
+  }
+}
+
+.topic-filter-control {
+  width: 140px;
+}
+
+.message-search-control {
+  width: 160px;
+}
+
+.toolbar-button,
+.toolbar-icon-action {
+  height: 32px;
+  margin-left: 0;
+  border-radius: 6px;
+}
+
+.toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.search-options-button {
+  min-width: 36px;
+  padding: 0 10px;
+  font-family: "Fira Code", "Consolas", monospace;
+}
+
+.direction-filter-button {
+  padding: 0 12px;
+}
+
+.toolbar-icon-action {
+  width: 32px;
+  padding: 0;
+  color: var(--app-text-secondary);
+
+  &.is-active {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background-color: var(--primary-light);
+  }
 }
 
 .format-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  padding: 0 10px;
 }
 
 .format-toggle-label {
-  font-size: 12px;
-  color: var(--app-text-secondary);
+  font-size: 13px;
+  color: var(--app-text-color);
 }
 
 .search-options {
@@ -1148,8 +1259,9 @@ watch(
   gap: 8px;
 }
 
-.is-invalid-regex :deep(.el-input__wrapper) {
-  box-shadow: 0 0 0 1px var(--el-color-danger) inset !important;
+.message-control.is-invalid-regex {
+  border-color: var(--el-color-danger);
+  box-shadow: 0 0 0 2px var(--el-color-danger-light-8);
 }
 
  .message-scroll-wrapper {
@@ -1385,6 +1497,24 @@ watch(
 
   &:hover {
     background-color: var(--sidebar-hover);
+  }
+}
+
+@container (max-width: 760px) {
+  .panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .header-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .topic-filter-control,
+  .message-search-control {
+    flex: 1 1 140px;
+    width: auto;
   }
 }
 </style>
