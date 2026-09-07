@@ -86,7 +86,10 @@
           </el-button>
         </div>
 
-        <div class="payload-input-wrapper">
+        <div
+          class="payload-input-wrapper"
+          :class="{ 'has-format-action': payloadFormat === 'json' }"
+        >
           <el-input
             v-model="publishData.payload"
             type="textarea"
@@ -94,6 +97,19 @@
             resize="none"
             class="payload-input"
           />
+          <el-tooltip
+            v-if="payloadFormat === 'json'"
+            :content="$t('publish.formatJson')"
+            placement="top"
+          >
+            <el-button
+              text
+              class="payload-format-button"
+              :icon="MagicStick"
+              :aria-label="$t('publish.formatJson')"
+              @click="formatJsonPayload"
+            />
+          </el-tooltip>
         </div>
 
         <div class="action-row-bottom">
@@ -169,6 +185,7 @@ import {
   FolderOpened,
   Timer,
   Loading,
+  MagicStick,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { invoke } from "@tauri-apps/api/core";
@@ -288,6 +305,16 @@ watch(
 const payloadPlaceholder = computed(() => {
   return t('publish.payloadPlaceholder');
 });
+
+function formatJsonPayload() {
+  if (!publishData.payload.trim()) return;
+
+  try {
+    publishData.payload = JSON.stringify(JSON.parse(publishData.payload), null, 2);
+  } catch {
+    ElMessage.warning(t("errors.jsonInvalid"));
+  }
+}
 
 function validatePayload(): boolean {
   try {
@@ -699,8 +726,29 @@ const handlePublish = async () => {
 }
 
 .payload-input-wrapper {
+  position: relative;
   flex: 1;
   min-height: 0;
+}
+
+.payload-format-button {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border-radius: 5px;
+  color: var(--app-text-secondary);
+  background-color: var(--card-bg);
+
+  &:hover,
+  &:focus-visible {
+    color: var(--primary-color);
+    background-color: var(--primary-light);
+  }
 }
 
 .action-row-bottom {
@@ -734,6 +782,10 @@ const handlePublish = async () => {
   min-height: 72px;
   padding: 10px 12px;
   border-radius: 6px;
+}
+
+.payload-input-wrapper.has-format-action .payload-input :deep(.el-textarea__inner) {
+  padding-right: 44px;
 }
 
 .is-running {

@@ -176,6 +176,7 @@ publish:
   payloadType: 格式
   topicPlaceholder: 请输入 Topic
   payloadPlaceholder: 请输入消息内容
+  formatJson: 格式化 JSON
   type: 类型
   collapsePanel: 收起发送区
   expandPanel: 展开发送区

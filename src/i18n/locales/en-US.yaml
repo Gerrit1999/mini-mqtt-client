@@ -176,6 +176,7 @@ publish:
   payloadType: Format
   topicPlaceholder: Enter topic
   payloadPlaceholder: Enter message content
+  formatJson: Format JSON
   type: Type
   collapsePanel: Collapse publish panel
   expandPanel: Expand publish panel
