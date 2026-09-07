@@ -111,6 +111,11 @@ settings:
     zhCN: Chinese
     enUS: English
     auto: Follow System
+  layout:
+    title: Content Layout
+    desc: Choose how the messages and publish panels are arranged
+    horizontal: Side by Side
+    vertical: Stacked
   storage:
     title: Data Storage
     desc: Storage folder for configuration, scripts, and message history
@@ -156,6 +161,7 @@ settings:
     installConfirm: "New version {version} is available. The app will restart after installation. Continue?"
 
 publish:
+  title: Publish Message
   topic: Topic
   payload: Payload
   qos: QoS
@@ -171,6 +177,8 @@ publish:
   topicPlaceholder: Enter topic
   payloadPlaceholder: Enter message content
   type: Type
+  collapsePanel: Collapse publish panel
+  expandPanel: Expand publish panel
 
 messages:
   title: Messages

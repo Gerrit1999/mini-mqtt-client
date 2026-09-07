@@ -24,7 +24,7 @@
           collapse-tags
           collapse-tags-tooltip
           size="small"
-          style="width: 140px"
+          class="topic-filter"
         >
           <el-option
             v-for="topic in topics"
@@ -35,11 +35,10 @@
         </el-select>
         <el-input
           v-model="searchKeyword"
-          :class="{ 'is-invalid-regex': isRegexInvalid }"
+          :class="['message-search', { 'is-invalid-regex': isRegexInvalid }]"
           :placeholder="$t('template.searchPlaceholder')"
           :prefix-icon="Search"
           size="small"
-          style="width: 160px"
           clearable
           :title="isRegexInvalid ? t('messages.search.invalidRegex') : ''"
         />
@@ -1105,12 +1104,14 @@ watch(
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--app-border-color);
   flex-shrink: 0;
@@ -1129,6 +1130,17 @@ watch(
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.topic-filter {
+  width: 140px;
+}
+
+.message-search {
+  width: 160px;
 }
 
 .format-toggle {
@@ -1385,6 +1397,24 @@ watch(
 
   &:hover {
     background-color: var(--sidebar-hover);
+  }
+}
+
+@container (max-width: 760px) {
+  .panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .header-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .topic-filter,
+  .message-search {
+    flex: 1 1 140px;
+    width: auto;
   }
 }
 </style>

@@ -126,6 +126,8 @@ onMounted(() => {
   appStore.initAppSettings();
   // 初始化自动滚动设置
   appStore.initAutoScroll();
+  // 初始化消息区与发送区布局
+  appStore.initContentLayout();
   // 初始化 MQTT 事件监听
   mqttStore.initListeners();
 });
