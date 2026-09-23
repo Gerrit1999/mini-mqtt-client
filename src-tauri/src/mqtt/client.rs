@@ -17,6 +17,7 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
+use crate::commands::validation::{validate_qos, validate_topic};
 use crate::db::{
     models::{MqttServer, Subscription},
     Storage,
@@ -30,7 +31,6 @@ use crate::mqtt::subscription::{
     StartedSubscriptionOperation, SubscriptionOperation, SubscriptionOperationResult,
     SubscriptionOperationTracker, SubscriptionRequest, SubscriptionStateEvent,
 };
-
 const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
@@ -1136,6 +1136,8 @@ impl<R: Runtime> MqttManager<R> {
         topic: String,
         qos: u8,
     ) -> Result<SubscriptionOperationResult, String> {
+        validate_topic(&topic)?;
+        validate_qos(i32::from(qos))?;
         self.run_subscription_operation(
             server_id,
             topic,
@@ -1149,6 +1151,7 @@ impl<R: Runtime> MqttManager<R> {
         server_id: i64,
         topic: String,
     ) -> Result<SubscriptionOperationResult, String> {
+        validate_topic(&topic)?;
         self.run_subscription_operation(server_id, topic, SubscriptionRequest::Unsubscribe)
             .await
     }
@@ -1345,9 +1348,20 @@ impl<R: Runtime> MqttManager<R> {
         packet_size_limit: usize,
     ) -> Result<ProtocolConnection, String> {
         let protocol_version = MqttProtocolVersion::try_from(server.protocol_version.as_str())?;
-        if server.keep_alive < 0 {
-            return Err("MQTT keep alive cannot be negative".to_string());
+        if !(1..=u16::MAX as i32).contains(&server.port) {
+            return Err(format!(
+                "端口号必须在 1 到 65535 之间，当前为 {}",
+                server.port
+            ));
         }
+        let port = u16::try_from(server.port)
+            .map_err(|_| format!("端口号必须在 1 到 65535 之间，当前为 {}", server.port))?;
+        let keep_alive = u16::try_from(server.keep_alive).map_err(|_| {
+            format!(
+                "Keep Alive 必须在 0 到 65535 秒之间，当前为 {}",
+                server.keep_alive
+            )
+        })?;
         if protocol_version == MqttProtocolVersion::V5_0 && server.keep_alive < 5 {
             return Err("MQTT 5.0 keep alive must be at least 5 seconds".to_string());
         }
@@ -1366,8 +1380,8 @@ impl<R: Runtime> MqttManager<R> {
 
         match protocol_version {
             MqttProtocolVersion::V3_1_1 => {
-                let mut options = V3MqttOptions::new(client_id, broker_addr, server.port as u16);
-                options.set_keep_alive(Duration::from_secs(server.keep_alive as u64));
+                let mut options = V3MqttOptions::new(client_id, broker_addr, port);
+                options.set_keep_alive(Duration::from_secs(keep_alive as u64));
                 options.set_clean_session(server.clean_session);
                 options.set_max_packet_size(packet_size_limit, packet_size_limit);
                 if let Some(transport) = transport {
@@ -1391,8 +1405,8 @@ impl<R: Runtime> MqttManager<R> {
             MqttProtocolVersion::V5_0 => {
                 let packet_size_limit = u32::try_from(packet_size_limit)
                     .map_err(|_| "MQTT packet size limit exceeds MQTT 5.0 range".to_string())?;
-                let mut options = V5MqttOptions::new(client_id, broker_addr, server.port as u16);
-                options.set_keep_alive(Duration::from_secs(server.keep_alive as u64));
+                let mut options = V5MqttOptions::new(client_id, broker_addr, port);
+                options.set_keep_alive(Duration::from_secs(keep_alive as u64));
                 options.set_clean_start(server.clean_session);
                 if !server.clean_session {
                     options.set_session_expiry_interval(Some(u32::MAX));

@@ -1,3 +1,4 @@
+use crate::commands::validation::{validate_qos, validate_subscription, validate_topic};
 use crate::db::models::{Subscription, UpdateSubscriptionRequest};
 use crate::db::Storage;
 use crate::mqtt::MqttManager;
@@ -25,6 +26,8 @@ pub async fn add_subscription(
     topic: String,
     qos: i32,
 ) -> Result<Subscription, String> {
+    validate_subscription(&topic, qos)?;
+
     // 创建订阅
     let sub = Subscription {
         id: None,
@@ -55,6 +58,16 @@ pub async fn remove_subscription(
     server_id: i64,
     topic: String,
 ) -> Result<(), String> {
+    validate_topic(&topic)?;
+    let existing = storage
+        .get_subscriptions(server_id)
+        .into_iter()
+        .find(|subscription| subscription.id == Some(subscription_id))
+        .ok_or_else(|| "Subscription not found".to_string())?;
+    if existing.topic != topic {
+        return Err("Subscription changed; reload before deleting".to_string());
+    }
+
     // 如果已连接，则取消订阅
     if mqtt_manager.is_connected(server_id) {
         mqtt_manager
@@ -85,6 +98,16 @@ pub async fn toggle_subscription(
     qos: i32,
     is_active: bool,
 ) -> Result<(), String> {
+    validate_subscription(&topic, qos)?;
+    let existing = storage
+        .get_subscriptions(server_id)
+        .into_iter()
+        .find(|subscription| subscription.id == Some(subscription_id))
+        .ok_or_else(|| "Subscription not found".to_string())?;
+    if existing.topic != topic || existing.qos != qos {
+        return Err("Subscription changed; reload before updating".to_string());
+    }
+
     // 更新存储状态
     storage.update_subscription_status(subscription_id, is_active)?;
 
@@ -115,6 +138,12 @@ pub async fn update_subscription(
         .ok_or("Subscription not found")?;
     if old_topic != existing.topic {
         return Err("Subscription changed; reload before editing".to_string());
+    }
+    if let Some(topic) = request.topic.as_deref() {
+        validate_topic(topic)?;
+    }
+    if let Some(qos) = request.qos {
+        validate_qos(qos)?;
     }
     let next_topic = request
         .topic

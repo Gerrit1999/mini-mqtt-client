@@ -204,7 +204,7 @@ export function validateMqttTopic(topic: string): { valid: boolean; error?: stri
     return { valid: false, error: 'Topic 不能为空' }
   }
   
-  if (topic.length > 65535) {
+  if (new TextEncoder().encode(topic).length > 65535) {
     return { valid: false, error: 'Topic 长度超过限制' }
   }
   
@@ -249,22 +249,14 @@ export function validateSubscribeTopic(topic: string): { valid: boolean; error?:
     return baseValidation
   }
   
-  // 检查 # 通配符位置（只能在末尾）
-  const hashIndex = topic.indexOf('#')
-  if (hashIndex !== -1) {
-    if (hashIndex !== topic.length - 1) {
-      return { valid: false, error: '# 通配符只能在主题末尾' }
-    }
-    if (hashIndex > 0 && topic[hashIndex - 1] !== '/') {
-      return { valid: false, error: '# 通配符前必须是 /' }
-    }
-  }
-  
-  // 检查 + 通配符位置（必须占据整个层级）
+  // 通配符必须各自占据完整层级，# 只能出现在末尾层级
   const parts = topic.split('/')
-  for (const part of parts) {
+  for (const [index, part] of parts.entries()) {
+    if (part.includes('#') && (part !== '#' || index !== parts.length - 1)) {
+      return { valid: false, error: '# 通配符只能单独占据主题末尾层级' }
+    }
     if (part.includes('+') && part !== '+') {
-      return { valid: false, error: '+ 通配符必须占据整个层级' }
+      return { valid: false, error: '+ 通配符必须单独占据一个主题层级' }
     }
   }
   

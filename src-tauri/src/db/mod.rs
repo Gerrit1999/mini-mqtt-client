@@ -1,5 +1,6 @@
 pub mod models;
 
+use crate::commands::validation::{validate_server, validate_subscription};
 use models::{
     CommandTemplate, CreateEnvVariableRequest, CreateScriptRequest, CreateTemplateRequest,
     EnvVariable, MessageCleanupResult, MessageHistory, MqttServer, Script, Subscription,
@@ -105,6 +106,7 @@ impl Storage {
         };
 
         let mut data = load_yaml_or_backup::<AppData>(&file_path)?;
+        normalize_id_counters(&mut data);
         let legacy_messages = data.messages.clone();
         let message_db_path = message_db_path(&file_path);
         initialize_message_db(&message_db_path)?;
@@ -287,6 +289,7 @@ impl Storage {
     }
 
     pub fn create_server(&self, mut server: MqttServer) -> Result<i64, String> {
+        validate_server(&server)?;
         let mut data = self.data.write();
         data.next_server_id += 1;
         let id = data.next_server_id;
@@ -300,17 +303,24 @@ impl Storage {
     }
 
     pub fn update_server(&self, server: MqttServer) -> Result<(), String> {
+        validate_server(&server)?;
         let mut data = self.data.write();
-        if let Some(existing) = data.servers.iter_mut().find(|s| s.id == server.id) {
-            *existing = server;
-            existing.updated_at = Some(chrono::Utc::now().to_rfc3339());
-        }
+        let existing = data
+            .servers
+            .iter_mut()
+            .find(|s| s.id == server.id)
+            .ok_or_else(|| "Server not found".to_string())?;
+        *existing = server;
+        existing.updated_at = Some(chrono::Utc::now().to_rfc3339());
         drop(data);
         self.save()
     }
 
     pub fn delete_server(&self, id: i64) -> Result<(), String> {
         let mut data = self.data.write();
+        if !data.servers.iter().any(|server| server.id == Some(id)) {
+            return Err("Server not found".to_string());
+        }
         data.servers.retain(|s| s.id != Some(id));
         // 同时删除相关订阅、消息、模板、脚本和环境变量
         data.subscriptions.retain(|s| s.server_id != id);
@@ -333,6 +343,7 @@ impl Storage {
     }
 
     pub fn create_subscription(&self, mut sub: Subscription) -> Result<Subscription, String> {
+        validate_subscription(&sub.topic, sub.qos)?;
         let mut data = self.data.write();
         data.next_subscription_id += 1;
         sub.id = Some(data.next_subscription_id);
@@ -346,9 +357,12 @@ impl Storage {
 
     pub fn update_subscription_status(&self, id: i64, is_active: bool) -> Result<(), String> {
         let mut data = self.data.write();
-        if let Some(sub) = data.subscriptions.iter_mut().find(|s| s.id == Some(id)) {
-            sub.is_active = is_active;
-        }
+        let sub = data
+            .subscriptions
+            .iter_mut()
+            .find(|s| s.id == Some(id))
+            .ok_or_else(|| "Subscription not found".to_string())?;
+        sub.is_active = is_active;
         drop(data);
         self.save()
     }
@@ -359,6 +373,9 @@ impl Storage {
     ) -> Result<Subscription, String> {
         let mut data = self.data.write();
         if let Some(sub) = data.subscriptions.iter_mut().find(|s| s.id == Some(req.id)) {
+            let topic = req.topic.as_deref().unwrap_or(&sub.topic);
+            let qos = req.qos.unwrap_or(sub.qos);
+            validate_subscription(topic, qos)?;
             if let Some(topic) = req.topic {
                 sub.topic = topic;
             }
@@ -378,6 +395,9 @@ impl Storage {
 
     pub fn delete_subscription(&self, id: i64) -> Result<(), String> {
         let mut data = self.data.write();
+        if !data.subscriptions.iter().any(|sub| sub.id == Some(id)) {
+            return Err("Subscription not found".to_string());
+        }
         data.subscriptions.retain(|s| s.id != Some(id));
         drop(data);
         self.save()
@@ -638,6 +658,8 @@ impl Storage {
                 template.category = Some(category);
             }
             template.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        } else {
+            return Err("Template not found".to_string());
         }
         drop(data);
         self.save()
@@ -645,6 +667,13 @@ impl Storage {
 
     pub fn delete_template(&self, id: i64) -> Result<(), String> {
         let mut data = self.data.write();
+        if !data
+            .templates
+            .iter()
+            .any(|template| template.id == Some(id))
+        {
+            return Err("Template not found".to_string());
+        }
         data.templates.retain(|t| t.id != Some(id));
         drop(data);
         self.save()
@@ -652,10 +681,13 @@ impl Storage {
 
     pub fn increment_template_use_count(&self, id: i64) -> Result<(), String> {
         let mut data = self.data.write();
-        if let Some(template) = data.templates.iter_mut().find(|t| t.id == Some(id)) {
-            template.use_count += 1;
-            template.last_used_at = Some(chrono::Utc::now().to_rfc3339());
-        }
+        let template = data
+            .templates
+            .iter_mut()
+            .find(|t| t.id == Some(id))
+            .ok_or_else(|| "Template not found".to_string())?;
+        template.use_count += 1;
+        template.last_used_at = Some(chrono::Utc::now().to_rfc3339());
         drop(data);
         self.save()
     }
@@ -737,6 +769,8 @@ impl Storage {
                 script.description = Some(description);
             }
             script.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        } else {
+            return Err("Script not found".to_string());
         }
         drop(data);
         self.save()
@@ -744,6 +778,9 @@ impl Storage {
 
     pub fn delete_script(&self, id: i64) -> Result<(), String> {
         let mut data = self.data.write();
+        if !data.scripts.iter().any(|script| script.id == Some(id)) {
+            return Err("Script not found".to_string());
+        }
         data.scripts.retain(|s| s.id != Some(id));
         drop(data);
         self.save()
@@ -751,10 +788,13 @@ impl Storage {
 
     pub fn toggle_script(&self, id: i64, enabled: bool) -> Result<(), String> {
         let mut data = self.data.write();
-        if let Some(script) = data.scripts.iter_mut().find(|s| s.id == Some(id)) {
-            script.enabled = enabled;
-            script.updated_at = Some(chrono::Utc::now().to_rfc3339());
-        }
+        let script = data
+            .scripts
+            .iter_mut()
+            .find(|s| s.id == Some(id))
+            .ok_or_else(|| "Script not found".to_string())?;
+        script.enabled = enabled;
+        script.updated_at = Some(chrono::Utc::now().to_rfc3339());
         drop(data);
         self.save()
     }
@@ -836,6 +876,8 @@ impl Storage {
                 env_var.description = Some(description);
             }
             env_var.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        } else {
+            return Err("Environment variable not found".to_string());
         }
         drop(data);
         self.save()
@@ -843,10 +885,42 @@ impl Storage {
 
     pub fn delete_env_variable(&self, id: i64) -> Result<(), String> {
         let mut data = self.data.write();
+        if !data
+            .env_variables
+            .iter()
+            .any(|variable| variable.id == Some(id))
+        {
+            return Err("Environment variable not found".to_string());
+        }
         data.env_variables.retain(|e| e.id != Some(id));
         drop(data);
         self.save()
     }
+}
+
+fn normalize_id_counters(data: &mut AppData) {
+    fn max_id<T>(items: &[T], id: impl Fn(&T) -> Option<i64>) -> i64 {
+        items.iter().filter_map(id).max().unwrap_or(0)
+    }
+
+    data.next_server_id = data
+        .next_server_id
+        .max(max_id(&data.servers, |server| server.id));
+    data.next_subscription_id = data
+        .next_subscription_id
+        .max(max_id(&data.subscriptions, |subscription| subscription.id));
+    data.next_message_id = data
+        .next_message_id
+        .max(max_id(&data.messages, |message| message.id));
+    data.next_template_id = data
+        .next_template_id
+        .max(max_id(&data.templates, |template| template.id));
+    data.next_script_id = data
+        .next_script_id
+        .max(max_id(&data.scripts, |script| script.id));
+    data.next_env_variable_id = data
+        .next_env_variable_id
+        .max(max_id(&data.env_variables, |variable| variable.id));
 }
 
 fn message_db_path(data_file_path: &Path) -> PathBuf {
@@ -1410,6 +1484,181 @@ mod tests {
 
         assert!(error.contains("could not be loaded"));
         assert!(error.contains("backup"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn test_server(id: Option<i64>) -> MqttServer {
+        MqttServer {
+            id,
+            name: "server".to_string(),
+            host: "localhost".to_string(),
+            port: 1883,
+            protocol: Some("mqtt".to_string()),
+            websocket_path: None,
+            protocol_version: "5.0".to_string(),
+            username: None,
+            password: None,
+            client_id: None,
+            keep_alive: 60,
+            clean_session: true,
+            use_tls: false,
+            ssl_secure: true,
+            alpn: None,
+            certificate_type: "ca_signed".to_string(),
+            ca_cert: None,
+            client_cert: None,
+            client_key: None,
+            client_key_password: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn id_counters_are_normalized_to_existing_maximum_ids() {
+        let mut data = AppData::default();
+        data.servers.push(test_server(Some(17)));
+        data.subscriptions.push(Subscription {
+            id: Some(23),
+            server_id: 17,
+            topic: "sensors/#".to_string(),
+            qos: 1,
+            is_active: true,
+            color: None,
+            created_at: None,
+        });
+        data.messages.push(MessageHistory {
+            id: Some(29),
+            server_id: 17,
+            direction: "receive".to_string(),
+            topic: "sensors/1".to_string(),
+            payload: None,
+            payload_format: None,
+            qos: 0,
+            retain: false,
+            created_at: None,
+            operation_id: None,
+            publish_status: None,
+            packet_id: None,
+            publish_error: None,
+            sent_at: None,
+            confirmed_at: None,
+        });
+        data.templates.push(CommandTemplate {
+            id: Some(31),
+            server_id: 17,
+            name: "template".to_string(),
+            topic: "sensors/1".to_string(),
+            payload: "{}".to_string(),
+            payload_type: "text".to_string(),
+            qos: 0,
+            retain: false,
+            description: None,
+            category: None,
+            use_count: 0,
+            last_used_at: None,
+            created_at: None,
+            updated_at: None,
+        });
+        data.scripts.push(Script {
+            id: Some(37),
+            server_id: 17,
+            name: "script".to_string(),
+            script_type: "before_publish".to_string(),
+            code: "payload".to_string(),
+            enabled: true,
+            description: None,
+            created_at: None,
+            updated_at: None,
+        });
+        data.env_variables.push(EnvVariable {
+            id: Some(41),
+            server_id: 17,
+            name: "ENV".to_string(),
+            value: "value".to_string(),
+            description: None,
+            created_at: None,
+            updated_at: None,
+        });
+
+        normalize_id_counters(&mut data);
+
+        assert_eq!(data.next_server_id, 17);
+        assert_eq!(data.next_subscription_id, 23);
+        assert_eq!(data.next_message_id, 29);
+        assert_eq!(data.next_template_id, 31);
+        assert_eq!(data.next_script_id, 37);
+        assert_eq!(data.next_env_variable_id, 41);
+    }
+
+    #[test]
+    fn missing_storage_targets_return_errors_without_writing() {
+        let dir = test_dir("missing-targets");
+        let data_path = dir.join("data.yaml");
+        let storage = Storage {
+            data: RwLock::new(AppData::default()),
+            config: RwLock::new(AppConfig::default()),
+            config_path: dir.join("config.yaml"),
+            file_path: data_path.clone(),
+            message_db_path: dir.join("messages.sqlite"),
+        };
+
+        let mut invalid_server = test_server(None);
+        invalid_server.port = 0;
+        assert!(storage.create_server(invalid_server).is_err());
+        assert!(storage
+            .create_subscription(Subscription {
+                id: None,
+                server_id: 1,
+                topic: "sensors/#/invalid".to_string(),
+                qos: 3,
+                is_active: true,
+                color: None,
+                created_at: None,
+            })
+            .is_err());
+        assert!(storage.update_server(test_server(Some(999))).is_err());
+        assert!(storage.delete_server(999).is_err());
+        assert!(storage.update_subscription_status(999, false).is_err());
+        assert!(storage.delete_subscription(999).is_err());
+        assert!(storage
+            .update_template(UpdateTemplateRequest {
+                id: 999,
+                name: Some("missing".to_string()),
+                topic: None,
+                payload: None,
+                payload_type: None,
+                qos: None,
+                retain: None,
+                description: None,
+                category: None,
+            })
+            .is_err());
+        assert!(storage.delete_template(999).is_err());
+        assert!(storage
+            .update_script(UpdateScriptRequest {
+                id: 999,
+                name: None,
+                code: Some("missing".to_string()),
+                enabled: None,
+                description: None,
+            })
+            .is_err());
+        assert!(storage.delete_script(999).is_err());
+        assert!(storage.toggle_script(999, true).is_err());
+        assert!(storage
+            .update_env_variable(UpdateEnvVariableRequest {
+                id: 999,
+                name: None,
+                value: Some("missing".to_string()),
+                description: None,
+            })
+            .is_err());
+        assert!(storage.delete_env_variable(999).is_err());
+        assert!(storage.get_servers().is_empty());
+        assert!(storage.get_subscriptions(1).is_empty());
+        assert!(!data_path.exists());
 
         fs::remove_dir_all(dir).unwrap();
     }
