@@ -17,7 +17,7 @@ import type {
   SubscriptionRuntimeState,
 } from "@/types/mqtt";
 import { ScriptEngine } from "@/utils/scriptEngine";
-import type { Script } from "@/stores/script";
+import { clearScriptCache, getCachedScripts } from "@/utils/scriptCache";
 import { handleScriptError } from "@/utils/errorHandler";
 import i18n from "@/i18n";
 import { useAppStore } from "@/stores/app";
@@ -47,12 +47,6 @@ interface ReceivedMessage {
   timestamp: string;
 }
 
-  // 脚本缓存接口
-interface ScriptCache {
-  scripts: Script[];
-  timestamp: number;
-}
-
 // 环境变量缓存接口
 interface EnvCache {
   variables: Record<string, string>;
@@ -65,8 +59,8 @@ type TrackedPublishRequest = Omit<PublishPayload, "operation_id" | "payload_byte
   scriptError?: string;
 };
 
-// 脚本缓存有效期（毫秒）
-const SCRIPT_CACHE_TTL = 5000;
+// 环境变量缓存有效期（毫秒）
+const ENV_CACHE_TTL = 5000;
 
 function formatSubscriptionFailure(state: SubscriptionRuntimeState): string {
   const reason = state.error ?? "Unknown error";
@@ -121,9 +115,6 @@ export const useMqttStore = defineStore("mqtt", () => {
     Map<number, Map<string, SubscriptionRuntimeState>>
   >(new Map());
 
-  // 脚本缓存（避免高频调用 invoke）
-  const scriptCache = new Map<string, ScriptCache>();
-
   // 环境变量缓存
   const envCache = new Map<number, EnvCache>();
 
@@ -135,44 +126,12 @@ export const useMqttStore = defineStore("mqtt", () => {
   // 单调递增序列号，保证消息顺序
   let nextSeq = 0;
 
-  // 获取缓存的脚本
-  async function getCachedScripts(serverId: number, scriptType: string): Promise<Script[]> {
-    const cacheKey = `${serverId}-${scriptType}`;
-    const cached = scriptCache.get(cacheKey);
-    const now = Date.now();
-
-    if (cached && now - cached.timestamp < SCRIPT_CACHE_TTL) {
-      return cached.scripts;
-    }
-
-    try {
-      const scripts = await invoke<Script[]>("get_enabled_scripts", {
-        serverId,
-        scriptType,
-      });
-      scriptCache.set(cacheKey, { scripts, timestamp: now });
-      return scripts;
-    } catch {
-      return [];
-    }
-  }
-
-  // 清除脚本缓存（当脚本更新时调用）
-  function clearScriptCache(serverId?: number) {
-    if (serverId) {
-      scriptCache.delete(`${serverId}-before_send`);
-      scriptCache.delete(`${serverId}-after_receive`);
-    } else {
-      scriptCache.clear();
-    }
-  }
-
   // 获取缓存的环境变量
   async function getCachedEnvVariables(serverId: number): Promise<Record<string, string>> {
     const cached = envCache.get(serverId);
     const now = Date.now();
 
-    if (cached && now - cached.timestamp < SCRIPT_CACHE_TTL) {
+    if (cached && now - cached.timestamp < ENV_CACHE_TTL) {
       return cached.variables;
     }
 
