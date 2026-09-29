@@ -240,16 +240,12 @@ import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Position, Loading, SuccessFilled } from '@element-plus/icons-vue'
-import { invoke } from '@tauri-apps/api/core'
 import {
   useTemplateStore,
   type CommandTemplate,
   GLOBAL_TEMPLATE_SERVER_ID
 } from '@/stores/template'
-import { useMqttStore } from '@/stores/mqtt'
-import { useEnvStore } from '@/stores/env'
-import { ScriptEngine } from '@/utils/scriptEngine'
-import type { Script } from '@/stores/script'
+import { usePublishPipeline } from '@/composables/usePublishPipeline'
 
 const { t } = useI18n()
 
@@ -265,8 +261,7 @@ const emit = defineEmits<{
 
 const templateStore = useTemplateStore()
 const { scopeFilter } = storeToRefs(templateStore)
-const mqttStore = useMqttStore()
-const envStore = useEnvStore()
+const { publish } = usePublishPipeline()
 
 // 对话框可见性
 const dialogVisible = computed({
@@ -519,63 +514,32 @@ async function publishNext(runId: number = publishRunId) {
   }
   currentCommand.value = command
 
-  let processedTopic = command.topic
-  let processedPayload = command.payload
-  try {
-    // 确保加载环境变量
-    if (envStore.variables.length === 0) {
-      await envStore.loadVariables(props.serverId)
-    }
-    
-    // 替换环境变量
-    processedTopic = envStore.replaceVariables(command.topic)
-    processedPayload = envStore.replaceVariables(command.payload)
-    
-    // 应用发送前处理脚本
-    try {
-      const scripts = await invoke<Script[]>('get_enabled_scripts', {
-        serverId: props.serverId,
-        scriptType: 'before_publish',
-      })
-      if (scripts.length > 0) {
-        processedPayload = await ScriptEngine.executeBeforePublish(
-          scripts, 
-          processedPayload,
-          processedTopic,
-          envStore.variablesMap
-        )
-      }
-    } catch (e) {
-      console.error('脚本处理失败:', e)
-    }
-    
-  } catch (error: any) {
-    failCount.value++
-    addLog(command.topic, command.payload, 'error', error?.message)
-    advancePublishQueue(runId, commands.length)
-    return
-  }
-
   if (!isRunning.value || runId !== publishRunId) return
 
   let trackedPublish!: Promise<void>
   trackedPublish = Promise.resolve()
-    .then(() => mqttStore.publishTrackedMessage(props.serverId, {
-      topic: processedTopic,
-      payload: processedPayload,
+    .then(() => publish({
+      serverId: props.serverId,
+      topic: command.topic,
+      payload: command.payload,
       qos: command.qos,
       retain: command.retain,
       format: command.payload_type,
     }))
-    .then(() => {
+    .then((result) => {
       if (runId !== publishRunId) return
-      successCount.value++
-      addLog(processedTopic, processedPayload, 'success')
+      if (result.success) {
+        successCount.value++
+        addLog(result.topic, result.payload, 'success')
+      } else {
+        failCount.value++
+        addLog(result.topic, result.payload, 'error', result.error)
+      }
     })
     .catch((error: any) => {
       if (runId !== publishRunId) return
       failCount.value++
-      addLog(processedTopic, processedPayload, 'error', error?.message ?? String(error))
+      addLog(command.topic, command.payload, 'error', error?.message ?? String(error))
     })
     .finally(() => {
       inFlightPublishes.delete(trackedPublish)

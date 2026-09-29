@@ -632,6 +632,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     clearMessages,
     addPublishMessage,
     reserveSeq,
+    getCachedEnvVariables,
     clearScriptCache,
     clearEnvCache,
   };

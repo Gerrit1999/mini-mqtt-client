@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import PublishPanel from "./PublishPanel.vue";
 import ElementPlus, { ElMessage } from "element-plus";
 import { createI18n } from "vue-i18n";
+import { clearScriptCache } from "@/utils/scriptCache";
 
 // Mock Tauri API
 vi.mock("@tauri-apps/api/core", () => ({
@@ -101,6 +102,7 @@ const mockPublishMessage = vi.fn();
 const mockAddPublishMessage = vi.fn();
 const mockReserveSeq = vi.fn(() => 0);
 const mockGetConnectionStatus = vi.fn(() => "connected");
+const mockGetCachedEnvVariables = vi.fn(async () => ({}));
 
 // Mock stores
 vi.mock("@/stores/server", () => ({
@@ -121,6 +123,7 @@ vi.mock("@/stores/mqtt", () => ({
     addPublishMessage: mockAddPublishMessage,
     reserveSeq: mockReserveSeq,
     getConnectionStatus: mockGetConnectionStatus,
+    getCachedEnvVariables: mockGetCachedEnvVariables,
     messagesByServer: { value: new Map() },
   }),
 }));
@@ -132,24 +135,14 @@ vi.mock("@/stores/app", () => ({
   }),
 }));
 
-const mockReplaceVariables = vi.fn((text: string) => text);
-const mockLoadVariables = vi.fn();
-
-vi.mock("@/stores/env", () => ({
-  useEnvStore: () => ({
-    variables: [],
-    variablesMap: {},
-    loadVariables: mockLoadVariables,
-    replaceVariables: mockReplaceVariables,
-  }),
-}));
-
 describe("PublishPanel", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    clearScriptCache();
     vi.useFakeTimers();
     mockGetConnectionStatus.mockReturnValue("connected");
+    mockGetCachedEnvVariables.mockResolvedValue({});
     // 默认 mock：get_enabled_scripts 返回空数组
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_enabled_scripts") return [];
@@ -603,9 +596,7 @@ describe("PublishPanel", () => {
 
   describe("环境变量替换", () => {
     it("定时发送每条消息都应替换环境变量", async () => {
-      mockReplaceVariables.mockImplementation((text: string) =>
-        text.replace("{{DEVICE_ID}}", "device_001")
-      );
+      mockGetCachedEnvVariables.mockResolvedValue({ DEVICE_ID: "device_001" });
       mockPublishMessage.mockResolvedValue(undefined);
 
       const wrapper = createWrapper();
@@ -629,9 +620,6 @@ describe("PublishPanel", () => {
       );
       await startBtn!.trigger("click");
       await flushPromises();
-
-      // 应调用 replaceVariables
-      expect(mockReplaceVariables).toHaveBeenCalledWith("device/{{DEVICE_ID}}/command");
 
       // 发布应使用替换后的值
       expect(mockPublishMessage).toHaveBeenCalledWith(

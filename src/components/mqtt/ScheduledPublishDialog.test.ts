@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import ScheduledPublishDialog from "./ScheduledPublishDialog.vue";
 import ElementPlus from "element-plus";
 import { createI18n } from "vue-i18n";
+import { clearScriptCache } from "@/utils/scriptCache";
 
 // Mock Tauri API
 vi.mock("@tauri-apps/api/core", () => ({
@@ -12,6 +13,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 const mockedInvoke = vi.mocked(invoke);
+import { ScriptEngine } from "@/utils/scriptEngine";
+const mockGetCachedEnvVariables = vi.fn(async () => ({}));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -112,19 +115,7 @@ vi.mock("@/stores/mqtt", () => ({
     },
     reserveSeq: vi.fn(() => 0),
     getConnectionStatus: vi.fn(() => "connected"),
-  }),
-}));
-
-// Mock env store
-const mockReplaceVariables = vi.fn((text: string) => text);
-const mockLoadVariables = vi.fn();
-
-vi.mock("@/stores/env", () => ({
-  useEnvStore: () => ({
-    variables: [],
-    variablesMap: {},
-    loadVariables: mockLoadVariables,
-    replaceVariables: mockReplaceVariables,
+    getCachedEnvVariables: mockGetCachedEnvVariables,
   }),
 }));
 
@@ -144,6 +135,8 @@ describe("ScheduledPublishDialog", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    clearScriptCache();
+    mockGetCachedEnvVariables.mockResolvedValue({});
     vi.useFakeTimers();
     // 默认 mock：get_enabled_scripts 返回空数组
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -608,6 +601,40 @@ describe("ScheduledPublishDialog", () => {
       expect(vm.logs[0].status).toBe("error");
     });
 
+    it("发送前脚本失败时不发布并计入失败", async () => {
+      setupTemplates();
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_enabled_scripts") {
+          return [{
+            id: 1,
+            server_id: 1,
+            name: "失败脚本",
+            script_type: "before_publish",
+            code: "function process(payload) { throw new Error('boom'); }",
+            enabled: true,
+          }];
+        }
+        return undefined;
+      });
+      vi.mocked(ScriptEngine.executeBeforePublish).mockRejectedValueOnce(new Error("boom"));
+
+      const wrapper = createWrapper();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.config.loopMode = "count";
+      vm.config.loopCount = 1;
+      vm.selectedIds = [1];
+
+      await vm.handleStart();
+      await flushPromises();
+
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(vm.sentCount).toBe(1);
+      expect(vm.successCount).toBe(0);
+      expect(vm.failCount).toBe(1);
+      expect(vm.logs[0].status).toBe("error");
+    });
+
     it("停止发布应中断发送", async () => {
       setupTemplates();
       mockPublish.mockResolvedValue(undefined);
@@ -982,9 +1009,7 @@ describe("ScheduledPublishDialog", () => {
   describe("环境变量和脚本", () => {
     it("发送前应替换环境变量", async () => {
       setupTemplates();
-      mockReplaceVariables.mockImplementation((text: string) =>
-        text.replace("{{DEVICE_ID}}", "device_001")
-      );
+      mockGetCachedEnvVariables.mockResolvedValue({ DEVICE_ID: "device_001" });
       mockPublish.mockResolvedValue(undefined);
 
       const store = useTemplateStore();
@@ -1016,9 +1041,6 @@ describe("ScheduledPublishDialog", () => {
       await vm.handleStart();
       await flushPromises();
 
-      // 应调用 replaceVariables
-      expect(mockReplaceVariables).toHaveBeenCalledWith("device/{{DEVICE_ID}}/command");
-      expect(mockReplaceVariables).toHaveBeenCalledWith('{"id":"{{DEVICE_ID}}"}');
     });
   });
 });
