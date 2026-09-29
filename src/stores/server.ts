@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { MqttServer, ConnectionStatus } from "@/types/mqtt";
+import { clearScriptCache } from "@/utils/scriptCache";
 
 const SERVER_SIDEBAR_CONFIG_KEY = "mqtt-client-server-sidebar";
 
@@ -217,6 +218,7 @@ export const useServerStore = defineStore("server", () => {
   // 删除 Server
   const removeServer = async (id: number) => {
     await invoke("delete_server", { id });
+    clearScriptCache(id);
     
     const index = servers.value.findIndex((s) => s.server.id === id);
     if (index !== -1) {

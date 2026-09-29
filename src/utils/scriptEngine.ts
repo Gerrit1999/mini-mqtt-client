@@ -1,7 +1,51 @@
 import type { Script } from "@/stores/script";
 import { errorHandler, ErrorType } from "@/utils/errorHandler";
 import { decodePayload, encodePayload } from "@/utils/payloadCodec";
+import { ScriptCompilerCache } from "@/utils/scriptCompiler";
 import { deflate, gzip, inflate, ungzip } from "pako";
+
+type CompiledScript = (...args: unknown[]) => Promise<unknown>;
+type AsyncFunctionConstructor = new (...args: string[]) => CompiledScript;
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as AsyncFunctionConstructor;
+const scriptContextKeys = [
+  "payload",
+  "payloadBytes",
+  "topic",
+  "env",
+  "console",
+  "JSON",
+  "parseInt",
+  "parseFloat",
+  "String",
+  "Number",
+  "Boolean",
+  "Array",
+  "Object",
+  "Date",
+  "Math",
+  "encodeURIComponent",
+  "decodeURIComponent",
+  "atob",
+  "btoa",
+  "crypto",
+  "pako",
+];
+
+function getWrappedCode(code: string): string {
+  return `
+    "use strict";
+    ${code}
+    if (typeof process === 'function') {
+      return await process(payload, topic);
+    }
+    return payload;
+  `;
+}
+
+const compiledScripts = new ScriptCompilerCache(
+  (code) => new AsyncFunction(...scriptContextKeys, getWrappedCode(code))
+);
 
 /**
  * 加密工具类 - 提供常用的加解密函数
@@ -680,28 +724,7 @@ export class ScriptEngine {
       },
     };
 
-    // 包装代码，确保能够获取返回值
-    // 如果代码定义了 process 函数，自动调用它
-    const wrappedCode = `
-      "use strict";
-      ${code}
-      // 如果定义了 process 函数，调用它并返回结果
-      if (typeof process === 'function') {
-        return await process(payload, topic);
-      }
-      return payload;
-    `;
-
-    // 使用 AsyncFunction 构造器支持 async/await
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    const fn = new AsyncFunction(
-      ...Object.keys(sandbox),
-      wrappedCode
-    );
-
-    // 执行异步函数并等待结果
-    const result = await fn(...Object.values(sandbox));
+    const result = await compiledScripts.get(code)(...Object.values(sandbox));
     
     // 确保返回字符串
     if (result === undefined || result === null) {
@@ -726,7 +749,7 @@ export class ScriptEngine {
    */
   static validateScript(code: string): string | null {
     try {
-      new Function("payload", "topic", `"use strict"; ${code}`);
+      new AsyncFunction(...scriptContextKeys, getWrappedCode(code));
       return null;
     } catch (error: any) {
       return error.message || "脚本语法错误";

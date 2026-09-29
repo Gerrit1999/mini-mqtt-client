@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { clearScriptCache } from "@/utils/scriptCache";
 
 export type ScriptType = "before_publish" | "after_receive";
 
@@ -63,6 +64,7 @@ export const useScriptStore = defineStore("script", () => {
   // 创建脚本
   async function createScript(request: CreateScriptRequest): Promise<number> {
     const id = await invoke<number>("create_script", { request });
+    clearScriptCache(request.server_id);
     await loadScripts(request.server_id);
     return id;
   }
@@ -70,18 +72,21 @@ export const useScriptStore = defineStore("script", () => {
   // 更新脚本
   async function updateScript(request: UpdateScriptRequest, serverId: number): Promise<void> {
     await invoke("update_script", { request });
+    clearScriptCache(serverId);
     await loadScripts(serverId);
   }
 
   // 删除脚本
   async function deleteScript(id: number, serverId: number): Promise<void> {
     await invoke("delete_script", { id });
+    clearScriptCache(serverId);
     await loadScripts(serverId);
   }
 
   // 切换脚本启用状态
   async function toggleScript(id: number, enabled: boolean, serverId: number): Promise<void> {
     await invoke("toggle_script", { id, enabled });
+    clearScriptCache(serverId);
     await loadScripts(serverId);
   }
 
