@@ -29,6 +29,7 @@
             <el-option
               v-for="topic in topics"
               :key="topic"
+              v-memo="[topic]"
               :label="topic"
               :value="topic"
             />
@@ -110,8 +111,15 @@
       </div>
     </div>
 
-    <div class="message-scroll-wrapper" ref="listViewport">
-      <div v-if="showLoadMore" class="load-more-row">
+    <div
+      class="message-scroll-wrapper"
+      ref="listViewport"
+      @wheel.passive="supersedeInitialAlignment"
+      @touchmove.passive="supersedeInitialAlignment"
+      @pointerdown.self="supersedeInitialAlignment"
+      @keydown="handleScrollKey"
+    >
+      <div v-if="showLoadMore" ref="loadMoreRow" class="load-more-row">
         <el-button
           size="small"
           text
@@ -128,11 +136,15 @@
         </el-empty>
       </div>
 
-      <div v-else class="message-items">
+      <div v-else class="message-items" :style="{ height: `${Math.max(0, virtualizer.getTotalSize() - historyControlHeight)}px` }">
         <div
-          v-for="msg in filteredMessages"
-          :key="getMessageKey(msg)"
+          v-for="{ row, msg } in virtualMessages"
+          :key="String(row.key)"
+          :ref="measureRow"
+          :data-index="row.index"
+          :data-message-key="row.key"
           class="message-row"
+          :style="{ transform: `translateY(${row.start - historyControlHeight}px)` }"
         >
           <div
             class="message-item"
@@ -320,7 +332,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch, onUpdated } from "vue";
+import type { ComponentPublicInstance } from "vue";
+import { useVirtualizer } from "@tanstack/vue-virtual";
+import { createMessageIdentity } from "@/utils/messageIdentity";
 import { useI18n } from "vue-i18n";
 import {
   ChatDotRound,
@@ -356,7 +371,6 @@ const { t } = useI18n();
 type DirectionFilter = "all" | "publish" | "receive";
 type ExportFormat = "json" | "csv";
 interface DerivedMessageMeta {
-  key: string;
   payloadText: string;
   payloadHex?: string;
   payloadBase64?: string;
@@ -372,40 +386,52 @@ const subscriptionStore = useSubscriptionStore();
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const derivedMessageCache = new WeakMap<MqttMessage, DerivedMessageMeta>();
+const messageIdentity = createMessageIdentity();
+const historyConversionCache = new WeakMap<MessageHistory, MqttMessage>();
 
 const listViewport = ref<HTMLElement>();
 const HISTORY_PAGE_SIZE = 200;
-
-function getScrollWindow(): HTMLElement | null {
-  return listViewport.value ?? null;
-}
+const loadMoreRow = ref<HTMLElement>();
+const historyControlHeight = ref(0);
+let historyGeneration = 0;
+let layoutGeneration = 0;
+let scrollIntentGeneration = 0;
+let resizeObserver: ResizeObserver | undefined;
+let viewportWidth: number | undefined;
+let viewportAnchor: string | undefined;
 
 function scrollToBottom() {
-  const el = getScrollWindow();
-  if (el) {
-    el.scrollTop = el.scrollHeight;
+  virtualizer.value.scrollToEnd();
+}
+
+function supersedeInitialAlignment() {
+  scrollIntentGeneration++;
+}
+
+function handleScrollKey(event: KeyboardEvent) {
+  if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+    supersedeInitialAlignment();
   }
 }
 
-// 自动滚动到底部（监听 mqtt.ts 派发的原生事件，确保在 DOM 更新后触发）
-function handleMessagesFlushed(event: Event) {
-  const customEvent = event as CustomEvent<{ serverIds: number[] }>;
-  const serverId = serverStore.activeServerId;
-  if (!serverId) return;
-  if (!customEvent.detail.serverIds.includes(serverId)) return;
-
-  nextTick(() => {
-    if (!appStore.autoScroll) return;
-    scrollToBottom();
-  });
-}
-
 onMounted(() => {
-  window.addEventListener("mqtt-messages-flushed", handleMessagesFlushed);
+  if (typeof ResizeObserver === "undefined") return;
+  viewportWidth = listViewport.value?.clientWidth;
+  resizeObserver = new ResizeObserver(() => {
+    historyControlHeight.value = loadMoreRow.value?.offsetHeight ?? 0;
+    const width = listViewport.value?.clientWidth;
+    if (width !== viewportWidth) {
+      viewportWidth = width;
+      invalidateMeasurements(viewportAnchor);
+    }
+  });
+  if (listViewport.value) resizeObserver.observe(listViewport.value);
 });
 
 onUnmounted(() => {
-  window.removeEventListener("mqtt-messages-flushed", handleMessagesFlushed);
+  historyGeneration++;
+  layoutGeneration++;
+  resizeObserver?.disconnect();
 });
 
 // 获取消息的 topic 颜色
@@ -475,8 +501,10 @@ function decodeHistoryPayload(
 }
 
 function historyToRealtimeMessage(message: MessageHistory): MqttMessage {
+  const cached = historyConversionCache.get(message);
+  if (cached) return cached;
   const decodedPayload = decodeHistoryPayload(message.payload, message.payload_format);
-  return {
+  const converted: MqttMessage = {
     id: message.id,
     server_id: message.server_id,
     direction: message.direction as "publish" | "receive",
@@ -492,13 +520,12 @@ function historyToRealtimeMessage(message: MessageHistory): MqttMessage {
     sent_at: message.sent_at,
     confirmed_at: message.confirmed_at,
   };
+  historyConversionCache.set(message, converted);
+  return converted;
 }
 
 function getMessageKey(msg: MqttMessage): string {
-  if (msg.operation_id) return `operation:${msg.operation_id}`;
-  if (msg.id !== undefined) return `id:${msg.id}`;
-  if (msg.seq !== undefined) return `seq:${msg.seq}`;
-  return `fallback:${msg.direction}:${msg.topic}:${msg.timestamp ?? ""}:${msg.qos}:${msg.retain}`;
+  return messageIdentity.key(msg);
 }
 
 function getPublishStatusLabel(msg: MqttMessage): string {
@@ -554,7 +581,6 @@ function buildDerivedMessageMeta(msg: MqttMessage): DerivedMessageMeta {
   }
 
   return {
-    key: getMessageKey(msg),
     payloadText,
     format,
     timestampValue: msg.timestamp ? Date.parse(msg.timestamp) : NaN,
@@ -634,37 +660,7 @@ const receivedCount = computed(() => {
 });
 
 function mergeMessages(history: MqttMessage[], realtime: MqttMessage[]): MqttMessage[] {
-  const mergedMap = new Map<string, MqttMessage>();
-  for (const msg of history) {
-    mergedMap.set(getDerivedMessageMeta(msg).key, msg);
-  }
-  for (const msg of realtime) {
-    const key = getDerivedMessageMeta(msg).key;
-    const existing = mergedMap.get(key);
-    if (!existing) {
-      mergedMap.set(key, msg);
-      continue;
-    }
-
-    const statusRank = { pending: 0, sent: 1, confirmed: 2, failed: 2 } as const;
-    const existingRank = existing.publish_status
-      ? statusRank[existing.publish_status]
-      : -1;
-    const incomingRank = msg.publish_status ? statusRank[msg.publish_status] : -1;
-    const statusSource = existingRank > incomingRank ? existing : msg;
-    mergedMap.set(key, {
-      ...existing,
-      ...msg,
-      id: msg.id ?? existing.id,
-      publish_status: statusSource.publish_status,
-      packet_id: statusSource.packet_id,
-      publish_error: statusSource.publish_error,
-      sent_at: statusSource.sent_at,
-      confirmed_at: statusSource.confirmed_at,
-    });
-  }
-
-  return Array.from(mergedMap.values()).sort(compareMessages);
+  return messageIdentity.merge(history, realtime).sort(compareMessages);
 }
 
 // 从历史 + 实时流合并消息
@@ -722,6 +718,89 @@ function applyMessageFilters(source: MqttMessage[]): MqttMessage[] {
 
 // 过滤后的消息
 const filteredMessages = computed(() => applyMessageFilters(messages.value));
+
+// Capture immutable keys in each options snapshot. The previous snapshot must
+// still describe the old layout when the library detects prepend/append.
+const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => {
+  const keys = filteredMessages.value.map(getMessageKey);
+  const serverId = serverStore.activeServerId;
+  const liveTail = !!serverId && mqttStore.getServerMessages(serverId)
+    .some((message) => getMessageKey(message) === keys[keys.length - 1]);
+  return {
+    count: keys.length,
+    getScrollElement: () => listViewport.value ?? null,
+    getItemKey: (index: number) => keys[index],
+    estimateSize: () => 88,
+    overscan: 6,
+    paddingStart: historyControlHeight.value,
+    anchorTo: "end" as const,
+    followOnAppend: appStore.autoScroll && liveTail,
+    scrollEndThreshold: 2,
+  };
+}));
+const virtualMessages = computed(() => virtualizer.value.getVirtualItems().map((row) => ({
+  row, msg: filteredMessages.value[row.index],
+})));
+
+function measureRow(element: Element | ComponentPublicInstance | null) {
+  virtualizer.value.measureElement(element instanceof HTMLElement ? element : null);
+}
+
+// Vue's adapter updates before rendering. Finish the library's pending scroll
+// reconciliation after the sizer has committed, including browser clamping.
+onUpdated(() => {
+  virtualizer.value._willUpdate();
+  // Keep the reading item from the last committed width. Row ResizeObservers
+  // can fire before the viewport observer during reflow.
+  const viewport = listViewport.value;
+  if (!viewport || viewport.clientWidth !== viewportWidth) return;
+  const top = viewport.getBoundingClientRect().top;
+  const row = Array.from(viewport.querySelectorAll<HTMLElement>(".message-row"))
+    .find((element) => element.getBoundingClientRect().bottom > top + 1);
+  viewportAnchor = row?.dataset.messageKey;
+});
+
+watch(loadMoreRow, (element, previous) => {
+  if (previous) resizeObserver?.unobserve(previous);
+  if (element) resizeObserver?.observe(element);
+  const height = element?.offsetHeight ?? 0;
+  const delta = height - historyControlHeight.value;
+  historyControlHeight.value = height;
+  if (delta && listViewport.value && listViewport.value.scrollTop > 0) {
+    virtualizer.value.scrollBy(delta);
+  }
+}, { flush: "post" });
+
+async function invalidateMeasurements(previousKey?: string) {
+  const generation = ++layoutGeneration;
+  const instance = virtualizer.value;
+  const atEnd = instance.isAtEnd();
+  const anchor = instance.getVirtualItemForOffset(instance.scrollOffset ?? 0);
+  instance.measure();
+  await nextTick();
+  if (generation !== layoutGeneration) return;
+  if (anchor) {
+    const index = filteredMessages.value.findIndex((msg) => getMessageKey(msg) === (previousKey ?? anchor.key));
+    if (index >= 0) {
+      // Reflow starts at the current item, with its full content visible. The
+      // index command lets the library reconcile newly measured heights.
+      instance.scrollToIndex(index, { align: "start" });
+    }
+  }
+  if (atEnd) instance.scrollToEnd();
+}
+
+watch(formatJsonPayload, () => invalidateMeasurements(), { flush: "sync" });
+watch([searchKeyword, searchMatchCase, searchWholeWord, searchUseRegex, directionFilter, selectedTopics], async () => {
+  const generation = ++layoutGeneration;
+  // A new query starts at its first result; arrivals thereafter obey bottom follow.
+  await nextTick();
+  if (generation !== layoutGeneration) return;
+  virtualizer.value.scrollToOffset(0);
+}, { deep: true });
+watch(() => appStore.autoScroll, (enabled) => {
+  if (enabled) scrollToBottom();
+});
 
 // 过滤标签
 const filterLabel = computed(() => {
@@ -876,10 +955,13 @@ function handleFilterCommand(command: string) {
 }
 
 async function loadInitialHistory(serverId: number) {
+  const generation = ++historyGeneration;
+  const layout = layoutGeneration;
+  const scrollIntent = scrollIntentGeneration;
   await messageStore.fetchMessageHistory(serverId, HISTORY_PAGE_SIZE);
   await nextTick();
-
-  if (appStore.autoScroll) {
+  if (generation !== historyGeneration || layout !== layoutGeneration || serverStore.activeServerId !== serverId) return;
+  if (appStore.autoScroll && scrollIntent === scrollIntentGeneration) {
     scrollToBottom();
   }
 }
@@ -888,16 +970,7 @@ async function handleLoadMore() {
   const serverId = serverStore.activeServerId;
   if (!serverId) return;
 
-  const el = getScrollWindow();
-  const previousScrollHeight = el?.scrollHeight ?? 0;
-  const previousScrollTop = el?.scrollTop ?? 0;
-
   await messageStore.loadMoreMessageHistory(serverId, HISTORY_PAGE_SIZE);
-  await nextTick();
-
-  if (el) {
-    el.scrollTop = previousScrollTop + (el.scrollHeight - previousScrollHeight);
-  }
 }
 
 const handleClear = async () => {
@@ -1095,7 +1168,13 @@ async function handleExportCommand(command: string): Promise<void> {
 watch(
   () => serverStore.activeServerId,
   async (serverId) => {
+    const request = ++historyGeneration;
+    const generation = ++layoutGeneration;
     selectedMessage.value = null;
+    showDetailDialog.value = false;
+    await nextTick();
+    if (request !== historyGeneration || serverStore.activeServerId !== serverId) return;
+    if (generation === layoutGeneration) virtualizer.value.scrollToOffset(0);
     if (!serverId) return;
     await loadInitialHistory(serverId);
   },
@@ -1273,6 +1352,7 @@ watch(
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
 }
 
 .load-more-row {
@@ -1283,12 +1363,14 @@ watch(
 }
 
 .message-items {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+  position: relative;
+  flex-shrink: 0;
 }
 
 .message-row {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   padding: 0 8px 4px;
   box-sizing: border-box;
