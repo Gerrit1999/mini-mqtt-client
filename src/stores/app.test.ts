@@ -61,4 +61,3 @@ describe('updater error log flushing', () => {
     expect(mocks.relaunch).not.toHaveBeenCalled()
   })
 })
-

@@ -195,4 +195,3 @@ describe('error disk buffering', () => {
     expect(write).toHaveBeenCalledTimes(2)
   })
 })
-

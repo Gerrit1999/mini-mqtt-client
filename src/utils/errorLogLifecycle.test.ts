@@ -78,4 +78,3 @@ describe('error logging exit lifecycle', () => {
     expect(mocks.flush).toHaveBeenCalledTimes(2)
   })
 })
-

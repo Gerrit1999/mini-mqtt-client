@@ -80,4 +80,3 @@ describe('error handler persistence contract', () => {
     expect(errorHandler.getErrorCount()).toBe(2)
   })
 })
-
