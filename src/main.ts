@@ -6,6 +6,7 @@ import App from "./App.vue";
 import pinia from "./stores";
 import i18n, { getActualLocale, type Locale } from "./i18n";
 import { setupGlobalErrorHandler } from "./utils/errorHandler";
+import { setupErrorLogLifecycle } from "./utils/errorLogLifecycle";
 
 // Element Plus 暗黑主题
 import "element-plus/theme-chalk/dark/css-vars.css";
@@ -20,6 +21,7 @@ import "./assets/styles/index.scss";
 
 // 设置全局错误处理器
 setupGlobalErrorHandler();
+void setupErrorLogLifecycle();
 
 // 获取存储的语言设置
 const storedLocale = localStorage.getItem("mqtt-client-locale") as Locale | null;

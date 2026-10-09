@@ -95,6 +95,7 @@ pub fn run() {
             toggle_script,
             // 日志命令
             write_error_log,
+            write_error_logs,
             get_recent_logs,
             get_log_dir,
             clear_logs,

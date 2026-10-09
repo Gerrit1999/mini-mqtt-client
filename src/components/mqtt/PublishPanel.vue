@@ -475,19 +475,20 @@ const handlePublish = async () => {
   if (!validatePayload()) return;
 
   publishing.value = true;
+  const errorContext = { serverId, topic: publishData.topic, command: "publish_message" };
   try {
     const result = await doPublishCore();
     if (!result.success) {
       if (result.scriptError) {
         ElMessage.error(`${t('script.testError')}: ${result.scriptError}`);
       } else {
-        handleMqttError(result.error || "");
+        handleMqttError(result.error || "", false, { ...errorContext, topic: result.topic });
       }
       return;
     }
     ElMessage.success(t('success.published'));
   } catch (error: any) {
-    handleMqttError(error?.message || String(error));
+    handleMqttError(error?.message || String(error), false, errorContext);
   } finally {
     publishing.value = false;
   }

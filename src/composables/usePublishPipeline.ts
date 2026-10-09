@@ -67,9 +67,16 @@ export function usePublishPipeline() {
         decodePayload(payload, request.format);
       }
     } catch (error) {
-      if (isCancelled()) return cancelled();
+      const publishCancelled = isCancelled();
+      const scriptFailure = error instanceof Error && "scriptId" in error;
+      const scriptContext = scriptFailure && error.scriptId !== undefined ? { scriptId: error.scriptId } : {};
+      if (publishCancelled && !scriptFailure) return cancelled();
       const scriptError = error instanceof Error ? error.message : String(error);
-      handleScriptError(error);
+      handleScriptError(error, publishCancelled, {
+        serverId: request.serverId, topic, command: "before_publish",
+        ...scriptContext,
+      });
+      if (publishCancelled) return cancelled();
       try {
         mqttStore.addPublishMessage(request.serverId, {
           topic,

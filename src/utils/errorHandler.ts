@@ -1,5 +1,5 @@
 import { ElNotification } from 'element-plus'
-import { invoke } from '@tauri-apps/api/core'
+import { errorLogBuffer, stableSerialize } from './errorLogBuffer'
 
 /**
  * 错误类型枚举
@@ -20,6 +20,7 @@ export interface AppError {
   type: ErrorType
   message: string
   details?: any
+  context?: Record<string, unknown>
   timestamp: Date
 }
 
@@ -49,8 +50,9 @@ class ErrorHandler {
    * @param type 错误类型
    * @param silent 是否静默处理（不显示通知）
    */
-  handle(error: unknown, type: ErrorType = ErrorType.UNKNOWN, silent: boolean = false): AppError {
+  handle(error: unknown, type: ErrorType = ErrorType.UNKNOWN, silent: boolean = false, context?: Record<string, unknown>): AppError {
     const appError = this.createAppError(error, type)
+    appError.context = context
     this.logError(appError)
     this.storeError(appError)
     
@@ -58,9 +60,9 @@ class ErrorHandler {
       this.notifyUser(appError)
     }
     
-    // 异步写入日志文件
+    // UI 保留逐次错误；磁盘缓冲独立聚合，清空 UI 不会清空待写日志。
     if (this.logToFileEnabled) {
-      this.writeToLogFile(appError)
+      errorLogBuffer.enqueue(appError)
     }
     
     return appError
@@ -76,13 +78,17 @@ class ErrorHandler {
     if (error instanceof Error) {
       message = error.message
       details = {
+        ...error,
         name: error.name,
-        stack: error.stack
+        stack: error.stack,
+        cause: (error as Error & { cause?: unknown }).cause
       }
     } else if (typeof error === 'string') {
       message = error
     } else if (error && typeof error === 'object') {
-      message = (error as any).message || JSON.stringify(error)
+      message = String((error as any).message || stableSerialize(error))
+      details = error
+    } else {
       details = error
     }
 
@@ -126,19 +132,8 @@ class ErrorHandler {
   /**
    * 写入错误日志到文件
    */
-  private async writeToLogFile(error: AppError): Promise<void> {
-    try {
-      const logEntry = {
-        type: error.type,
-        message: error.message,
-        details: error.details ? JSON.stringify(error.details) : null,
-        timestamp: error.timestamp.toISOString()
-      }
-      await invoke('write_error_log', { entry: logEntry })
-    } catch (e) {
-      // 避免循环调用，只在控制台输出
-      console.error('写入日志文件失败:', e)
-    }
+  flush(): Promise<void> {
+    return errorLogBuffer.flush()
   }
 
   /**
@@ -236,6 +231,6 @@ export function handleValidationError(error: unknown, silent = false): AppError 
 /**
  * 便捷函数：处理脚本错误
  */
-export function handleScriptError(error: unknown, silent = false): AppError {
-  return errorHandler.handle(error, ErrorType.SCRIPT, silent)
+export function handleScriptError(error: unknown, silent = false, context?: Record<string, unknown>): AppError {
+  return errorHandler.handle(error, ErrorType.SCRIPT, silent, context)
 }

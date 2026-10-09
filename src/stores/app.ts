@@ -5,6 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { errorLogBuffer } from "@/utils/errorLogBuffer";
 import i18n, { getActualLocale, type Locale, type ActualLocale } from "@/i18n";
 import type { PayloadFormat } from "@/types/mqtt";
 
@@ -343,7 +344,7 @@ export const useAppStore = defineStore("app", () => {
       let downloaded = 0;
       let contentLength = 0;
 
-      await pendingUpdate.downloadAndInstall((event) => {
+      await pendingUpdate.download((event) => {
         switch (event.event) {
           case "Started":
             contentLength = event.data.contentLength ?? 0;
@@ -361,6 +362,11 @@ export const useAppStore = defineStore("app", () => {
         }
       });
 
+      // Windows installation can exit the process, so flush after downloading
+      // and before starting installation, then again before explicit relaunch.
+      await errorLogBuffer.flush();
+      await pendingUpdate.install();
+      await errorLogBuffer.flush();
       await relaunch();
       return true;
     } catch (e) {
