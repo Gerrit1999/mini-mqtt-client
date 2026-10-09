@@ -1,11 +1,27 @@
 import type { Script } from "@/stores/script";
-import { errorHandler, ErrorType } from "@/utils/errorHandler";
 import { decodePayload, encodePayload } from "@/utils/payloadCodec";
 import { ScriptCompilerCache } from "@/utils/scriptCompiler";
 import { deflate, gzip, inflate, ungzip } from "pako";
 
 type CompiledScript = (...args: unknown[]) => Promise<unknown>;
 type AsyncFunctionConstructor = new (...args: string[]) => CompiledScript;
+
+// Execution metadata travels to the publish/receive caller, which owns persistence.
+export class ScriptExecutionError extends Error {
+  readonly cause: unknown;
+  readonly scriptId?: number;
+  readonly scriptName: string;
+
+  constructor(script: Script, cause: unknown) {
+    super(cause instanceof Error ? cause.message
+      : cause && typeof cause === "object" && "message" in cause ? String(cause.message)
+      : String(cause));
+    this.name = "ScriptExecutionError";
+    this.cause = cause;
+    this.scriptId = script.id;
+    this.scriptName = script.name;
+  }
+}
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as AsyncFunctionConstructor;
 const scriptContextKeys = [
@@ -581,10 +597,8 @@ export class ScriptEngine {
       } catch (error: any) {
         const errorMessage = `脚本执行失败 [${script.name}]: ${error?.message || error}`;
         console.error(errorMessage, error);
-        // 写入错误日志（静默处理，不显示通知）
-        errorHandler.handle(errorMessage, ErrorType.SCRIPT, true);
         // 抛出错误，让调用方决定如何处理
-        throw error;
+        throw new ScriptExecutionError(script, error);
       }
     }
     
@@ -614,10 +628,8 @@ export class ScriptEngine {
       } catch (error: any) {
         const errorMessage = `脚本执行失败 [${script.name}]: ${error?.message || error}`;
         console.error(errorMessage, error);
-        // 写入错误日志（静默处理，不显示通知）
-        errorHandler.handle(errorMessage, ErrorType.SCRIPT, true);
         // 抛出错误，让调用方可以在消息列表中展示
-        throw error;
+        throw new ScriptExecutionError(script, error);
       }
     }
     

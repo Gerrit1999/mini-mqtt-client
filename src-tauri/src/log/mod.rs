@@ -1,4 +1,5 @@
 use chrono::Local;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -20,9 +21,20 @@ pub struct LogManager {
     log_dir: PathBuf,
     max_log_files: usize,
     max_file_size: u64, // bytes
+    write_lock: Mutex<()>,
 }
 
 impl LogManager {
+    #[cfg(test)]
+    pub(crate) fn for_test(log_dir: PathBuf) -> Self {
+        Self {
+            log_dir,
+            max_log_files: 10,
+            max_file_size: 5_000_000,
+            write_lock: Mutex::new(()),
+        }
+    }
+
     pub fn new(app_handle: &AppHandle) -> Result<Self, String> {
         let app_dir = app_handle
             .path()
@@ -36,6 +48,7 @@ impl LogManager {
             log_dir,
             max_log_files: 10,        // 最多保留 10 个日志文件
             max_file_size: 5_000_000, // 每个文件最大 5MB
+            write_lock: Mutex::new(()),
         })
     }
 
@@ -47,6 +60,30 @@ impl LogManager {
 
     /// 写入日志条目
     pub fn write_log(&self, entry: &LogEntry) -> Result<(), String> {
+        self.write_logs(std::slice::from_ref(entry))
+    }
+
+    /// A batch rotates, opens, writes and cleans up once. Serialize writers so
+    /// the legacy single-entry command and batch command cannot race rotation.
+    pub fn write_logs(&self, entries: &[LogEntry]) -> Result<(), String> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let _guard = self.write_lock.lock();
+        let mut contents = String::new();
+        for entry in entries {
+            contents.push_str(&format!(
+                "[{}] [{}] {}{}\n",
+                entry.timestamp,
+                entry.r#type.to_uppercase(),
+                entry.message,
+                entry
+                    .details
+                    .as_ref()
+                    .map(|d| format!(" | Details: {}", d))
+                    .unwrap_or_default()
+            ));
+        }
         let log_file = self.get_current_log_file();
 
         // 检查文件大小，如果超过限制则轮转
@@ -65,24 +102,20 @@ impl LogManager {
             .open(&log_file)
             .map_err(|e| format!("Failed to open log file: {}", e))?;
 
-        // 格式化日志条目
-        let log_line = format!(
-            "[{}] [{}] {}{}\n",
-            entry.timestamp,
-            entry.r#type.to_uppercase(),
-            entry.message,
-            entry
-                .details
-                .as_ref()
-                .map(|d| format!(" | Details: {}", d))
-                .unwrap_or_default()
-        );
-
-        file.write_all(log_line.as_bytes())
-            .map_err(|e| format!("Failed to write log: {}", e))?;
+        let original_len = file.metadata().map_err(|e| e.to_string())?.len();
+        if let Err(error) = file.write_all(contents.as_bytes()) {
+            // Remove a partial append before the frontend retries the batch.
+            file.set_len(original_len)
+                .map_err(|e| format!("Failed to write log: {}; rollback failed: {}", error, e))?;
+            return Err(format!("Failed to write log: {}", error));
+        }
 
         // 清理旧日志文件
-        self.cleanup_old_logs()?;
+        // The append has committed. A cleanup failure must not cause callers to
+        // retry already-written occurrences.
+        if let Err(error) = self.cleanup_old_logs() {
+            eprintln!("Failed to clean up error logs: {}", error);
+        }
 
         Ok(())
     }
@@ -172,5 +205,54 @@ impl LogManager {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(message: &str) -> LogEntry {
+        LogEntry {
+            r#type: "script".into(),
+            message: message.into(),
+            details: None,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn empty_batch_does_not_create_or_open_files() {
+        let path = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let manager = LogManager::for_test(path.clone());
+        manager.write_logs(&[]).unwrap();
+        assert!(!path.exists());
+        assert!(manager.write_logs(&[entry("failure")]).is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn batch_and_single_writes_share_format_rotation_and_cleanup() {
+        let path = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir_all(&path).unwrap();
+        let mut manager = LogManager::for_test(path.clone());
+        manager.write_log(&entry("single")).unwrap();
+        manager
+            .write_logs(&[entry("first"), entry("second")])
+            .unwrap();
+        let lines = manager.get_recent_logs(10).unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "[2026-01-01T00:00:00Z] [SCRIPT] single");
+        assert!(lines[1].ends_with("first"));
+        assert!(lines[2].ends_with("second"));
+
+        manager.max_file_size = 1;
+        manager.max_log_files = 1;
+        manager
+            .write_logs(&[entry("rotated first"), entry("rotated second")])
+            .unwrap();
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 1);
+        assert_eq!(manager.get_recent_logs(10).unwrap().len(), 2);
+        fs::remove_dir_all(path).unwrap();
     }
 }

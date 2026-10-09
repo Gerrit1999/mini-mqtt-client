@@ -367,7 +367,10 @@ export const useMqttStore = defineStore("mqtt", () => {
       } catch (error: any) {
         // 记录脚本错误
         scriptError = error?.message || String(error);
-        handleScriptError(error, true); // 静默处理，不显示通知（会写入日志）
+        handleScriptError(error, true, {
+          serverId: msg.server_id, topic: msg.topic, command: "after_receive",
+          ...(error instanceof Error && "scriptId" in error && error.scriptId !== undefined ? { scriptId: error.scriptId } : {}),
+        }); // 静默处理，不显示通知（会写入日志）
       }
 
       // 使用批处理队列

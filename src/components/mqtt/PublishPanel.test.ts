@@ -103,12 +103,11 @@ const mockAddPublishMessage = vi.fn();
 const mockReserveSeq = vi.fn(() => 0);
 const mockGetConnectionStatus = vi.fn(() => "connected");
 const mockGetCachedEnvVariables = vi.fn(async () => ({}));
+const mockServerStore = { activeServerId: 1 };
 
 // Mock stores
 vi.mock("@/stores/server", () => ({
-  useServerStore: () => ({
-    activeServerId: 1,
-  }),
+  useServerStore: () => mockServerStore,
 }));
 
 vi.mock("@/stores/message", () => ({
@@ -139,6 +138,7 @@ describe("PublishPanel", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    mockServerStore.activeServerId = 1;
     clearScriptCache();
     vi.useFakeTimers();
     mockGetConnectionStatus.mockReturnValue("connected");
@@ -172,6 +172,50 @@ describe("PublishPanel", () => {
       attachTo: document.body,
     });
   }
+
+  it("attributes a pending failed manual send to its captured server and processed topic", async () => {
+    const { handleMqttError } = await import("@/utils/mqttErrorHandler");
+    mockGetCachedEnvVariables.mockResolvedValue({ REGION: "north" } as any);
+    let rejectSend!: (error: Error) => void;
+    mockPublishMessage.mockImplementationOnce(() => new Promise((_, reject) => { rejectSend = reject; }));
+    const wrapper = createWrapper();
+    const vm = wrapper.vm as any;
+    vm.publishData.topic = "device/{{REGION}}";
+    vm.payloadFormat = "text";
+    const pending = vm.handlePublish();
+    await flushPromises();
+    expect(mockPublishMessage).toHaveBeenCalledWith(1, expect.objectContaining({ topic: "device/north" }));
+    vm.publishData.topic = "edited/topic";
+    mockServerStore.activeServerId = 2;
+    rejectSend(new Error("connection refused: same reason"));
+    await pending;
+    expect(handleMqttError).toHaveBeenLastCalledWith("connection refused: same reason", false, {
+      serverId: 1, topic: "device/north", command: "publish_message",
+    });
+    mockPublishMessage.mockRejectedValueOnce(new Error("connection refused: same reason"));
+    await vm.handlePublish();
+    expect(handleMqttError).toHaveBeenLastCalledWith("connection refused: same reason", false, {
+      serverId: 2, topic: "edited/topic", command: "publish_message",
+    });
+    wrapper.unmount();
+  });
+
+  it("keeps captured context when the manual publish pipeline unexpectedly throws", async () => {
+    const { handleMqttError } = await import("@/utils/mqttErrorHandler");
+    const wrapper = createWrapper();
+    const vm = wrapper.vm as any;
+    vm.publishData.topic = "original/topic";
+    vm.payloadFormat = "text";
+    mockReserveSeq.mockImplementationOnce(() => { throw new Error("unexpected failure"); });
+    const pending = vm.handlePublish();
+    vm.publishData.topic = "edited/topic";
+    mockServerStore.activeServerId = 2;
+    await pending;
+    expect(handleMqttError).toHaveBeenCalledWith("unexpected failure", false, {
+      serverId: 1, topic: "original/topic", command: "publish_message",
+    });
+    wrapper.unmount();
+  });
 
   describe("渲染", () => {
     it("应渲染发布面板基本结构", async () => {

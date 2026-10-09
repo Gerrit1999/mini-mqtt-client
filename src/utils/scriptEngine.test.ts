@@ -50,6 +50,16 @@ describe("ScriptEngine payload codecs", () => {
 });
 
 describe("ScriptEngine script validation", () => {
+  it.each([
+    { code: 'throw "raw reason"', cause: "raw reason" },
+    { code: 'throw { message: "raw reason", code: "TRANSFORM" }', cause: { message: "raw reason", code: "TRANSFORM" } },
+  ])("forwards non-Error script causes without requiring a persisted script ID: $code", async ({ code, cause }) => {
+    const script = { server_id: 1, name: "unsaved transform", code, enabled: true, script_type: "before_publish" as const };
+    await expect(ScriptEngine.executeBeforePublish([script], "body", "topic")).rejects.toMatchObject({
+      message: "raw reason", cause, scriptName: "unsaved transform", scriptId: undefined,
+    });
+  });
+
   it("accepts synchronous and asynchronous script syntax", () => {
     expect(ScriptEngine.validateScript("function process(payload) { return payload; }")).toBeNull();
     expect(ScriptEngine.validateScript("async function process(payload) { return payload; }")).toBeNull();

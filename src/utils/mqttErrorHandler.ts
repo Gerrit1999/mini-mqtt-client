@@ -125,16 +125,17 @@ const mqttErrorMap: Record<string, MqttErrorInfo> = {
  * 处理 MQTT 错误
  * @param error 错误字符串
  * @param silent 是否静默处理
+ * @param context 请求上下文
  * @returns MQTT 错误信息
  */
-export function handleMqttError(error: string, silent: boolean = false): MqttErrorInfo {
+export function handleMqttError(error: string, silent: boolean = false, context?: Record<string, unknown>): MqttErrorInfo {
   const lowerError = error.toLowerCase()
   
   // 尝试匹配已知错误
   for (const [key, info] of Object.entries(mqttErrorMap)) {
     if (lowerError.includes(key)) {
       if (!silent) {
-        errorHandler.handle(`${info.message}: ${info.suggestion}`, ErrorType.MQTT)
+        errorHandler.handle({ message: `${info.message}: ${info.suggestion}`, reason: error, code: info.code }, ErrorType.MQTT, false, context)
       }
       return info
     }
@@ -148,7 +149,7 @@ export function handleMqttError(error: string, silent: boolean = false): MqttErr
   }
   
   if (!silent) {
-    errorHandler.handle(error, ErrorType.MQTT)
+    errorHandler.handle(error, ErrorType.MQTT, false, context)
   }
   
   return unknownError

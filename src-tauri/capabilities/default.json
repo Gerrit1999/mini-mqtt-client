@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-theme",
+    "core:window:allow-destroy",
     "core:event:allow-listen",
     "opener:default",
     "dialog:default",
