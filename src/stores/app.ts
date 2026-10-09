@@ -1,12 +1,12 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { getCurrentWindow, type Theme as TauriTheme } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { errorLogBuffer } from "@/utils/errorLogBuffer";
-import i18n, { getActualLocale, type Locale, type ActualLocale } from "@/i18n";
+import i18n, { getActualLocale, loadLocaleMessages, type Locale, type ActualLocale } from "@/i18n";
 import type { PayloadFormat } from "@/types/mqtt";
 
 export type Theme = "light" | "dark" | "auto";
@@ -45,7 +45,8 @@ export const useAppStore = defineStore("app", () => {
   
   // 语言
   const locale = ref<Locale>("auto");
-  const actualLocale = ref<ActualLocale>("zh-CN");
+  const actualLocale = computed(() => i18n.global.locale.value as ActualLocale);
+  let localeRequest = 0;
   
   // 主题监听取消函数
   let unlistenTheme: (() => void) | null = null;
@@ -182,17 +183,17 @@ export const useAppStore = defineStore("app", () => {
   // ===== 语言相关 =====
 
   // 应用语言设置
-  const applyLocale = () => {
-    const newActualLocale = getActualLocale(locale.value);
-    actualLocale.value = newActualLocale;
-    i18n.global.locale.value = newActualLocale;
+  const applyLocale = async () => {
+    const request = ++localeRequest;
+    const newActualLocale = await loadLocaleMessages(getActualLocale(locale.value));
+    if (request === localeRequest) i18n.global.locale.value = newActualLocale;
   };
 
   // 设置语言
   const setLocale = (newLocale: Locale) => {
     locale.value = newLocale;
-    applyLocale();
     saveLocale();
+    return applyLocale();
   };
 
   // 保存语言到本地存储
@@ -209,7 +210,7 @@ export const useAppStore = defineStore("app", () => {
       // 默认跟随系统
       locale.value = "auto";
     }
-    applyLocale();
+    return applyLocale();
   };
 
   // 获取用于时间格式化的 locale
