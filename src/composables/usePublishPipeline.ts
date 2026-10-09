@@ -30,14 +30,33 @@ export interface PublishResult {
 export function usePublishPipeline() {
   const mqttStore = useMqttStore();
 
-  async function publish(request: PublishRequest): Promise<PublishResult> {
+  async function publish(
+    request: PublishRequest,
+    isCancelled: () => boolean = () => false
+  ): Promise<PublishResult> {
+    const cancelled = (): PublishResult => ({
+      success: false, topic: request.topic, payload: request.payload, error: "Publish cancelled",
+    });
+    if (isCancelled()) return cancelled();
     const seq = mqttStore.reserveSeq();
-    const envVariables = await mqttStore.getCachedEnvVariables(request.serverId);
+    let envVariables: Record<string, string>;
+    try {
+      envVariables = await mqttStore.getCachedEnvVariables(request.serverId);
+    } catch (error) {
+      if (isCancelled()) return cancelled();
+      const cause = error instanceof Error ? error.message : String(error);
+      return {
+        success: false, topic: request.topic, payload: request.payload,
+        error: `Failed to load environment variables: ${cause}`,
+      };
+    }
+    if (isCancelled()) return cancelled();
     const topic = replaceEnvVariables(request.topic, envVariables);
     let payload = replaceEnvVariables(request.payload, envVariables);
 
     try {
       const scripts = await getCachedScripts(request.serverId, "before_publish");
+      if (isCancelled()) return cancelled();
       if (scripts.length > 0) {
         payload = await ScriptEngine.executeBeforePublish(
           scripts,
@@ -48,6 +67,7 @@ export function usePublishPipeline() {
         decodePayload(payload, request.format);
       }
     } catch (error) {
+      if (isCancelled()) return cancelled();
       const scriptError = error instanceof Error ? error.message : String(error);
       handleScriptError(error);
       try {
@@ -66,6 +86,8 @@ export function usePublishPipeline() {
       return { success: false, topic, payload: request.payload, error: scriptError, scriptError };
     }
 
+    // Cancellation only applies before submission; MQTT acknowledgements remain tracked.
+    if (isCancelled()) return cancelled();
     try {
       await mqttStore.publishTrackedMessage(request.serverId, {
         topic,

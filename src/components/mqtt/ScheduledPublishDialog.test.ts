@@ -100,9 +100,12 @@ function createTestI18n() {
 // Mock mqtt store - use a factory that creates fresh mocks each time
 const mockPublish = vi.fn();
 const mockPublishRequest = vi.fn();
+let useRealMqttStore = false;
 
-vi.mock("@/stores/mqtt", () => ({
-  useMqttStore: () => ({
+vi.mock("@/stores/mqtt", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/stores/mqtt")>();
+  return {
+  useMqttStore: () => useRealMqttStore ? actual.useMqttStore() : ({
     publishTrackedMessage: (serverId: number, request: any) => {
       mockPublishRequest(serverId, request);
       return mockPublish(
@@ -117,7 +120,8 @@ vi.mock("@/stores/mqtt", () => ({
     getConnectionStatus: vi.fn(() => "connected"),
     getCachedEnvVariables: mockGetCachedEnvVariables,
   }),
-}));
+  };
+});
 
 // We need to mock the template store since it's imported and used
 // But we also want to test against the real store implementation
@@ -133,6 +137,7 @@ import { useTemplateStore, GLOBAL_TEMPLATE_SERVER_ID } from "@/stores/template";
 
 describe("ScheduledPublishDialog", () => {
   beforeEach(() => {
+    useRealMqttStore = false;
     setActivePinia(createPinia());
     vi.clearAllMocks();
     clearScriptCache();
@@ -204,6 +209,118 @@ describe("ScheduledPublishDialog", () => {
     ];
     return store;
   }
+
+  describe("backend failures and cancellation through preprocessing", () => {
+    const script = {
+      server_id: 1, name: "async", script_type: "before_publish",
+      code: "function process(payload) { return payload; }", enabled: true,
+    };
+
+    function setupBackend() {
+      useRealMqttStore = true;
+      setupTemplates();
+      vi.mocked(ScriptEngine.executeBeforePublish).mockImplementation(async (_scripts, payload) => payload);
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "list_env_variables") return [];
+        if (cmd === "get_enabled_scripts") return [script];
+        if (cmd === "publish_message") return { id: 1, publish_status: "confirmed" };
+        return undefined;
+      });
+    }
+
+    async function startOne() {
+      const wrapper = createWrapper();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.config.loopMode = "count";
+      vm.config.loopCount = 1;
+      vm.selectedIds = [1];
+      await vm.handleStart();
+      await flushPromises();
+      return { wrapper, vm };
+    }
+
+    it.each(["list_env_variables", "get_enabled_scripts"])(
+      "counts and logs %s failure without MQTT submission", async (failedCommand) => {
+        setupBackend();
+        const backend = mockedInvoke.getMockImplementation()!;
+        mockedInvoke.mockImplementation(async (cmd, args) => {
+          if (cmd === failedCommand) throw new Error(`${cmd} unavailable`);
+          return backend(cmd, args);
+        });
+        const { wrapper, vm } = await startOne();
+        expect(vm.failCount).toBe(1);
+        expect(vm.successCount).toBe(0);
+        expect(vm.logs).toMatchObject([{ status: "error", message: expect.stringContaining(`${failedCommand} unavailable`) }]);
+        expect(wrapper.find(".log-item.error").exists()).toBe(true);
+        expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
+        wrapper.unmount();
+      }
+    );
+
+    const stages = ["variables", "scripts", "execution"] as const;
+    function holdStage(stage: typeof stages[number]) {
+      let resolve!: (value: any) => void;
+      const pending = new Promise<any>((done) => { resolve = done; });
+      if (stage === "execution") {
+        vi.mocked(ScriptEngine.executeBeforePublish).mockImplementationOnce(() => pending);
+      } else {
+        const backend = mockedInvoke.getMockImplementation()!;
+        const command = stage === "variables" ? "list_env_variables" : "get_enabled_scripts";
+        let held = false;
+        mockedInvoke.mockImplementation((cmd, args) => {
+          if (cmd === command && !held) {
+            held = true;
+            return pending;
+          }
+          return backend(cmd, args);
+        });
+      }
+      return () => resolve(stage === "execution" ? '{"processed":true}' : stage === "scripts" ? [script] : []);
+    }
+
+    it.each(stages.flatMap((stage) => ["stop", "close", "unmount"].map((action) => ({ stage, action }))))(
+      "blocks MQTT after $action during pending $stage", async ({ stage, action }) => {
+        setupBackend();
+        const settle = holdStage(stage);
+        const { wrapper, vm } = await startOne();
+        expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
+        if (action === "stop") vm.handleStop();
+        else if (action === "close") vm.handleClose();
+        else wrapper.unmount();
+        settle();
+        await flushPromises();
+        expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
+        expect(vm.successCount).toBe(0);
+        expect(vm.failCount).toBe(0);
+        expect(vm.logs).toHaveLength(0);
+        if (action !== "unmount") wrapper.unmount();
+      }
+    );
+
+    it.each(stages)("ignores old %s work settling after restart", async (stage) => {
+      setupBackend();
+      const settle = holdStage(stage);
+      const { wrapper, vm } = await startOne();
+      vm.handleStop();
+      vm.handleBackToConfig();
+      vm.selectedIds = [2];
+      await vm.handleStart();
+      await flushPromises();
+      // A shared script load also holds the new run until it settles.
+      settle();
+      await flushPromises();
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "publish_message");
+      expect(calls).toHaveLength(1);
+      expect((calls[0][1] as any).message.topic).toBe("device/001/status");
+      expect(vm.sentCount).toBe(1);
+      expect(vm.successCount).toBe(1);
+      expect(vm.failCount).toBe(0);
+      expect(vm.logs).toHaveLength(1);
+      expect(vm.logs[0].topic).toBe("device/001/status");
+      wrapper.unmount();
+    });
+  });
 
   describe("渲染", () => {
     it("应渲染配置视图（未运行时）", async () => {

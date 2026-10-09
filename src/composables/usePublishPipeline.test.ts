@@ -58,6 +58,35 @@ describe("usePublishPipeline", () => {
 
   afterEach(() => vi.useRealTimers());
 
+  it.each(["get_enabled_scripts", "list_env_variables"])(
+    "aborts on %s failure and retries through the real cache/store",
+    async (failedCommand) => {
+      const backend = mockedInvoke.getMockImplementation()!;
+      let fail = true;
+      mockedInvoke.mockImplementation(async (command, args) => {
+        if (command === failedCommand && fail) throw new Error(`${command} unavailable`);
+        return backend(command, args);
+      });
+      const { publish } = usePublishPipeline();
+      const request = {
+        serverId: 1, topic: "device/{{REGION}}", payload: "{{REGION}}",
+        qos: 1 as const, retain: false, format: "text" as const,
+      };
+
+      const result = await publish(request);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(`${failedCommand} unavailable`);
+      expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
+
+      fail = false;
+      expect(await publish(request)).toMatchObject({
+        success: true, topic: "device/north", payload: "north",
+      });
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === failedCommand)).toHaveLength(2);
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === "publish_message")).toHaveLength(1);
+    }
+  );
+
   it("uses per-server variables and the tracked publish contract for text, HEX, and Base64", async () => {
     const { publish } = usePublishPipeline();
 

@@ -13,6 +13,18 @@ function createScript(serverId: number, scriptType: ScriptType, name: string): S
 }
 
 describe("ScriptCache", () => {
+  it("rejects shared failed loads and caches only a successful empty retry", async () => {
+    const error = new Error("script backend unavailable");
+    const loadScripts = vi.fn().mockRejectedValueOnce(error).mockResolvedValue([]);
+    const cache = new ScriptCache(loadScripts);
+    const first = cache.get(1, "before_publish");
+    expect(cache.get(1, "before_publish")).toBe(first);
+    await expect(first).rejects.toBe(error);
+    expect(await cache.get(1, "before_publish")).toEqual([]);
+    expect(await cache.get(1, "before_publish")).toEqual([]);
+    expect(loadScripts).toHaveBeenCalledTimes(2);
+  });
+
   it("isolates server and script-type entries and clears only the requested server", async () => {
     let loadCount = 0;
     const loadScripts = vi.fn(async (serverId: number, scriptType: ScriptType) => {

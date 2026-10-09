@@ -525,7 +525,7 @@ async function publishNext(runId: number = publishRunId) {
       qos: command.qos,
       retain: command.retain,
       format: command.payload_type,
-    }))
+    }, () => !isRunning.value || runId !== publishRunId))
     .then((result) => {
       if (runId !== publishRunId) return
       if (result.success) {
