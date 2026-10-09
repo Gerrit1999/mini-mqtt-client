@@ -135,17 +135,13 @@ export const useMqttStore = defineStore("mqtt", () => {
       return cached.variables;
     }
 
-    try {
-      const envList = await invoke<EnvVariable[]>("list_env_variables", { serverId });
-      const variables: Record<string, string> = {};
-      for (const env of envList) {
-        variables[env.name] = env.value;
-      }
-      envCache.set(serverId, { variables, timestamp: now });
-      return variables;
-    } catch {
-      return {};
+    const envList = await invoke<EnvVariable[]>("list_env_variables", { serverId });
+    const variables: Record<string, string> = {};
+    for (const env of envList) {
+      variables[env.name] = env.value;
     }
+    envCache.set(serverId, { variables, timestamp: now });
+    return variables;
   }
 
   // 清除环境变量缓存
@@ -353,12 +349,12 @@ export const useMqttStore = defineStore("mqtt", () => {
 
       // 尝试应用接收后处理脚本（使用缓存）
       try {
-        const scripts = await getCachedScripts(msg.server_id, "after_receive");
+        const scripts = await getCachedScripts(msg.server_id, "after_receive").catch(() => []);
 
         if (scripts.length > 0) {
           const originalPayloadBytes = new Uint8Array(payloadBytes);
           const originalPayload = new TextDecoder().decode(payloadBytes);
-          const envVariables = await getCachedEnvVariables(msg.server_id);
+          const envVariables = await getCachedEnvVariables(msg.server_id).catch(() => ({}));
           const processedPayload = await ScriptEngine.executeAfterReceive(
             scripts,
             originalPayload,
@@ -632,6 +628,7 @@ export const useMqttStore = defineStore("mqtt", () => {
     clearMessages,
     addPublishMessage,
     reserveSeq,
+    getCachedEnvVariables,
     clearScriptCache,
     clearEnvCache,
   };

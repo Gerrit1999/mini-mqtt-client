@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { EnvVariable, CreateEnvVariableRequest, UpdateEnvVariableRequest } from "@/types/mqtt";
+import { useMqttStore } from "@/stores/mqtt";
 
 export type { EnvVariable, CreateEnvVariableRequest, UpdateEnvVariableRequest };
 
@@ -10,6 +11,10 @@ export const useEnvStore = defineStore("env", () => {
   const variables = ref<EnvVariable[]>([]);
   const loading = ref(false);
   const searchKeyword = ref("");
+
+  const invalidateCache = (serverId?: number) => {
+    useMqttStore().clearEnvCache(serverId);
+  };
 
   // 过滤后的变量列表
   const filteredVariables = computed(() => {
@@ -62,6 +67,7 @@ export const useEnvStore = defineStore("env", () => {
       created_at: now,
       updated_at: now,
     });
+    invalidateCache(request.server_id);
     return id;
   };
 
@@ -70,6 +76,7 @@ export const useEnvStore = defineStore("env", () => {
     await invoke("update_env_variable", { request });
     // 更新本地列表
     const index = variables.value.findIndex((v) => v.id === request.id);
+    const serverId = index !== -1 ? variables.value[index].server_id : undefined;
     if (index !== -1) {
       const current = variables.value[index];
       variables.value[index] = {
@@ -80,6 +87,7 @@ export const useEnvStore = defineStore("env", () => {
         updated_at: new Date().toISOString(),
       };
     }
+    invalidateCache(serverId);
   };
 
   // 删除环境变量
@@ -87,9 +95,11 @@ export const useEnvStore = defineStore("env", () => {
     await invoke("delete_env_variable", { id });
     // 从本地列表移除
     const index = variables.value.findIndex((v) => v.id === id);
+    const serverId = index !== -1 ? variables.value[index].server_id : undefined;
     if (index !== -1) {
       variables.value.splice(index, 1);
     }
+    invalidateCache(serverId);
   };
 
   // 设置搜索关键词

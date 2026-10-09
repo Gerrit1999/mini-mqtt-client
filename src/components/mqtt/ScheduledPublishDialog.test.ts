@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import ScheduledPublishDialog from "./ScheduledPublishDialog.vue";
 import ElementPlus from "element-plus";
 import { createI18n } from "vue-i18n";
+import { clearScriptCache } from "@/utils/scriptCache";
 
 // Mock Tauri API
 vi.mock("@tauri-apps/api/core", () => ({
@@ -12,6 +13,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 const mockedInvoke = vi.mocked(invoke);
+import { ScriptEngine } from "@/utils/scriptEngine";
+const mockGetCachedEnvVariables = vi.fn(async () => ({}));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -97,9 +100,12 @@ function createTestI18n() {
 // Mock mqtt store - use a factory that creates fresh mocks each time
 const mockPublish = vi.fn();
 const mockPublishRequest = vi.fn();
+let useRealMqttStore = false;
 
-vi.mock("@/stores/mqtt", () => ({
-  useMqttStore: () => ({
+vi.mock("@/stores/mqtt", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/stores/mqtt")>();
+  return {
+  useMqttStore: () => useRealMqttStore ? actual.useMqttStore() : ({
     publishTrackedMessage: (serverId: number, request: any) => {
       mockPublishRequest(serverId, request);
       return mockPublish(
@@ -112,21 +118,10 @@ vi.mock("@/stores/mqtt", () => ({
     },
     reserveSeq: vi.fn(() => 0),
     getConnectionStatus: vi.fn(() => "connected"),
+    getCachedEnvVariables: mockGetCachedEnvVariables,
   }),
-}));
-
-// Mock env store
-const mockReplaceVariables = vi.fn((text: string) => text);
-const mockLoadVariables = vi.fn();
-
-vi.mock("@/stores/env", () => ({
-  useEnvStore: () => ({
-    variables: [],
-    variablesMap: {},
-    loadVariables: mockLoadVariables,
-    replaceVariables: mockReplaceVariables,
-  }),
-}));
+  };
+});
 
 // We need to mock the template store since it's imported and used
 // But we also want to test against the real store implementation
@@ -142,8 +137,11 @@ import { useTemplateStore, GLOBAL_TEMPLATE_SERVER_ID } from "@/stores/template";
 
 describe("ScheduledPublishDialog", () => {
   beforeEach(() => {
+    useRealMqttStore = false;
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    clearScriptCache();
+    mockGetCachedEnvVariables.mockResolvedValue({});
     vi.useFakeTimers();
     // 默认 mock：get_enabled_scripts 返回空数组
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -211,6 +209,118 @@ describe("ScheduledPublishDialog", () => {
     ];
     return store;
   }
+
+  describe("backend failures and cancellation through preprocessing", () => {
+    const script = {
+      server_id: 1, name: "async", script_type: "before_publish",
+      code: "function process(payload) { return payload; }", enabled: true,
+    };
+
+    function setupBackend() {
+      useRealMqttStore = true;
+      setupTemplates();
+      vi.mocked(ScriptEngine.executeBeforePublish).mockImplementation(async (_scripts, payload) => payload);
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "list_env_variables") return [];
+        if (cmd === "get_enabled_scripts") return [script];
+        if (cmd === "publish_message") return { id: 1, publish_status: "confirmed" };
+        return undefined;
+      });
+    }
+
+    async function startOne() {
+      const wrapper = createWrapper();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.config.loopMode = "count";
+      vm.config.loopCount = 1;
+      vm.selectedIds = [1];
+      await vm.handleStart();
+      await flushPromises();
+      return { wrapper, vm };
+    }
+
+    it.each(["list_env_variables", "get_enabled_scripts"])(
+      "counts and logs %s failure without MQTT submission", async (failedCommand) => {
+        setupBackend();
+        const backend = mockedInvoke.getMockImplementation()!;
+        mockedInvoke.mockImplementation(async (cmd, args) => {
+          if (cmd === failedCommand) throw new Error(`${cmd} unavailable`);
+          return backend(cmd, args);
+        });
+        const { wrapper, vm } = await startOne();
+        expect(vm.failCount).toBe(1);
+        expect(vm.successCount).toBe(0);
+        expect(vm.logs).toMatchObject([{ status: "error", message: expect.stringContaining(`${failedCommand} unavailable`) }]);
+        expect(wrapper.find(".log-item.error").exists()).toBe(true);
+        expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
+        wrapper.unmount();
+      }
+    );
+
+    const stages = ["variables", "scripts", "execution"] as const;
+    function holdStage(stage: typeof stages[number]) {
+      let resolve!: (value: any) => void;
+      const pending = new Promise<any>((done) => { resolve = done; });
+      if (stage === "execution") {
+        vi.mocked(ScriptEngine.executeBeforePublish).mockImplementationOnce(() => pending);
+      } else {
+        const backend = mockedInvoke.getMockImplementation()!;
+        const command = stage === "variables" ? "list_env_variables" : "get_enabled_scripts";
+        let held = false;
+        mockedInvoke.mockImplementation((cmd, args) => {
+          if (cmd === command && !held) {
+            held = true;
+            return pending;
+          }
+          return backend(cmd, args);
+        });
+      }
+      return () => resolve(stage === "execution" ? '{"processed":true}' : stage === "scripts" ? [script] : []);
+    }
+
+    it.each(stages.flatMap((stage) => ["stop", "close", "unmount"].map((action) => ({ stage, action }))))(
+      "blocks MQTT after $action during pending $stage", async ({ stage, action }) => {
+        setupBackend();
+        const settle = holdStage(stage);
+        const { wrapper, vm } = await startOne();
+        expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
+        if (action === "stop") vm.handleStop();
+        else if (action === "close") vm.handleClose();
+        else wrapper.unmount();
+        settle();
+        await flushPromises();
+        expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
+        expect(vm.successCount).toBe(0);
+        expect(vm.failCount).toBe(0);
+        expect(vm.logs).toHaveLength(0);
+        if (action !== "unmount") wrapper.unmount();
+      }
+    );
+
+    it.each(stages)("ignores old %s work settling after restart", async (stage) => {
+      setupBackend();
+      const settle = holdStage(stage);
+      const { wrapper, vm } = await startOne();
+      vm.handleStop();
+      vm.handleBackToConfig();
+      vm.selectedIds = [2];
+      await vm.handleStart();
+      await flushPromises();
+      // A shared script load also holds the new run until it settles.
+      settle();
+      await flushPromises();
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "publish_message");
+      expect(calls).toHaveLength(1);
+      expect((calls[0][1] as any).message.topic).toBe("device/001/status");
+      expect(vm.sentCount).toBe(1);
+      expect(vm.successCount).toBe(1);
+      expect(vm.failCount).toBe(0);
+      expect(vm.logs).toHaveLength(1);
+      expect(vm.logs[0].topic).toBe("device/001/status");
+      wrapper.unmount();
+    });
+  });
 
   describe("渲染", () => {
     it("应渲染配置视图（未运行时）", async () => {
@@ -608,6 +718,40 @@ describe("ScheduledPublishDialog", () => {
       expect(vm.logs[0].status).toBe("error");
     });
 
+    it("发送前脚本失败时不发布并计入失败", async () => {
+      setupTemplates();
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "get_enabled_scripts") {
+          return [{
+            id: 1,
+            server_id: 1,
+            name: "失败脚本",
+            script_type: "before_publish",
+            code: "function process(payload) { throw new Error('boom'); }",
+            enabled: true,
+          }];
+        }
+        return undefined;
+      });
+      vi.mocked(ScriptEngine.executeBeforePublish).mockRejectedValueOnce(new Error("boom"));
+
+      const wrapper = createWrapper();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.config.loopMode = "count";
+      vm.config.loopCount = 1;
+      vm.selectedIds = [1];
+
+      await vm.handleStart();
+      await flushPromises();
+
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(vm.sentCount).toBe(1);
+      expect(vm.successCount).toBe(0);
+      expect(vm.failCount).toBe(1);
+      expect(vm.logs[0].status).toBe("error");
+    });
+
     it("停止发布应中断发送", async () => {
       setupTemplates();
       mockPublish.mockResolvedValue(undefined);
@@ -982,9 +1126,7 @@ describe("ScheduledPublishDialog", () => {
   describe("环境变量和脚本", () => {
     it("发送前应替换环境变量", async () => {
       setupTemplates();
-      mockReplaceVariables.mockImplementation((text: string) =>
-        text.replace("{{DEVICE_ID}}", "device_001")
-      );
+      mockGetCachedEnvVariables.mockResolvedValue({ DEVICE_ID: "device_001" });
       mockPublish.mockResolvedValue(undefined);
 
       const store = useTemplateStore();
@@ -1016,9 +1158,6 @@ describe("ScheduledPublishDialog", () => {
       await vm.handleStart();
       await flushPromises();
 
-      // 应调用 replaceVariables
-      expect(mockReplaceVariables).toHaveBeenCalledWith("device/{{DEVICE_ID}}/command");
-      expect(mockReplaceVariables).toHaveBeenCalledWith('{"id":"{{DEVICE_ID}}"}');
     });
   });
 });

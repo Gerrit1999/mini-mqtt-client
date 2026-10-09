@@ -46,7 +46,6 @@ export class ScriptCache {
         }
         return scripts;
       })
-      .catch(() => [])
       .finally(() => {
         if (this.inFlight.get(key) === request) this.inFlight.delete(key);
       });

@@ -188,18 +188,14 @@ import {
   MagicStick,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import { invoke } from "@tauri-apps/api/core";
 import { useServerStore } from "@/stores/server";
 import { useMqttStore } from "@/stores/mqtt";
 import { useAppStore } from "@/stores/app";
-import { useEnvStore } from "@/stores/env";
-import { ScriptEngine } from "@/utils/scriptEngine";
-import type { Script } from "@/stores/script";
 import { validatePublishTopic, handleMqttError } from "@/utils/mqttErrorHandler";
-import { handleScriptError } from "@/utils/errorHandler";
 import { decodePayload } from "@/utils/payloadCodec";
 import type { PayloadFormat } from "@/types/mqtt";
 import type { ContentLayout } from "@/stores/app";
+import { usePublishPipeline } from "@/composables/usePublishPipeline";
 
 const { t } = useI18n();
 
@@ -229,7 +225,7 @@ const formatOptions = [
 const serverStore = useServerStore();
 const mqttStore = useMqttStore();
 const appStore = useAppStore();
-const envStore = useEnvStore();
+const { publish } = usePublishPipeline();
 
 const publishing = ref(false);
 
@@ -418,8 +414,12 @@ const sendOneTimedMessage = async () => {
   }
 
   try {
-    await doPublishCore();
-    timedMessageCount.value++;
+    const result = await doPublishCore();
+    if (result.success) {
+      timedMessageCount.value++;
+    } else {
+      console.error('Timed message failed:', result.error);
+    }
   } catch (error: any) {
     // 记录日志，继续下一次发送
     console.error('Timed message failed:', error);
@@ -427,66 +427,21 @@ const sendOneTimedMessage = async () => {
 };
 
 // 核心发布逻辑（不含 loading 状态和消息提示）
-async function doPublishCore(): Promise<void> {
+async function doPublishCore() {
   const serverId = serverStore.activeServerId;
   if (!serverId) {
     throw new Error(t('errors.selectServer'));
   }
 
-  // 预分配序列号
-  const seq = mqttStore.reserveSeq();
-
-  // 确保加载环境变量
-  if (envStore.variables.length === 0) {
-    await envStore.loadVariables(serverId);
-  }
-
-  // 替换环境变量
-  const processedTopic = envStore.replaceVariables(publishData.topic);
-  let processedPayload = envStore.replaceVariables(publishData.payload);
-  let scriptError: string | undefined = undefined;
-
-  // 应用发送前处理脚本
-  try {
-    const scripts = await invoke<Script[]>("get_enabled_scripts", {
-      serverId,
-      scriptType: "before_publish",
-    });
-    if (scripts.length > 0) {
-      processedPayload = await ScriptEngine.executeBeforePublish(
-        scripts,
-        processedPayload,
-        processedTopic,
-        envStore.variablesMap
-      );
-    }
-  } catch (error: any) {
-    // 记录脚本错误
-    scriptError = error?.message || String(error);
-    handleScriptError(error);
-
-    // 将原始消息添加到列表中（带错误标记，不实际发布）
-    mqttStore.addPublishMessage(serverId, {
-      topic: processedTopic,
-      payload: publishData.payload,
-      qos: publishData.qos as 0 | 1 | 2,
-      retain: publishData.retain,
-      scriptError: scriptError,
-      payload_type: payloadFormat.value,
-      seq,
-    });
-
-    throw error;
-  }
-
-  await mqttStore.publishTrackedMessage(serverId, {
-    topic: processedTopic,
-    payload: processedPayload,
+  const result = await publish({
+    serverId,
+    topic: publishData.topic,
+    payload: publishData.payload,
     qos: publishData.qos as 0 | 1 | 2,
     retain: publishData.retain,
     format: payloadFormat.value,
-    seq,
   });
+  return result;
 }
 
 const handleSaveTemplate = () => {
@@ -521,7 +476,15 @@ const handlePublish = async () => {
 
   publishing.value = true;
   try {
-    await doPublishCore();
+    const result = await doPublishCore();
+    if (!result.success) {
+      if (result.scriptError) {
+        ElMessage.error(`${t('script.testError')}: ${result.scriptError}`);
+      } else {
+        handleMqttError(result.error || "");
+      }
+      return;
+    }
     ElMessage.success(t('success.published'));
   } catch (error: any) {
     handleMqttError(error?.message || String(error));
