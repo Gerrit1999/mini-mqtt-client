@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { reactive } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import MessageList from "./MessageList.vue";
@@ -34,11 +35,10 @@ const mockLoadMoreMessageHistory = vi.fn(() => Promise.resolve());
 const mockClearHistory = vi.fn(() => Promise.resolve());
 const mockGetHasMoreHistory = vi.fn(() => false);
 const mockSetCopyToPublish = vi.fn();
+const mockServer = reactive({ activeServerId: 1 });
 
 vi.mock("@/stores/server", () => ({
-  useServerStore: () => ({
-    activeServerId: 1,
-  }),
+  useServerStore: () => mockServer,
 }));
 
 vi.mock("@/stores/mqtt", () => ({
@@ -219,7 +219,28 @@ function createTestMessages(): MqttMessage[] {
 }
 
 describe("MessageList Topic 筛选", () => {
+  const wrappers: Array<{ unmount(): void }> = [];
+  afterEach(() => {
+    wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
+    mockServer.activeServerId = 1;
+    // jsdom has no layout. Supply fixed geometry to exercise the real virtualizer;
+    // variable-height layout and anchoring are verified separately in Chromium.
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("message-scroll-wrapper") ? 500 : 88;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { height: this.classList.contains("message-scroll-wrapper") ? 500 : 88,
+        width: 1000, x: 0, y: 0, top: 0, left: 0, right: 1000, bottom: 88,
+        toJSON: () => ({}) };
+    });
+    HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number, y?: number) {
+      this.scrollTop = typeof options === "object" ? options.top ?? 0 : y ?? 0;
+      this.dispatchEvent(new Event("scroll"));
+    };
     setActivePinia(createPinia());
     vi.clearAllMocks();
     mockMessages.mockReturnValue([]);
@@ -235,15 +256,110 @@ describe("MessageList Topic 筛选", () => {
 
   function createWrapper() {
     const i18n = createTestI18n();
-    return mount(MessageList, {
+    const wrapper = mount(MessageList, {
       global: {
         plugins: [ElementPlus, i18n],
       },
       attachTo: document.body,
     });
+    wrappers.push(wrapper);
+    return wrapper;
   }
 
   describe("topics computed", () => {
+    it("does not override manual reading when the same server's initial request completes", async () => {
+      let finish!: () => void;
+      mockFetchMessageHistory.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+      mockMessages.mockReturnValue(createTestMessages());
+      const wrapper = createWrapper();
+      await flushPromises();
+      const viewport = wrapper.find(".message-scroll-wrapper");
+      await viewport.trigger("wheel", { deltaY: -300 });
+      (viewport.element as HTMLElement).scrollTop = 100;
+      await viewport.trigger("scroll");
+      const scroll = vi.spyOn((wrapper.vm as any).virtualizer, "scrollToEnd");
+      finish();
+      await flushPromises();
+      expect(scroll).not.toHaveBeenCalled();
+    });
+
+    it("still aligns untouched delayed initial history with auto-scroll enabled", async () => {
+      let finish!: () => void;
+      mockFetchMessageHistory.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+      mockMessages.mockReturnValue(createTestMessages());
+      const wrapper = createWrapper();
+      await flushPromises();
+      const scroll = vi.spyOn((wrapper.vm as any).virtualizer, "scrollToEnd");
+      finish();
+      await flushPromises();
+      expect(scroll).toHaveBeenCalledOnce();
+    });
+
+    it("still fetches the new server when its filter changes in the same update", async () => {
+      const wrapper = createWrapper();
+      await flushPromises();
+      mockFetchMessageHistory.mockClear();
+      mockServer.activeServerId = 2;
+      (wrapper.vm as any).searchKeyword = "sensor";
+      await flushPromises();
+      expect(mockFetchMessageHistory).toHaveBeenCalledWith(2, 200);
+    });
+    it("does not scroll another server when its delayed initial history completes", async () => {
+      let finish!: () => void;
+      mockFetchMessageHistory.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+      mockMessages.mockReturnValue(createTestMessages());
+      const wrapper = createWrapper();
+      await flushPromises();
+      mockServer.activeServerId = 2;
+      await flushPromises();
+      const scroll = vi.spyOn((wrapper.vm as any).virtualizer, "scrollToEnd");
+      finish();
+      await flushPromises();
+      expect(scroll).not.toHaveBeenCalled();
+    });
+
+    it("does not overwrite a newer query's first-result position with delayed initial alignment", async () => {
+      let finish!: () => void;
+      mockFetchMessageHistory.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+      const history = reactive<MessageHistory[]>([]);
+      mockHistoryMessages.mockReturnValue(history);
+      const wrapper = createWrapper();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.searchKeyword = "sensor";
+      await flushPromises();
+      const scroll = vi.spyOn(vm.virtualizer, "scrollToEnd");
+      history.push({ id: 1, server_id: 1, direction: "receive", topic: "sensor", payload: "old",
+        qos: 0, retain: false, created_at: "2024-01-01T00:00:00Z" });
+      finish();
+      await flushPromises();
+      expect(scroll).not.toHaveBeenCalled();
+    });
+
+    it("renders repeated anonymous messages and distinct seq/id namespaces", async () => {
+      const original = createTestMessages()[0];
+      mockMessages.mockReturnValue([
+        { ...original, id: undefined }, { ...original, id: undefined },
+        { ...original, id: 7 }, { ...original, id: undefined, seq: 7 },
+      ]);
+      const wrapper = createWrapper();
+      await flushPromises();
+      expect((wrapper.vm as any).messages).toHaveLength(4);
+      const keys = wrapper.findAll(".message-row").map((row) => row.attributes("data-message-key"));
+      expect(new Set(keys).size).toBe(4);
+    });
+    it("mounts only the viewport and overscan from several thousand production rows", async () => {
+      mockMessages.mockReturnValue(Array.from({ length: 3000 }, (_, seq) => ({
+        ...createTestMessages()[0], id: seq + 1, seq,
+      })));
+      const wrapper = createWrapper();
+      await flushPromises();
+      const rows = wrapper.findAll(".message-row");
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(30);
+      expect((wrapper.vm as any).messages).toHaveLength(3000);
+      wrapper.unmount();
+    });
     it("keeps the historical prefix and live seq order when timestamps move backward", async () => {
       mockHistoryMessages.mockReturnValue([{
         id: 10, server_id: 1, direction: "receive", topic: "history", payload: "old",
@@ -460,6 +576,25 @@ describe("MessageList Topic 筛选", () => {
   });
 
   describe("filteredMessages with topic filter", () => {
+    it("retains case, whole-word, regex and invalid regex searches", async () => {
+      mockMessages.mockReturnValue([
+        { ...createTestMessages()[0], topic: "alpha", payload: new TextEncoder().encode("Word words") },
+        { ...createTestMessages()[1], topic: "beta", payload: new TextEncoder().encode("wording") },
+      ]);
+      const wrapper = createWrapper();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.searchKeyword = "Word"; vm.searchMatchCase = true; vm.searchWholeWord = true;
+      await flushPromises();
+      expect(vm.filteredMessages.map((msg: MqttMessage) => msg.topic)).toEqual(["alpha"]);
+      vm.searchUseRegex = true; vm.searchWholeWord = false; vm.searchMatchCase = false; vm.searchKeyword = "^word.*";
+      await flushPromises();
+      expect(vm.filteredMessages).toHaveLength(2);
+      vm.searchKeyword = "[";
+      await flushPromises();
+      expect(vm.filteredMessages).toHaveLength(0);
+      expect(wrapper.find(".is-invalid-regex").exists()).toBe(true);
+    });
     it("单选 Topic 时应只显示该 Topic 的消息", async () => {
       mockMessages.mockReturnValue(createTestMessages());
       const wrapper = createWrapper();
@@ -544,6 +679,19 @@ describe("MessageList Topic 筛选", () => {
   });
 
   describe("Topic select 交互", () => {
+    it("updates memoized Topic options on arrivals without losing the current selection", async () => {
+      const live = reactive(createTestMessages());
+      mockMessages.mockReturnValue(live);
+      const wrapper = createWrapper();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.selectedTopics = ["sensor/temp"];
+      live.push({ ...createTestMessages()[0], id: 8, topic: "sensor/new" });
+      await flushPromises();
+      expect(wrapper.findAllComponents({ name: "ElOption" }).map((option) => option.props("label"))).toContain("sensor/new");
+      expect(vm.selectedTopics).toEqual(["sensor/temp"]);
+      expect(vm.filteredMessages).toHaveLength(1);
+    });
     it("应渲染 Topic 筛选下拉框", async () => {
       mockMessages.mockReturnValue(createTestMessages());
       const wrapper = createWrapper();
