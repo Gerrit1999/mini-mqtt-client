@@ -63,6 +63,7 @@ pub fn run() {
             // 消息命令
             publish_message,
             save_received_message,
+            save_received_messages,
             get_message_history,
             clear_message_history,
             cleanup_message_history,

@@ -13,6 +13,9 @@ import type {
   PayloadFormat,
   PublishPayload,
   PublishRuntimeState,
+  ReceiveBatch,
+  ReceivedMessage,
+  ReceivedHistoryInput,
   SubscriptionOperationResult,
   SubscriptionRuntimeState,
 } from "@/types/mqtt";
@@ -20,6 +23,7 @@ import { ScriptEngine } from "@/utils/scriptEngine";
 import { clearScriptCache, getCachedScripts } from "@/utils/scriptCache";
 import { handleScriptError } from "@/utils/errorHandler";
 import i18n from "@/i18n";
+import { ReceiveQueue } from "@/utils/receiveQueue";
 import { useAppStore } from "@/stores/app";
 import {
   decodePayload,
@@ -36,15 +40,6 @@ interface ConnectionState {
   capabilities?: MqttCapability[];
   reconnect_attempt?: number;
   retry_in_ms?: number;
-}
-
-interface ReceivedMessage {
-  server_id: number;
-  topic: string;
-  payload: number[];
-  qos: number;
-  retain: boolean;
-  timestamp: string;
 }
 
 // 环境变量缓存接口
@@ -126,6 +121,59 @@ export const useMqttStore = defineStore("mqtt", () => {
   // 单调递增序列号，保证消息顺序
   let nextSeq = 0;
 
+  const receiveStats = shallowRef({
+    pendingCount: 0, pendingBytes: 0, peakCount: 0, peakBytes: 0,
+    accepted: 0, dropped: 0, failures: 0, backendDropped: 0, emitFailures: 0,
+  });
+  let lastReceiveNotice = -Infinity;
+  let noticedDrops = 0;
+  function updateReceiveStats() {
+    receiveStats.value = { ...receiveStats.value, ...receiveQueue.stats };
+    const drops = receiveStats.value.dropped + receiveStats.value.backendDropped;
+    if (drops > noticedDrops && Date.now() - lastReceiveNotice >= 5000) {
+      lastReceiveNotice = Date.now();
+      noticedDrops = drops;
+      ElMessage.error({ message: i18n.global.t("errors.receiveOverflow", { count: drops }), duration: 5000 });
+    }
+  }
+  function receiveFailure(error: unknown) {
+    if (Date.now() - lastReceiveNotice >= 5000) {
+      lastReceiveNotice = Date.now();
+      console.warn("Failed to process/persist received messages:", error);
+      ElMessage.error({ message: i18n.global.t("errors.receiveFailed"), duration: 5000 });
+    }
+  }
+  type PendingReceive = Omit<ReceivedMessage, "payload"> & { payload: Uint8Array; displaySeq: number };
+  const receiveQueue = new ReceiveQueue<PendingReceive>(async (items, reserve) => {
+    const displayed: MqttMessage[] = [];
+    const history: ReceivedHistoryInput[] = [];
+    for (const item of items) {
+      try {
+        const message = await processReceive(item);
+        const bytes = message.payload!;
+        // Reserve expansion before keeping processed bytes or creating history text.
+        // Admission reserves 8x input bytes for byte copies and UTF-16/hex history.
+        const expansion = Math.max(0, bytes.length - item.payload.length) * 8;
+        if (expansion && !reserve(expansion)) { receiveQueue.drop(); continue; }
+        const stored = detectStoredPayloadFormat(bytes);
+        displayed.push(message);
+        history.push({
+          server_id: message.server_id, topic: message.topic, payload: stored.payload,
+          payload_format: stored.format, qos: message.qos, retain: message.retain,
+          timestamp: message.timestamp!,
+        });
+      } catch (error) { receiveQueue.failure(error); }
+    }
+    if (!history.length) return;
+    try {
+      const ids = await invoke<number[]>("save_received_messages", { messages: history });
+      ids?.forEach((id, index) => { displayed[index].id = id; });
+    } catch (error) { receiveQueue.failure(error); }
+    flushMessageQueue(displayed);
+  }, updateReceiveStats, receiveFailure);
+
+  const flushReceiveQueue = () => receiveQueue.flush();
+
   // 获取缓存的环境变量
   async function getCachedEnvVariables(serverId: number): Promise<Record<string, string>> {
     const cached = envCache.get(serverId);
@@ -167,14 +215,17 @@ export const useMqttStore = defineStore("mqtt", () => {
   }
 
   // 批量处理消息队列
-  function flushMessageQueue() {
-    if (messageQueue.length === 0) return;
+  function flushMessageQueue(received: MqttMessage[] = []) {
+    if (batchTimeout) clearTimeout(batchTimeout);
+    batchTimeout = null;
+    const queued = messageQueue.splice(0).concat(received);
+    if (queued.length === 0) return;
 
     const newMap = new Map(messagesByServer.value);
 
     // 按 serverId 分组处理
     const messagesByServerId = new Map<number, MqttMessage[]>();
-    for (const msg of messageQueue) {
+    for (const msg of queued) {
       if (!messagesByServerId.has(msg.server_id)) {
         messagesByServerId.set(msg.server_id, []);
       }
@@ -195,8 +246,6 @@ export const useMqttStore = defineStore("mqtt", () => {
     }
 
     messagesByServer.value = newMap;
-    messageQueue.length = 0;
-    batchTimeout = null;
 
     // 派发事件通知消息列表已更新（供 MessageList.vue 自动滚动使用）
     const serverIds = Array.from(messagesByServerId.keys());
@@ -214,8 +263,15 @@ export const useMqttStore = defineStore("mqtt", () => {
     }
     messageQueue.push(msg);
 
+    // Publish display buffering must also stay bounded; receives use their own
+    // reservation through history and are merged directly by the single worker.
+    if (messageQueue.length >= 128 || messageQueue.reduce((sum, message) => sum + (message.payload?.length ?? 0), 0) >= 1024 * 1024) {
+      flushMessageQueue();
+      return;
+    }
+
     if (!batchTimeout) {
-      batchTimeout = setTimeout(flushMessageQueue, BATCH_INTERVAL);
+      batchTimeout = setTimeout(() => flushMessageQueue(), BATCH_INTERVAL);
     }
   }
 
@@ -339,69 +395,74 @@ export const useMqttStore = defineStore("mqtt", () => {
       });
     });
 
-    // 监听接收消息
-    await listen<ReceivedMessage>("mqtt-message", async (event) => {
-      const msg = event.payload;
-      const seq = nextSeq++; // 在异步处理前分配序列号
-      incrementReceivedCount(msg.server_id);
-      let payloadBytes = new Uint8Array(msg.payload);
-      let scriptError: string | undefined = undefined;
-
-      // 尝试应用接收后处理脚本（使用缓存）
-      try {
-        const scripts = await getCachedScripts(msg.server_id, "after_receive").catch(() => []);
-
-        if (scripts.length > 0) {
-          const originalPayloadBytes = new Uint8Array(payloadBytes);
-          const originalPayload = new TextDecoder().decode(payloadBytes);
-          const envVariables = await getCachedEnvVariables(msg.server_id).catch(() => ({}));
-          const processedPayload = await ScriptEngine.executeAfterReceive(
-            scripts,
-            originalPayload,
-            msg.topic,
-            envVariables,
-            originalPayloadBytes
-          );
-          payloadBytes = new TextEncoder().encode(processedPayload);
-        }
-      } catch (error: any) {
-        // 记录脚本错误
-        scriptError = error?.message || String(error);
-        handleScriptError(error, true, {
-          serverId: msg.server_id, topic: msg.topic, command: "after_receive",
-          ...(error instanceof Error && "scriptId" in error && error.scriptId !== undefined ? { scriptId: error.scriptId } : {}),
-        }); // 静默处理，不显示通知（会写入日志）
-      }
-
-      // 使用批处理队列
-      queueMessage({
-        server_id: msg.server_id,
-        direction: "receive",
-        topic: msg.topic,
-        payload: payloadBytes,
-        qos: msg.qos as 0 | 1 | 2,
-        retain: msg.retain,
-        timestamp: msg.timestamp,
-        scriptError: scriptError,
-        seq,
+    await listen<ReceiveBatch>("mqtt-message-batch", (event) => {
+      const batch = event.payload;
+      receiveStats.value = {
+        ...receiveStats.value, backendDropped: batch.dropped_total,
+        emitFailures: batch.emit_failures_total,
+      };
+      // Backend serializes all server flushes through a shared seam. Sort within
+      // a batch before reserving UI seq, shared with reserveSeq/tracked publishes.
+      const ordered = [...batch.messages].sort((a, b) => {
+        const left = BigInt(a.seq), right = BigInt(b.seq);
+        return left < right ? -1 : left > right ? 1 : 0;
       });
-
-      const storedMessage = detectStoredPayloadFormat(payloadBytes);
-      try {
-        await invoke("save_received_message", {
-          serverId: msg.server_id,
-          topic: msg.topic,
-          payload: storedMessage.payload,
-          payloadFormat: storedMessage.format,
-          qos: msg.qos,
-          retain: msg.retain,
-          timestamp: msg.timestamp,
-        });
-      } catch (error) {
-        console.warn("Failed to persist received message:", error);
+      const counts = new Map<number, number>();
+      for (const msg of ordered) {
+        counts.set(msg.server_id, (counts.get(msg.server_id) ?? 0) + 1);
+        const displaySeq = nextSeq++;
+        receiveQueue.offer(msg.payload.length * 8 + msg.topic.length * 2 + 512, () => ({
+          ...msg, payload: new Uint8Array(msg.payload), displaySeq,
+        }));
       }
+      for (const [serverId, count] of counts) incrementReceivedCount(serverId, count);
+      updateReceiveStats();
     });
   };
+
+  async function processReceive(msg: PendingReceive): Promise<MqttMessage> {
+    let payloadBytes = msg.payload;
+    let scriptError: string | undefined = undefined;
+
+    // 尝试应用接收后处理脚本（使用缓存）
+    try {
+      const scripts = await getCachedScripts(msg.server_id, "after_receive").catch(() => []);
+
+      if (scripts.length > 0) {
+        const originalPayloadBytes = new Uint8Array(payloadBytes);
+        const originalPayload = new TextDecoder().decode(payloadBytes);
+        const envVariables = await getCachedEnvVariables(msg.server_id).catch(() => ({}));
+        const processedPayload = await ScriptEngine.executeAfterReceive(
+          scripts,
+          originalPayload,
+          msg.topic,
+          envVariables,
+          originalPayloadBytes
+        );
+        payloadBytes = new TextEncoder().encode(processedPayload);
+      }
+    } catch (error: any) {
+      // 记录脚本错误
+      scriptError = error?.message || String(error);
+      handleScriptError(error, true, {
+        serverId: msg.server_id, topic: msg.topic, command: "after_receive",
+        ...(error instanceof Error && "scriptId" in error && error.scriptId !== undefined ? { scriptId: error.scriptId } : {}),
+      }); // 静默处理，不显示通知（会写入日志）
+    }
+
+    return {
+      server_id: msg.server_id,
+      direction: "receive",
+      topic: msg.topic,
+      payload: payloadBytes,
+      qos: msg.qos as 0 | 1 | 2,
+      retain: msg.retain,
+      timestamp: msg.timestamp,
+      scriptError: scriptError,
+      seq: msg.displaySeq,
+      receive_seq: msg.seq,
+    };
+  }
 
   // 连接
   const connect = async (serverId: number) => {
@@ -611,6 +672,8 @@ export const useMqttStore = defineStore("mqtt", () => {
     connectionStates,
     messagesByServer,
     receivedCountByServer,
+    receiveStats,
+    flushReceiveQueue,
     subscriptionStates,
     initListeners,
     connect,

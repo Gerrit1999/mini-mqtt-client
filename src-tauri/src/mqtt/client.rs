@@ -27,6 +27,7 @@ use crate::mqtt::publish::{
     PublishAckOutcome, PublishAckPhase, PublishOperationResult, PublishOperationTracker,
     PublishStateEvent, StartedPublishOperation,
 };
+use crate::mqtt::receive::{ReceiveBatcher, ReceivedMessage};
 use crate::mqtt::subscription::{
     StartedSubscriptionOperation, SubscriptionOperation, SubscriptionOperationResult,
     SubscriptionOperationTracker, SubscriptionRequest, SubscriptionStateEvent,
@@ -236,16 +237,6 @@ impl ConnectionState {
         state.retry_in_ms = Some(retry_delay.as_millis().min(u128::from(u64::MAX)) as u64);
         state
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReceivedMessage {
-    pub server_id: i64,
-    pub topic: String,
-    pub payload: Vec<u8>,
-    pub qos: u8,
-    pub retain: bool,
-    pub timestamp: String,
 }
 
 #[derive(Clone)]
@@ -598,6 +589,7 @@ struct EventLoopContext<R: Runtime> {
     publish_tracker: Arc<AsyncMutex<PublishOperationTracker>>,
     subscription_tracker: Arc<AsyncMutex<SubscriptionOperationTracker>>,
     subscription_loader: SubscriptionLoader,
+    receive_batcher: Arc<ReceiveBatcher>,
     connection_generation: Arc<AtomicU64>,
     jitter_seed: u64,
 }
@@ -608,6 +600,7 @@ pub struct MqttManager<R: Runtime = Wry> {
     clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
     app_handle: AppHandle<R>,
     subscription_loader: SubscriptionLoader,
+    receive_batcher: Arc<ReceiveBatcher>,
 }
 
 impl<R: Runtime> Clone for MqttManager<R> {
@@ -616,6 +609,7 @@ impl<R: Runtime> Clone for MqttManager<R> {
             clients: self.clients.clone(),
             app_handle: self.app_handle.clone(),
             subscription_loader: self.subscription_loader.clone(),
+            receive_batcher: self.receive_batcher.clone(),
         }
     }
 }
@@ -638,10 +632,27 @@ impl<R: Runtime> MqttManager<R> {
         app_handle: AppHandle<R>,
         subscription_loader: SubscriptionLoader,
     ) -> Self {
+        let receive_handle = app_handle.clone();
+        let diagnostic_handle = app_handle.clone();
+        let receive_batcher = ReceiveBatcher::new(
+            move |batch| {
+                receive_handle
+                    .emit("mqtt-message-batch", batch)
+                    .map_err(|error| error.to_string())
+            },
+            move |details| {
+                Self::write_receive_diagnostic(
+                    &diagnostic_handle,
+                    details,
+                    &mut std::io::stderr().lock(),
+                );
+            },
+        );
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
             app_handle,
             subscription_loader,
+            receive_batcher,
         }
     }
 
@@ -700,6 +711,7 @@ impl<R: Runtime> MqttManager<R> {
         let app_handle = self.app_handle.clone();
         let clients = self.clients.clone();
         let subscription_loader = self.subscription_loader.clone();
+        let receive_batcher = self.receive_batcher.clone();
 
         let spawned_task = tokio::spawn(async move {
             Self::run_eventloop(
@@ -717,6 +729,7 @@ impl<R: Runtime> MqttManager<R> {
                     publish_tracker,
                     subscription_tracker,
                     subscription_loader,
+                    receive_batcher,
                     connection_generation,
                     jitter_seed: connection_id.as_u128() as u64,
                 },
@@ -745,6 +758,7 @@ impl<R: Runtime> MqttManager<R> {
             publish_tracker,
             subscription_tracker,
             subscription_loader,
+            receive_batcher,
             connection_generation,
             jitter_seed,
         } = context;
@@ -789,6 +803,7 @@ impl<R: Runtime> MqttManager<R> {
                                     app_handle.clone(),
                                     clients.clone(),
                                     subscription_loader.clone(),
+                                    receive_batcher.clone(),
                                     server_id,
                                     connection_id,
                                     generation,
@@ -812,8 +827,9 @@ impl<R: Runtime> MqttManager<R> {
                                 qos,
                                 retain,
                                 timestamp: chrono::Utc::now().to_rfc3339(),
+                                seq: String::new(),
                             };
-                            let _ = app_handle.emit("mqtt-message", msg);
+                            receive_batcher.push(msg);
                         }
                         Ok(ProtocolEvent::PublishRequestSent { packet_id }) => {
                             let state = publish_tracker
@@ -1001,6 +1017,7 @@ impl<R: Runtime> MqttManager<R> {
         app_handle: AppHandle<R>,
         clients: Arc<RwLock<HashMap<i64, ClientHandle>>>,
         subscription_loader: SubscriptionLoader,
+        receive_batcher: Arc<ReceiveBatcher>,
         server_id: i64,
         connection_id: uuid::Uuid,
         generation: u64,
@@ -1018,6 +1035,7 @@ impl<R: Runtime> MqttManager<R> {
             clients,
             app_handle,
             subscription_loader,
+            receive_batcher,
         };
         tokio::spawn(async move {
             for subscription in subscriptions {
@@ -1291,6 +1309,33 @@ impl<R: Runtime> MqttManager<R> {
             }
         }
         let _ = app_handle.emit("mqtt-publish-state", state);
+    }
+
+    fn write_receive_diagnostic(
+        app_handle: &AppHandle<R>,
+        details: &str,
+        stderr: &mut impl std::io::Write,
+    ) {
+        let message = "Failed to emit MQTT receive batch";
+        if let Some(log_manager) = app_handle.try_state::<LogManager>() {
+            match log_manager.write_log(&LogEntry {
+                r#type: "error".into(),
+                message: message.into(),
+                details: Some(details.into()),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            }) {
+                Ok(()) => return,
+                Err(error) => {
+                    let error: String = error.chars().take(1024).collect();
+                    let _ = writeln!(
+                        stderr,
+                        "{message}: {details}; diagnostic write failed: {error}"
+                    );
+                    return;
+                }
+            }
+        }
+        let _ = writeln!(stderr, "{message}: {details}; LogManager unavailable");
     }
 
     fn write_diagnostic(
@@ -1666,6 +1711,108 @@ mod tests {
     use tokio::time::{sleep, timeout};
 
     type ProductionMqttManager = MqttManager<tauri::Wry>;
+
+    #[test]
+    fn manager_construction_outside_tokio_is_safe() {
+        let app = tauri::test::mock_app();
+        let _manager = MqttManager::new(app.handle().clone());
+    }
+
+    #[test]
+    fn receive_diagnostic_persists_or_falls_back_with_original_cause_and_counts() {
+        use crate::log::LogManager;
+        use tauri::Manager;
+
+        let details =
+            "lost_batch_count=2, dropped_total=5, emit_failures_total=3, cause=transport closed";
+        let app = tauri::test::mock_app();
+        let mut stderr = Vec::new();
+        MqttManager::write_receive_diagnostic(app.handle(), details, &mut stderr);
+        let fallback = String::from_utf8(stderr).unwrap();
+        assert!(fallback.contains(details));
+        assert!(fallback.contains("LogManager unavailable"));
+
+        let path = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        // A missing directory deterministically fails the real native writer.
+        app.manage(LogManager::for_test(path.clone()));
+        let mut stderr = Vec::new();
+        MqttManager::write_receive_diagnostic(app.handle(), details, &mut stderr);
+        let fallback = String::from_utf8(stderr).unwrap();
+        assert!(fallback.contains(details));
+        assert!(fallback.contains("diagnostic write failed: Failed to open log file:"));
+        assert!(!path.exists());
+
+        std::fs::create_dir_all(&path).unwrap();
+        let mut stderr = Vec::new();
+        MqttManager::write_receive_diagnostic(app.handle(), details, &mut stderr);
+        assert!(stderr.is_empty());
+        let lines = app.state::<LogManager>().get_recent_logs(10).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("[ERROR] Failed to emit MQTT receive batch"));
+        assert!(lines[0].contains(details));
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn both_protocol_eventloops_emit_binary_batches_through_shared_manager() {
+        use tauri::Listener;
+        let app = tauri::test::mock_app();
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        app.listen("mqtt-message-batch", move |event| {
+            events
+                .send(
+                    serde_json::from_str::<crate::mqtt::receive::ReceiveBatch>(event.payload())
+                        .unwrap(),
+                )
+                .unwrap();
+        });
+        let manager = MqttManager::new(app.handle().clone());
+        for (server_id, version) in [(1, "3.1.1"), (2, "5.0")] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (finish, wait_for_finish) = oneshot::channel();
+            let broker = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                read_mqtt_packet(&mut socket).await;
+                if version == "5.0" {
+                    socket.write_all(&[0x20, 3, 0, 0, 0]).await.unwrap();
+                    socket
+                        .write_all(&[0x31, 8, 0, 1, b't', 0, 0, 255, 128, 65])
+                        .await
+                        .unwrap();
+                } else {
+                    socket.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+                    socket
+                        .write_all(&[0x31, 7, 0, 1, b't', 0, 255, 128, 65])
+                        .await
+                        .unwrap();
+                }
+                wait_for_finish.await.unwrap();
+            });
+            let mut config = server("mqtt", None);
+            config.id = Some(server_id);
+            config.host = address.ip().to_string();
+            config.port = i32::from(address.port());
+            config.protocol_version = version.into();
+            manager.connect(config, 1024).await.unwrap();
+            let batch = timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(batch.messages.len(), 1);
+            let message = &batch.messages[0];
+            assert_eq!(message.server_id, server_id);
+            assert_eq!(message.seq, (server_id - 1).to_string());
+            assert_eq!(message.topic, "t");
+            assert_eq!(message.payload, vec![0, 255, 128, 65]);
+            assert!(message.retain);
+            assert_eq!(message.qos, 0);
+            assert!(chrono::DateTime::parse_from_rfc3339(&message.timestamp).is_ok());
+            manager.disconnect(server_id).await.unwrap();
+            finish.send(()).unwrap();
+            broker.await.unwrap();
+        }
+    }
 
     fn server(protocol: &str, websocket_path: Option<&str>) -> MqttServer {
         MqttServer {

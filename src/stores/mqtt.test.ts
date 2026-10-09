@@ -3,13 +3,18 @@ import { createPinia, setActivePinia } from "pinia";
 import { useMqttStore } from "./mqtt";
 import { invoke } from "@tauri-apps/api/core";
 import { ElMessage } from "element-plus";
+import { ScriptEngine } from "@/utils/scriptEngine";
+import { clearScriptCache } from "@/utils/scriptCache";
+import { RECEIVE_LIMITS } from "@/utils/receiveQueue";
 
 const { translate } = vi.hoisted(() => ({
   translate: vi.fn((key: string) => key),
 }));
 
-// 保存 mqtt-message 的 listener 回调
+// 单条接收回归通过批量事件监听器包装执行
 let mqttMessageListener: ((event: { payload: any }) => Promise<void>) | null = null;
+let mqttBatchListener: ((event: { payload: any }) => void) | null = null;
+let wireSeq = 0;
 let connectionStateListener: ((event: { payload: any }) => void) | null = null;
 let subscriptionStateListener: ((event: { payload: any }) => void) | null = null;
 let publishStateListener: ((event: { payload: any }) => void) | null = null;
@@ -26,8 +31,13 @@ vi.mock("@tauri-apps/api/event", () => ({
       subscriptionStateListener = callback;
     } else if (event === "mqtt-publish-state") {
       publishStateListener = callback;
-    } else if (event === "mqtt-message") {
-      mqttMessageListener = callback;
+    } else if (event === "mqtt-message-batch") {
+      mqttBatchListener = callback;
+      // Existing single-receive regressions now travel through the batch path.
+      mqttMessageListener = async ({ payload }) => {
+        callback({ payload: { messages: [{ ...payload, seq: String(wireSeq++) }], dropped_total: 0, emit_failures_total: 0 } });
+        await useMqttStore().flushReceiveQueue();
+      };
     }
     return () => {};
   }),
@@ -76,10 +86,14 @@ describe("useMqttStore", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     mqttMessageListener = null;
+    mqttBatchListener = null;
+    wireSeq = 0;
     connectionStateListener = null;
     subscriptionStateListener = null;
     publishStateListener = null;
     vi.clearAllMocks();
+    clearScriptCache();
+    vi.mocked(ScriptEngine.executeAfterReceive).mockImplementation(async (_scripts, payload) => payload);
     vi.useFakeTimers();
   });
 
@@ -747,6 +761,127 @@ describe("useMqttStore", () => {
 
       expect(store.getServerMessages(1)).toHaveLength(1000);
       expect(store.getReceivedCount(1)).toBe(1002);
+    });
+  });
+
+  describe("batch receive production listener", () => {
+    const message = (seq: number, server_id = 1, payload = [0, 255, 128, 65]) => ({
+      server_id, seq: String(seq), topic: `receive/${seq}`, payload, qos: 2, retain: true,
+      timestamp: "2026-10-09T00:00:00Z",
+    });
+    function deliver(messages: ReturnType<typeof message>[]) {
+      mqttBatchListener!({ payload: { messages, dropped_total: 0, emit_failures_total: 0 } });
+    }
+
+    it("orders interleaved servers and batches with slow scripts and shared publish seq", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      mockedInvoke.mockImplementation(async command => command === "get_enabled_scripts" ? [{ code: "test" }] : []);
+      let release!: () => void;
+      let started!: () => void;
+      const ready = new Promise<void>(resolve => { started = resolve; });
+      vi.mocked(ScriptEngine.executeAfterReceive).mockImplementationOnce(async (_scripts, payload) => {
+        started(); await new Promise<void>(resolve => { release = resolve; }); return payload;
+      });
+      deliver([message(1, 2, [66]), message(0, 1, [65])]);
+      const flushing = store.flushReceiveQueue();
+      await ready;
+      const publishSeq = store.reserveSeq();
+      store.addPublishMessage(1, { topic: "publish", payload: "P", qos: 0, retain: false, seq: publishSeq });
+      deliver([message(2, 1, [67])]);
+      expect(ScriptEngine.executeAfterReceive).toHaveBeenCalledTimes(1);
+      release();
+      await flushing;
+      expect(store.getServerMessages(1).map(message => message.topic)).toEqual(["receive/0", "publish", "receive/2"]);
+      expect(store.getServerMessages(2)[0].seq).toBe(1);
+      expect(store.getServerMessages(1).map(message => message.seq)).toEqual([0, 2, 3]);
+    });
+
+    it("keeps binary bytes and saves history once per batch with ids and explicit format/time", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      mockedInvoke.mockImplementation(async (command, args: any) => command === "save_received_messages"
+        ? args.messages.map((_row: any, index: number) => index + 100) : []);
+      deliver([message(0), message(1, 2)]);
+      await store.flushReceiveQueue();
+      expect(store.getServerMessages(1)[0]).toMatchObject({ id: 100, payload: new Uint8Array([0, 255, 128, 65]), receive_seq: "0" });
+      const saves = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "save_received_messages");
+      expect(saves).toHaveLength(1);
+      expect(saves[0][1]).toEqual({ messages: [1, 2].map(server_id => ({
+        server_id, topic: `receive/${server_id - 1}`, payload: "00FF8041", payload_format: "hex", qos: 2, retain: true,
+        timestamp: "2026-10-09T00:00:00Z",
+      })) });
+      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === "save_received_message")).toBe(false);
+    });
+
+    it("protects binary bytes from a failed script and tolerates script/env cache load failures", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      mockedInvoke.mockImplementation(async command => {
+        if (command === "get_enabled_scripts") return [{ code: "failure" }];
+        if (command === "list_env_variables") throw new Error("env unavailable");
+        return [];
+      });
+      vi.mocked(ScriptEngine.executeAfterReceive).mockImplementationOnce(async (_scripts, _payload, _topic, env, bytes) => {
+        expect(env).toEqual({});
+        bytes![0] = 42;
+        throw new Error("failed transform");
+      });
+      deliver([message(0)]);
+      await store.flushReceiveQueue();
+      expect(store.getServerMessages(1)[0]).toMatchObject({ payload: new Uint8Array([0, 255, 128, 65]), scriptError: "failed transform" });
+      expect(mockedInvoke).toHaveBeenCalledWith("save_received_messages", { messages: [expect.objectContaining({ payload: "00FF8041", payload_format: "hex" })] });
+      clearScriptCache();
+      mockedInvoke.mockImplementation(async command => {
+        if (command === "get_enabled_scripts") throw new Error("scripts unavailable");
+        return [];
+      });
+      deliver([message(1)]);
+      await store.flushReceiveQueue();
+      expect(store.getServerMessages(1)[1]).toMatchObject({ payload: new Uint8Array([0, 255, 128, 65]) });
+      expect(ScriptEngine.executeAfterReceive).toHaveBeenCalledTimes(1);
+    });
+
+    it("drops newest at the hard item cap including persistence in flight and throttles notices", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      let release!: () => void;
+      let started!: () => void;
+      const ready = new Promise<void>(resolve => { started = resolve; });
+      mockedInvoke.mockImplementation(async command => {
+        if (command === "save_received_messages") { started(); await new Promise<void>(resolve => { release = resolve; }); }
+        return [];
+      });
+      deliver(Array.from({ length: 128 }, (_, i) => message(i)));
+      await ready;
+      deliver(Array.from({ length: RECEIVE_LIMITS.count }, (_, i) => message(i + 128)));
+      expect(store.receiveStats).toMatchObject({ pendingCount: 2048, peakCount: 2048, dropped: 128 });
+      expect(ElMessage.error).toHaveBeenCalledTimes(1);
+      mockedInvoke.mockResolvedValue([]);
+      release();
+      await store.flushReceiveQueue();
+      expect(store.receiveStats.pendingCount).toBe(0);
+      expect(store.getReceivedCount(1)).toBe(2176);
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === "save_received_messages")).toHaveLength(16);
+      expect(store.getServerMessages(1).at(-1)?.receive_seq).toBe("2047");
+    });
+
+    it("enforces the byte budget before conversion and continues after persistence and display failures", async () => {
+      const store = useMqttStore();
+      await store.initListeners();
+      deliver([message(0, 1, new Array(RECEIVE_LIMITS.bytes / 8).fill(255)), message(1)]);
+      vi.advanceTimersByTime(5000);
+      mockedInvoke.mockImplementation(async command => { if (command === "save_received_messages") throw new Error("sqlite busy"); return []; });
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const dispatch = vi.spyOn(window, "dispatchEvent").mockImplementationOnce(() => { throw new Error("observer failed"); });
+      await store.flushReceiveQueue();
+      expect(store.receiveStats).toMatchObject({ dropped: 1, failures: 2, pendingCount: 0, pendingBytes: 0 });
+      mockedInvoke.mockResolvedValue([]);
+      deliver([message(2)]);
+      await store.flushReceiveQueue();
+      expect(store.getServerMessages(1).map(message => message.receive_seq)).toEqual(["1", "2"]);
+      expect(warning).toHaveBeenCalledTimes(1);
+      dispatch.mockRestore(); warning.mockRestore();
     });
   });
 });

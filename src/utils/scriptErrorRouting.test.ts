@@ -75,13 +75,15 @@ describe("real script error persistence routing", () => {
   it("persists one silent receive failure and still displays and saves the original payload", async () => {
     const store = useMqttStore();
     await store.initListeners();
-    await listeners.get("mqtt-message")!({ payload: {
+    listeners.get("mqtt-message-batch")!({ payload: { messages: [{
       server_id: 7, topic: "received/topic", payload: [65, 66], qos: 1, retain: false,
       timestamp: "2026-10-09T00:00:00Z",
-    } });
+      seq: "0",
+    }], dropped_total: 0, emit_failures_total: 0 } });
+    await store.flushReceiveQueue();
     vi.advanceTimersByTime(50);
     expect(store.getServerMessages(7)[0]).toMatchObject({ payload: new Uint8Array([65, 66]), scriptError: reason });
-    expect(invoke).toHaveBeenCalledWith("save_received_message", expect.objectContaining({ payload: "AB", topic: "received/topic" }));
+    expect(invoke).toHaveBeenCalledWith("save_received_messages", { messages: [expect.objectContaining({ payload: "AB", topic: "received/topic" })] });
     expect(ElNotification).not.toHaveBeenCalled();
     const entries = await diskEntries();
     expect(entries).toHaveLength(1);

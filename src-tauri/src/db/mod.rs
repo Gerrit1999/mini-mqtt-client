@@ -450,40 +450,54 @@ impl Storage {
         rows.filter_map(Result::ok).collect()
     }
 
-    pub fn create_message(&self, mut msg: MessageHistory) -> Result<MessageHistory, String> {
-        let conn = self.open_message_db()?;
-        if msg.created_at.is_none() {
-            msg.created_at = Some(chrono::Utc::now().to_rfc3339());
-        }
+    pub fn create_message(&self, msg: MessageHistory) -> Result<MessageHistory, String> {
+        self.create_messages(vec![msg])
+            .map(|mut rows| rows.remove(0))
+    }
 
-        conn.execute(
-            r#"
+    pub fn create_messages(
+        &self,
+        mut messages: Vec<MessageHistory>,
+    ) -> Result<Vec<MessageHistory>, String> {
+        let mut conn = self.open_message_db()?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let mut statement = tx
+            .prepare(
+                r#"
             INSERT INTO message_history (
                 server_id, direction, topic, payload, payload_format, qos, retain, created_at,
                 operation_id, publish_status, packet_id, publish_error, sent_at, confirmed_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
-            params![
-                msg.server_id,
-                msg.direction,
-                msg.topic,
-                msg.payload,
-                msg.payload_format,
-                msg.qos,
-                if msg.retain { 1 } else { 0 },
-                msg.created_at,
-                msg.operation_id,
-                msg.publish_status,
-                msg.packet_id,
-                msg.publish_error,
-                msg.sent_at,
-                msg.confirmed_at,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-
-        msg.id = Some(conn.last_insert_rowid());
-        Ok(msg)
+            )
+            .map_err(|error| error.to_string())?;
+        for msg in &mut messages {
+            if msg.created_at.is_none() {
+                msg.created_at = Some(chrono::Utc::now().to_rfc3339());
+            }
+            statement
+                .execute(params![
+                    msg.server_id,
+                    msg.direction,
+                    msg.topic,
+                    msg.payload,
+                    msg.payload_format,
+                    msg.qos,
+                    if msg.retain { 1 } else { 0 },
+                    msg.created_at,
+                    msg.operation_id,
+                    msg.publish_status,
+                    msg.packet_id,
+                    msg.publish_error,
+                    msg.sent_at,
+                    msg.confirmed_at,
+                ])
+                .map_err(|e| e.to_string())?;
+            msg.id = Some(tx.last_insert_rowid());
+        }
+        drop(statement);
+        tx.commit().map_err(|error| error.to_string())?;
+        Ok(messages)
     }
 
     pub fn update_publish_state(
@@ -1773,6 +1787,73 @@ mod tests {
         assert!(confirmed.confirmed_at.is_some());
         assert_eq!(storage.get_messages(7, 10, 0).len(), 1);
 
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn received_batch_command_preserves_binary_history_and_pagination() {
+        use crate::commands::publish::{save_received_messages, ReceivedHistoryInput};
+        let dir = test_dir("received-batch-command");
+        let db_path = dir.join("messages.sqlite");
+        initialize_message_db(&db_path).unwrap();
+        let storage = Storage {
+            data: RwLock::new(AppData::default()),
+            config: RwLock::new(AppConfig::default()),
+            config_path: dir.join("config.yaml"),
+            file_path: dir.join("data.yaml"),
+            message_db_path: db_path,
+        };
+        let app = tauri::test::mock_app();
+        tauri::Manager::manage(&app, storage);
+        let rows = (0..3)
+            .map(|index| {
+                serde_json::from_value::<ReceivedHistoryInput>(serde_json::json!({
+                    "server_id": if index == 1 { 2 } else { 1 }, "topic": format!("binary/{index}"),
+                    "payload": "00FF8041", "payload_format": "hex", "qos": 2, "retain": true,
+                    "timestamp": "2026-10-09T00:00:00Z"
+                }))
+                .unwrap()
+            })
+            .collect();
+        let saved = save_received_messages(tauri::Manager::state(&app), rows)
+            .await
+            .unwrap();
+        assert_eq!(saved.len(), 3);
+        assert!(saved.windows(2).all(|rows| rows[0] < rows[1]));
+        let storage = tauri::Manager::state::<Storage>(&app);
+        let newest = storage.get_messages(1, 1, 0);
+        let older = storage.get_messages(1, 1, 1);
+        assert_eq!(newest[0].topic, "binary/2");
+        assert_eq!(older[0].topic, "binary/0");
+        assert_eq!(newest[0].payload.as_deref(), Some("00FF8041"));
+        assert_eq!(newest[0].payload_format.as_deref(), Some("hex"));
+        assert_eq!(
+            newest[0].created_at.as_deref(),
+            Some("2026-10-09T00:00:00Z")
+        );
+        assert_eq!(storage.get_messages(2, 100, 0).len(), 1);
+
+        // A later insert failure rolls back earlier rows in the same transaction.
+        let mut duplicate = older[0].clone();
+        duplicate.id = None;
+        duplicate.operation_id = Some("duplicate-operation".into());
+        assert!(storage
+            .create_messages(vec![duplicate.clone(), duplicate])
+            .is_err());
+        assert_eq!(storage.get_messages(1, 100, 0).len(), 2);
+        let invalid = serde_json::from_value::<ReceivedHistoryInput>(serde_json::json!({
+            "server_id": 1, "topic": "invalid", "payload": "", "payload_format": "unknown",
+            "qos": 0, "retain": false, "timestamp": "2026-10-09T00:00:00Z"
+        }))
+        .unwrap();
+        assert!(
+            save_received_messages(tauri::Manager::state(&app), vec![invalid])
+                .await
+                .is_err()
+        );
+        storage.clear_messages(1).unwrap();
+        assert!(storage.get_messages(1, 100, 0).is_empty());
+        assert_eq!(storage.get_messages(2, 100, 0).len(), 1);
         fs::remove_dir_all(dir).unwrap();
     }
 

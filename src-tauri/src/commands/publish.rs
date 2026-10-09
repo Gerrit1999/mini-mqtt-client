@@ -3,6 +3,71 @@ use crate::db::Storage;
 use crate::mqtt::{MqttManager, PublishRuntimeStatus};
 use tauri::State;
 
+#[derive(serde::Deserialize)]
+pub struct ReceivedHistoryInput {
+    server_id: i64,
+    topic: String,
+    payload: String,
+    payload_format: String,
+    qos: i32,
+    retain: bool,
+    timestamp: String,
+}
+
+impl ReceivedHistoryInput {
+    fn into_history(self) -> Result<MessageHistory, String> {
+        validate_payload_format(&self.payload_format)?;
+        if !(0..=2).contains(&self.qos) {
+            return Err("Invalid QoS".to_string());
+        }
+        Ok(MessageHistory {
+            id: None,
+            server_id: self.server_id,
+            topic: self.topic,
+            payload: Some(self.payload),
+            payload_format: Some(self.payload_format),
+            direction: "receive".to_string(),
+            qos: self.qos,
+            retain: self.retain,
+            created_at: Some(self.timestamp),
+            operation_id: None,
+            publish_status: None,
+            packet_id: None,
+            publish_error: None,
+            sent_at: None,
+            confirmed_at: None,
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn save_received_messages(
+    storage: State<'_, Storage>,
+    messages: Vec<ReceivedHistoryInput>,
+) -> Result<Vec<i64>, String> {
+    if messages.len() > 128 {
+        return Err("Receive history batch exceeds 128 messages".to_string());
+    }
+    let bytes: usize = messages
+        .iter()
+        .map(|message| message.payload.len() + message.topic.len())
+        .sum();
+    if bytes > 64 * 1024 * 1024 {
+        return Err("Receive history batch exceeds 64 MiB".to_string());
+    }
+    let histories = messages
+        .into_iter()
+        .map(ReceivedHistoryInput::into_history)
+        .collect::<Result<Vec<_>, _>>()?;
+    storage.create_messages(histories).map(|rows| {
+        // Receipt ids are sufficient for live/history deduplication. Do not echo
+        // every stored payload back across IPC.
+        rows.into_iter()
+            .map(|row| row.id.expect("inserted history id"))
+            .collect()
+    })
+}
+
 fn validate_payload_format(format: &str) -> Result<(), String> {
     match format {
         "text" | "json" | "hex" | "base64" => Ok(()),
