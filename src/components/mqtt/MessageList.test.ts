@@ -244,6 +244,20 @@ describe("MessageList Topic 筛选", () => {
   }
 
   describe("topics computed", () => {
+    it("keeps the historical prefix and live seq order when timestamps move backward", async () => {
+      mockHistoryMessages.mockReturnValue([{
+        id: 10, server_id: 1, direction: "receive", topic: "history", payload: "old",
+        payload_format: "text", qos: 0, retain: false, created_at: "2024-01-01T00:00:00Z",
+      }]);
+      mockMessages.mockReturnValue([
+        { ...createTestMessages()[0], id: 11, topic: "live-first", seq: 0, timestamp: "2024-01-01T00:00:02Z" },
+        { ...createTestMessages()[0], id: 12, topic: "live-second", seq: 1, timestamp: "2024-01-01T00:00:01Z" },
+      ]);
+      const wrapper = createWrapper();
+      await flushPromises();
+      expect((wrapper.vm as any).filteredMessages.map((message: MqttMessage) => message.topic)).toEqual(["history", "live-first", "live-second"]);
+      wrapper.unmount();
+    });
     it("挂载时应加载第一页历史消息", async () => {
       const wrapper = createWrapper();
       await flushPromises();

@@ -592,17 +592,18 @@ function getDerivedPayloadBase64(msg: MqttMessage): string {
 }
 
 function compareMessages(a: MqttMessage, b: MqttMessage): number {
+  // SQLite rows have no session seq. Keep that historical prefix chronological,
+  // followed by the live session in seq order (even if timestamps move backward).
+  if (a.seq !== undefined || b.seq !== undefined) {
+    if (a.seq === undefined) return -1;
+    if (b.seq === undefined) return 1;
+    if (a.seq !== b.seq) return a.seq - b.seq;
+  }
   const timeA = getDerivedMessageMeta(a).timestampValue;
   const timeB = getDerivedMessageMeta(b).timestampValue;
 
   if (Number.isFinite(timeA) && Number.isFinite(timeB) && timeA !== timeB) {
     return timeA - timeB;
-  }
-
-  const seqA = a.seq ?? Number.MAX_SAFE_INTEGER;
-  const seqB = b.seq ?? Number.MAX_SAFE_INTEGER;
-  if (seqA !== seqB) {
-    return seqA - seqB;
   }
 
   const idA = a.id ?? Number.MAX_SAFE_INTEGER;

@@ -391,6 +391,8 @@ server:
   deleteSuccess: 删除成功
 
 errors:
+  receiveOverflow: "接收队列溢出：已丢弃 {count} 条消息（显示和历史记录）。"
+  receiveFailed: "部分接收消息处理或保存失败，后续批次将继续处理。"
   connectFailed: 连接失败
   disconnectFailed: 断开失败
   publishFailed: 发布失败

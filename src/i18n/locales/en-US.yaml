@@ -391,6 +391,8 @@ server:
   deleteSuccess: Deleted successfully
 
 errors:
+  receiveOverflow: "Receive queue overflow: {count} messages dropped from display and history."
+  receiveFailed: "Some received messages could not be processed or saved. Later batches will continue."
   connectFailed: Connection failed
   disconnectFailed: Disconnect failed
   publishFailed: Publish failed

@@ -10,6 +10,34 @@ export type MqttCapability =
   | "session_expiry"
   | "topic_alias";
 
+/** mqtt-message-batch: one manager-wide receive order, with unchanged bytes. */
+export interface ReceivedMessage {
+  server_id: number;
+  topic: string;
+  payload: number[];
+  qos: number;
+  retain: boolean;
+  timestamp: string;
+  /** Receive-only u64, encoded as a decimal string; not the UI/publish seq. */
+  seq: string;
+}
+
+export interface ReceiveBatch {
+  messages: ReceivedMessage[];
+  dropped_total: number;
+  emit_failures_total: number;
+}
+
+export interface ReceivedHistoryInput {
+  server_id: number;
+  topic: string;
+  payload: string;
+  payload_format: PayloadFormat;
+  qos: number;
+  retain: boolean;
+  timestamp: string;
+}
+
 export interface MqttServer {
   id?: number;
   name: string;
@@ -70,6 +98,7 @@ export interface MqttMessage {
   payload_type?: PayloadFormat;
   /** 单调递增序列号，用于保证消息显示顺序 */
   seq?: number;
+  receive_seq?: string;
   operation_id?: string;
   publish_status?: PublishRuntimeStatus;
   packet_id?: number;
