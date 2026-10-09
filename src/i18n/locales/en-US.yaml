@@ -293,7 +293,7 @@ script:
   envFunctions:
     getVar: Get environment variable value
     getVarAlt: Get environment variable value (alternative)
-    replace: Replace {{var}} placeholders in text
+    replace: Replace {'{{var}}'} placeholders in text
     getAll: Get all environment variables as array
 
 timedMessage:

@@ -293,7 +293,7 @@ script:
   envFunctions:
     getVar: 获取环境变量值
     getVarAlt: 获取环境变量值（另一种写法）
-    replace: 替换文本中的 {{变量名}} 占位符
+    replace: 替换文本中的 {'{{变量名}}'} 占位符
     getAll: 获取所有环境变量数组
 
 timedMessage:

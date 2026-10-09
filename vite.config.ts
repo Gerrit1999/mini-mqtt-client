@@ -4,14 +4,21 @@ import AutoImport from "unplugin-auto-import/vite";
 import Components from "unplugin-vue-components/vite";
 import { ElementPlusResolver } from "unplugin-vue-components/resolvers";
 import { resolve } from "path";
+import VueI18nPlugin from "@intlify/unplugin-vue-i18n/vite";
+import { validateLocalesPlugin } from "./scripts/i18n-validation";
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [
     vue(),
+    validateLocalesPlugin(),
+    VueI18nPlugin({
+      include: resolve(__dirname, "src/i18n/locales/**"),
+      runtimeOnly: true,
+      dropMessageCompiler: true,
+    }),
     AutoImport({
       resolvers: [ElementPlusResolver()],
       imports: ["vue", "pinia", "vue-i18n"],
