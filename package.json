@@ -24,7 +24,7 @@
     "lossless-json": "^4.3.1",
     "pako": "^2.1.0",
     "pinia": "^3.0.4",
-    "vue": "^3.5.13",
+    "vue": "^3.5.43",
     "vue-i18n": "^11.2.8"
   },
   "devDependencies": {
@@ -36,14 +36,14 @@
     "@types/pako": "^2.0.4",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.10",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^4.3.2",
     "jsdom": "^29.1.1",
     "sass-embedded": "^1.97.2",
     "typescript": "~5.6.2",
     "unplugin-auto-import": "^21.0.0",
     "unplugin-vue-components": "^31.0.0",
-    "vite": "^6.0.3",
-    "vitest": "^4.1.6",
+    "vite": "^6.4.4",
+    "vitest": "^4.1.11",
     "vue-tsc": "^2.1.10"
   }
 }

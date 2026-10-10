@@ -193,6 +193,7 @@ messages:
   copyToPublish: Copy to Publish
   payloadSize: Payload Size
   search:
+    placeholder: Search messages...
     matchCase: Match case
     wholeWord: Match whole word
     useRegex: Use regular expression

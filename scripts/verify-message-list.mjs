@@ -1,6 +1,7 @@
 import { createServer } from "vite";
 import vue from "@vitejs/plugin-vue";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { load } from "js-yaml";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,9 +14,12 @@ const { chromium } = await import(pathToFileURL(resolve(driver)).href);
 const temp = await mkdtemp(resolve(root, ".issue31-browser-"));
 let server, browser;
 try {
-  const baseline = execFileSync("git", ["show", "0ff39c0ff530321273ee1bc92b0ba94271b0c2f0:src/components/mqtt/MessageList.vue"], { encoding: "utf8" });
+  const baselineRef = process.env.BASELINE_REF ?? "0ff39c0ff530321273ee1bc92b0ba94271b0c2f0";
+  const baseline = execFileSync("git", ["show", `${baselineRef}:src/components/mqtt/MessageList.vue`], { encoding: "utf8" });
   await writeFile(resolve(temp, "Baseline.vue"), baseline.replace('"./MessagePayload.vue"', '"@/components/mqtt/MessagePayload.vue"'));
   await writeFile(resolve(temp, "index.html"), '<style>html,body,#app{height:100%;margin:0}#app{height:780px}.message-list{height:100%}</style><div id="app"></div><script type="module" src="./entry.ts"></script>');
+  const localeMessages = Object.fromEntries(await Promise.all(["en-US", "zh-CN"].map(async (locale) =>
+    [locale, load(await readFile(resolve(root, `src/i18n/locales/${locale}.yaml`), "utf8"))])));
   await writeFile(resolve(temp, "entry.ts"), `
     import { createApp } from 'vue';
     import ElementPlus from 'element-plus';
@@ -28,7 +32,10 @@ try {
     const component = new URLSearchParams(location.search).get('version') === 'before' ? Baseline : Changed;
     const begin = performance.now();
     window.renderStart = begin;
-    const app = createApp(component).use(ElementPlus).use(createI18n({legacy:false,locale:'en',missing:(_l,k)=>k}));
+    const realLocale = new URLSearchParams(location.search).has('realLocale');
+    const i18n = createI18n({legacy:false,locale:realLocale?'en-US':'en',messages:realLocale?${JSON.stringify(localeMessages)}:{},missing:(_l,k)=>k});
+    window.fixture.i18n = i18n.global;
+    const app = createApp(component).use(ElementPlus).use(i18n);
     app.mount('#app');
     requestAnimationFrame(()=>requestAnimationFrame(()=>window.renderElapsed = performance.now()-begin));
   `);
@@ -44,6 +51,8 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
   const url = server.resolvedUrls.local[0];
   await verifyReviewRegressions(browser, url);
+  await verifyToolbarRegressions(browser, url);
+  await verifyContentWidthRegression(browser, url);
   const results = [];
   for (let sample = 1; sample <= Number(process.env.BENCHMARK_SAMPLES ?? 3); sample++) {
   for (const version of ["before", "after"]) {
@@ -55,6 +64,11 @@ try {
     });
     await page.goto(`${url}?version=${version}&count=3000`);
     await page.waitForFunction(() => window.renderElapsed && document.querySelectorAll(".message-row").length);
+    const profiler = process.env.PROFILE_DIR ? await page.context().newCDPSession(page) : undefined;
+    if (profiler) {
+      await profiler.send("Profiler.enable");
+      await profiler.send("Profiler.start");
+    }
     const metrics = await page.evaluate(async () => {
       const viewport = document.querySelector(".message-scroll-wrapper");
       const mountedRows = document.querySelectorAll(".message-row").length;
@@ -77,6 +91,11 @@ try {
         scrollLongTasks: scrollTasks.length, scrollLongTaskMs: scrollTasks.reduce((a,b)=>a+b.duration,0) };
     });
     results.push({ sample, version, ...metrics });
+    if (profiler) {
+      const { profile } = await profiler.send("Profiler.stop");
+      await writeFile(resolve(process.env.PROFILE_DIR, `${version}-${sample}.cpuprofile`), JSON.stringify(profile));
+      await profiler.detach();
+    }
     if (version === "after" && sample === 1) {
       assert(metrics.mountedRows < 40, "bounded mounted rows");
       await verify(page);
@@ -84,9 +103,126 @@ try {
     await page.close();
   }
   }
-  console.log(JSON.stringify({ chromium: browser.version(), dataset: 3000, viewport: "1200x800", results }, null, 2));
+  console.log(JSON.stringify({ baselineRef, chromium: browser.version(), dataset: 3000, viewport: "1200x800", results }, null, 2));
 } finally {
   await browser?.close(); await server?.close(); await rm(temp, { recursive: true, force: true });
+}
+
+async function verifyContentWidthRegression(browser, url) {
+  const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+  const geometry = () => page.evaluate(async () => {
+    const viewport = document.querySelector(".message-scroll-wrapper");
+    let previous, stable = 0;
+    for (let frame = 0; frame < 120; frame++) {
+      await new Promise(requestAnimationFrame);
+      const top = viewport.getBoundingClientRect().top;
+      const rows = [...document.querySelectorAll(".message-row")];
+      const reading = rows.find((row) => row.getBoundingClientRect().bottom > top + 1);
+      const result = { outer: viewport.offsetWidth, inner: viewport.clientWidth,
+        key: reading?.dataset.messageKey, offset: reading?.getBoundingClientRect().top - top,
+        heights: rows.map((row) => [row.dataset.messageKey, row.getBoundingClientRect().height]) };
+      const current = JSON.stringify(result);
+      stable = current === previous ? stable + 1 : 0;
+      if (stable >= 4) return result;
+      previous = current;
+    }
+    throw new Error("Content-width reflow geometry did not settle within 120 animation frames");
+  });
+  try {
+    await page.goto(`${url}?version=after&count=600`);
+    await page.waitForSelector(".message-row");
+    // Headless Chromium's overlay scrollbar did not reserve space when its CSS
+    // width changed. Use a controlled gutter proxy: a right border consumes
+    // content space inside the fixed border box (box-sizing: border-box).
+    // Assert clientWidth changes and offsetWidth stays fixed in both directions.
+    await page.addStyleTag({ content: `
+      .message-scroll-wrapper { box-sizing: border-box; border-right: 0 solid transparent; }
+    ` });
+    await page.locator(".format-toggle .el-switch").click();
+    await geometry();
+    await page.evaluate(() => {
+      document.querySelector(".message-list").__vueParentComponent.setupState.virtualizer.scrollToIndex(149, { align: "start" });
+    });
+    let before = await geometry();
+    assert(Math.abs(before.offset) <= 3, "mid-list expanded JSON starts aligned");
+    assert(Math.max(...before.heights.map(([, height]) => height)) - Math.min(...before.heights.map(([, height]) => height)) > 40,
+      "content-width regression uses expanded variable-height JSON");
+    const measurements = [];
+    for (const width of [304, 0]) {
+      await page.evaluate((width) => {
+        document.querySelector(".message-scroll-wrapper").style.borderRightWidth = `${width}px`;
+      }, width);
+      const after = await geometry();
+      measurements.push({ border: width, before: { outer: before.outer, inner: before.inner, key: before.key, offset: before.offset },
+        after: { outer: after.outer, inner: after.inner, key: after.key, offset: after.offset } });
+      assert.equal(after.outer, before.outer, "gutter proxy keeps outer border-box width constant");
+      assert.equal(after.inner - before.inner, width === 304 ? -304 : 304, "gutter proxy changes actual clientWidth in both directions");
+      const oldHeights = new Map(before.heights);
+      assert(after.heights.some(([key, height]) => oldHeights.has(key) && Math.abs(height - oldHeights.get(key)) > 10),
+        "content-width change rewraps a measured row");
+      before = after;
+    }
+    // Collect both directions before checking anchors so a failure still
+    // reports the full width transition, rather than hiding the reverse leg.
+    console.log("Chromium constant-outer-width gutter proxy measurements", JSON.stringify(measurements));
+    for (const { border, before, after } of measurements) {
+      assert.equal(after.key, before.key, `gutter proxy width ${border} retains reading item ${JSON.stringify(measurements)}`);
+      assert(Math.abs(after.offset) <= 3, `gutter proxy width ${border} aligns reading item ${JSON.stringify(measurements)}`);
+    }
+    console.log("Chromium constant-outer-width gutter proxy regression passed", JSON.stringify(measurements));
+  } finally {
+    await page.close();
+  }
+}
+
+async function verifyToolbarRegressions(browser, url) {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  const settle = () => page.evaluate(async () => {
+    for (let i = 0; i < 15; i++) await new Promise(requestAnimationFrame);
+  });
+  try {
+    await page.goto(`${url}?version=after&count=80&realLocale`);
+    await page.waitForSelector(".message-row"); await settle();
+    assert.equal(await page.locator(".message-search input").getAttribute("placeholder"), "Search messages...");
+    const topic = await page.evaluate(() => window.fixture.data.live[1][0].topic);
+    const input = page.locator(".topic-filter input");
+    await input.fill(topic);
+    await page.locator(".el-select-dropdown__item:visible").filter({ hasText: topic }).click();
+    await page.locator(".panel-title").click(); await settle();
+    assert.equal(await page.locator(".message-row").count(), 1, "Topic selection filters rows");
+    assert.equal(await page.locator(".topic-text").innerText(), topic);
+    await page.evaluate(() => {
+      const { data, rows, i18n, app } = window.fixture;
+      data.live[1].push({ ...rows(1, 100)[0], topic: "new/topic" });
+      i18n.locale.value = "zh-CN";
+      app.locale = "zh-CN";
+    }); await settle();
+    assert.equal(await page.locator(".message-row").count(), 1, "arrival retains Topic selection");
+    assert.equal(await page.locator(".message-search input").getAttribute("placeholder"), "搜索消息...");
+    assert.equal(await page.locator(".format-toggle-label").innerText(), "JSON格式化");
+    assert.equal(await page.locator(".msg-time").innerText(), await page.evaluate(() => {
+      const date = new Date(window.fixture.data.live[1][0].timestamp);
+      return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "." + date.getMilliseconds().toString().padStart(3, "0");
+    }), "row time follows locale");
+    await page.locator(".topic-filter").hover();
+    await page.locator(".topic-filter .el-select__clear").click(); await settle();
+    assert(await page.locator(".message-row").count() > 1, "Topic clear restores rows");
+    await input.fill("new/topic");
+    await page.locator(".el-select-dropdown__item:visible").filter({ hasText: "new/topic" }).click();
+    await page.locator(".panel-title").click(); await settle();
+    assert.equal(await page.locator(".topic-text").innerText(), "new/topic", "new option is selectable");
+    await page.evaluate(() => { window.fixture.data.live[1] = window.fixture.data.live[1].filter((row) => row.topic !== "new/topic"); });
+    await settle();
+    await page.locator(".topic-filter").hover();
+    await page.locator(".topic-filter .el-select__clear").click();
+    await input.fill("new/topic"); await settle();
+    assert.equal(await page.locator(".el-select-dropdown__item:visible").count(), 0, "removed topics leave options");
+    await page.evaluate(() => { window.fixture.i18n.locale.value = "en-US"; }); await settle();
+    assert.equal(await page.locator(".message-search input").getAttribute("placeholder"), "Search messages...");
+    console.log("Chromium Topic and real locale regression assertions passed");
+  } finally {
+    await page.close();
+  }
 }
 
 async function verify(page) {

@@ -42,7 +42,7 @@
           <el-input
             v-model="searchKeyword"
             class="message-search"
-            :placeholder="$t('template.searchPlaceholder')"
+            :placeholder="$t('messages.search.placeholder')"
             :prefix-icon="Search"
             clearable
             :title="isRegexInvalid ? t('messages.search.invalidRegex') : ''"
@@ -751,13 +751,13 @@ function measureRow(element: Element | ComponentPublicInstance | null) {
 onUpdated(() => {
   virtualizer.value._willUpdate();
   // Keep the reading item from the last committed width. Row ResizeObservers
-  // can fire before the viewport observer during reflow.
-  const viewport = listViewport.value;
-  if (!viewport || viewport.clientWidth !== viewportWidth) return;
-  const top = viewport.getBoundingClientRect().top;
-  const row = Array.from(viewport.querySelectorAll<HTMLElement>(".message-row"))
-    .find((element) => element.getBoundingClientRect().bottom > top + 1);
-  viewportAnchor = row?.dataset.messageKey;
+  // can fire before the viewport observer during reflow. Check the content
+  // width: the library's border-box width misses scrollbar/gutter changes.
+  // This needs only one viewport read, rather than every row's rect.
+  const instance = virtualizer.value;
+  if (listViewport.value?.clientWidth !== viewportWidth) return;
+  const row = instance.getVirtualItemForOffset((instance.scrollOffset ?? 0) + 1);
+  viewportAnchor = row ? String(row.key) : undefined;
 });
 
 watch(loadMoreRow, (element, previous) => {
@@ -778,6 +778,9 @@ async function invalidateMeasurements(previousKey?: string) {
   const anchor = instance.getVirtualItemForOffset(instance.scrollOffset ?? 0);
   instance.measure();
   await nextTick();
+  // Let row ResizeObservers and their pending scroll compensation finish
+  // before issuing an absolute target against the rebuilt measurements.
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   if (generation !== layoutGeneration) return;
   if (anchor) {
     const index = filteredMessages.value.findIndex((msg) => getMessageKey(msg) === (previousKey ?? anchor.key));
@@ -929,15 +932,16 @@ function getFormatLabel(format: PayloadFormat, _msg?: MqttMessage): string {
   return labels[format];
 }
 
+const timeFormatter = computed(() => new Intl.DateTimeFormat(appStore.getDateLocale(), {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+}));
+
 const formatTime = (timestamp?: string) => {
   if (!timestamp) return "";
   const date = new Date(timestamp);
-  const locale = appStore.getDateLocale();
-  const timeStr = date.toLocaleTimeString(locale, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  const timeStr = Number.isNaN(date.getTime()) ? "Invalid Date" : timeFormatter.value.format(date);
   // 添加毫秒
   const ms = date.getMilliseconds().toString().padStart(3, "0");
   return `${timeStr}.${ms}`;

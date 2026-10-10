@@ -35,9 +35,10 @@ let finishInitialHistory: (() => void) | undefined;
 let deferInitialHistory = query.has("deferInitialHistory");
 export const server = reactive({ activeServerId: 1 });
 export const app = reactive({ autoScroll: query.has("autoScroll"), messageLimit: 20000,
+  locale: "en-US",
   setAutoScroll(value: boolean) { this.autoScroll = value; },
   setCopyToPublish(value: unknown) { (window as any).copied = value; },
-  getDateLocale: () => "en-US" });
+  getDateLocale() { return this.locale; } });
 export const useServerStore = () => server;
 export const useAppStore = () => app;
 export const useMqttStore = () => ({ getServerMessages: (id: number) => data.live[id] ?? [],
