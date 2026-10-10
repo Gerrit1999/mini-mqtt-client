@@ -1,11 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { getCurrentWindow, type Theme as TauriTheme } from "@tauri-apps/api/window";
-import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { errorLogBuffer } from "@/utils/errorLogBuffer";
 import i18n, { getActualLocale, loadLocaleMessages, type Locale, type ActualLocale } from "@/i18n";
 import type { PayloadFormat } from "@/types/mqtt";
 
@@ -13,15 +9,6 @@ export type Theme = "light" | "dark" | "auto";
 export type ViewType = "messages" | "templates";
 export type ContentLayout = "horizontal" | "vertical";
 export type { Locale, ActualLocale };
-
-// 版本更新信息
-export interface UpdateInfo {
-  hasUpdate: boolean;
-  latestVersion: string;
-  currentVersion: string;
-  date?: string;
-  body?: string;
-}
 
 export interface AppSettings {
   message_limit: number;
@@ -75,13 +62,6 @@ export const useAppStore = defineStore("app", () => {
   // SQLite 消息历史保留策略
   const messageRetentionDays = ref(30);
   const messageRetentionCount = ref(100000);
-
-  // 版本更新信息
-  const updateInfo = ref<UpdateInfo | null>(null);
-  const checkingUpdate = ref(false);
-  const installingUpdate = ref(false);
-  const updateProgress = ref<number | null>(null);
-  let pendingUpdate: Update | null = null;
 
   // 获取系统主题（使用 Tauri API）
   const getSystemTheme = async (): Promise<"light" | "dark"> => {
@@ -301,83 +281,6 @@ export const useAppStore = defineStore("app", () => {
     copyToPublishData.value = null;
   };
 
-  // 检查更新
-  const checkUpdate = async (): Promise<UpdateInfo | null> => {
-    if (checkingUpdate.value) return null;
-    
-    checkingUpdate.value = true;
-    pendingUpdate = null;
-    try {
-      const currentVersion = await getVersion();
-      const update = await check();
-      pendingUpdate = update;
-
-      updateInfo.value = { 
-        hasUpdate: update !== null, 
-        latestVersion: update ? `v${update.version}` : `v${currentVersion}`,
-        currentVersion,
-        date: update?.date,
-        body: update?.body,
-      };
-      
-      return updateInfo.value;
-    } catch (e) {
-      console.error('检查更新失败:', e);
-      return null;
-    } finally {
-      checkingUpdate.value = false;
-    }
-  };
-
-  // 清除更新信息
-  const clearUpdateInfo = () => {
-    updateInfo.value = null;
-    pendingUpdate = null;
-    updateProgress.value = null;
-  };
-
-  const installUpdate = async () => {
-    if (!pendingUpdate || installingUpdate.value) return false;
-
-    installingUpdate.value = true;
-    updateProgress.value = 0;
-    try {
-      let downloaded = 0;
-      let contentLength = 0;
-
-      await pendingUpdate.download((event) => {
-        switch (event.event) {
-          case "Started":
-            contentLength = event.data.contentLength ?? 0;
-            updateProgress.value = contentLength > 0 ? 0 : null;
-            break;
-          case "Progress":
-            downloaded += event.data.chunkLength;
-            updateProgress.value = contentLength > 0
-              ? Math.min(100, Math.round((downloaded / contentLength) * 100))
-              : null;
-            break;
-          case "Finished":
-            updateProgress.value = 100;
-            break;
-        }
-      });
-
-      // Windows installation can exit the process, so flush after downloading
-      // and before starting installation, then again before explicit relaunch.
-      await errorLogBuffer.flush();
-      await pendingUpdate.install();
-      await errorLogBuffer.flush();
-      await relaunch();
-      return true;
-    } catch (e) {
-      console.error("安装更新失败:", e);
-      throw e;
-    } finally {
-      installingUpdate.value = false;
-    }
-  };
-
   return {
     theme,
     locale,
@@ -391,10 +294,6 @@ export const useAppStore = defineStore("app", () => {
     mqttPacketSizeLimitKb,
     messageRetentionDays,
     messageRetentionCount,
-    updateInfo,
-    checkingUpdate,
-    installingUpdate,
-    updateProgress,
     toggleTheme,
     setTheme,
     initTheme,
@@ -413,9 +312,6 @@ export const useAppStore = defineStore("app", () => {
     setMessageLimit,
     setMqttPacketSizeLimitKb,
     setMessageCleanupPolicy,
-    checkUpdate,
-    installUpdate,
-    clearUpdateInfo,
     cleanup,
   };
 });

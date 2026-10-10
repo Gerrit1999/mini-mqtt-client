@@ -198,7 +198,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, reactive } from "vue";
+import { ref, watch, computed, reactive, nextTick } from "vue";
+import { useUpdateDraft } from "@/composables/useUpdateProtection";
 import { useI18n } from "vue-i18n";
 import type { FormInstance, FormRules } from "element-plus";
 import { RefreshRight } from "@element-plus/icons-vue";
@@ -278,6 +279,7 @@ const formData = reactive<FormData>({
   client_key: "",
   client_key_password: "",
 });
+const updateDraft = useUpdateDraft('server', () => ({ ...formData, group: selectedGroupId.value }), () => props.visible);
 
 const isTlsCapableProtocol = computed(() => formData.protocol === "mqtts" || formData.protocol === "wss");
 const showTlsSection = computed(() => isTlsCapableProtocol.value || formData.use_tls);
@@ -350,7 +352,7 @@ const rules = computed<FormRules>(() => ({
 
 watch(
   () => props.visible,
-  (val) => {
+  async (val) => {
     if (val) {
       activeTab.value = "basic";
       if (props.server) {
@@ -402,6 +404,8 @@ watch(
         formData.client_key = "";
         formData.client_key_password = "";
       }
+      await nextTick();
+      updateDraft.markSaved();
     }
   }
 );
@@ -449,6 +453,7 @@ const handleSave = async () => {
   };
 
   saving.value = true;
+  const savedDraft = updateDraft.snapshot();
   try {
     if (isEdit.value) {
       await serverStore.updateServer(serverData, selectedGroupId.value);
@@ -457,6 +462,7 @@ const handleSave = async () => {
       await serverStore.createServer(serverData, selectedGroupId.value);
       ElMessage.success(t('server.saveSuccess'));
     }
+    updateDraft.markSaved(savedDraft);
     emit("saved");
     emit("update:visible", false);
   } catch (error) {

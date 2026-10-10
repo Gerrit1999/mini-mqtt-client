@@ -5,7 +5,7 @@ import { errorLogBuffer } from './errorLogBuffer'
 
 // Native close is held until all queued writes settle. Failed persistence keeps
 // the window open so the user can retry; reporting must bypass the error buffer.
-export async function setupErrorLogLifecycle(): Promise<() => void> {
+export async function setupErrorLogLifecycle(beforeDestroy?: () => Promise<void>): Promise<() => void> {
   const report = (error: unknown) => {
     console.error('退出前写入错误日志失败:', error)
     ElNotification({
@@ -31,6 +31,7 @@ export async function setupErrorLogLifecycle(): Promise<() => void> {
         closing = true
         try {
           await errorLogBuffer.flush()
+          await beforeDestroy?.()
           // destroy avoids another closeRequested event and lets us catch native
           // close failures too (the API's implicit destroy would be out-of-band).
           await appWindow.destroy()

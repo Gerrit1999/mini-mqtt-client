@@ -6,6 +6,7 @@ import i18n from "./i18n";
 import { getElementLocale, elementPlusLocaleOptions } from "./i18n/element-plus";
 import { setupGlobalErrorHandler } from "./utils/errorHandler";
 import { setupErrorLogLifecycle } from "./utils/errorLogLifecycle";
+import { useUpdaterStore } from "./stores/updater";
 
 // Element Plus 暗黑主题
 import "element-plus/theme-chalk/dark/css-vars.css";
@@ -20,7 +21,7 @@ import "./assets/styles/index.scss";
 
 // 设置全局错误处理器
 setupGlobalErrorHandler();
-void setupErrorLogLifecycle();
+void setupErrorLogLifecycle(() => useUpdaterStore(pinia).dispose());
 
 const app = createApp(App);
 

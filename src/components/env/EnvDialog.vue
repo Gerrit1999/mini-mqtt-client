@@ -61,6 +61,7 @@ import { useI18n } from 'vue-i18n'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { useEnvStore, type EnvVariable } from '@/stores/env'
+import { useUpdateDraft } from '@/composables/useUpdateProtection'
 
 const { t } = useI18n()
 
@@ -87,6 +88,7 @@ const form = ref({
   value: '',
   description: ''
 })
+const updateDraft = useUpdateDraft('env', () => form.value, () => props.visible)
 
 // 变量名校验函数
 const validateName = (_rule: any, value: string, callback: (error?: Error) => void) => {
@@ -126,6 +128,7 @@ watch(() => props.visible, (visible) => {
       // 新建模式：重置表单
       resetForm()
     }
+    updateDraft.markSaved()
   }
 })
 
@@ -137,6 +140,7 @@ function resetForm() {
     description: ''
   }
   formRef.value?.resetFields()
+  updateDraft.markSaved()
 }
 
 // 提交表单
@@ -147,6 +151,7 @@ async function handleSubmit() {
   if (!valid) return
 
   submitting.value = true
+  const savedDraft = updateDraft.snapshot()
   try {
     if (isEdit.value) {
       await envStore.updateVariable({
@@ -163,6 +168,7 @@ async function handleSubmit() {
         description: form.value.description || undefined
       })
     }
+    updateDraft.markSaved(savedDraft)
     emit('saved')
   } catch (error: any) {
     if (error?.toString().includes('already exists')) {

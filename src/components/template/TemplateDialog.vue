@@ -177,6 +177,7 @@ import {
 } from '@/stores/template'
 import type { PayloadFormat } from '@/types/mqtt'
 import { decodePayload } from '@/utils/payloadCodec'
+import { useUpdateDraft } from '@/composables/useUpdateProtection'
 
 const { t } = useI18n()
 
@@ -211,6 +212,7 @@ const form = ref({
   qos: 0 as 0 | 1 | 2,
   retain: false
 })
+const updateDraft = useUpdateDraft('template', () => ({ ...form.value, connectionOnly: saveToCurrentConnectionOnly.value }), () => props.visible)
 
 // 表单验证规则
 const rules: FormRules = {
@@ -273,6 +275,7 @@ watch(() => props.visible, (visible) => {
       saveToCurrentConnectionOnly.value = false
       resetForm()
     }
+    updateDraft.markSaved()
   }
 })
 
@@ -303,6 +306,7 @@ function resetForm() {
     retain: false
   }
   formRef.value?.resetFields()
+  updateDraft.markSaved()
 }
 
 // 验证payload格式
@@ -357,6 +361,7 @@ async function handleSubmit() {
   }
 
   submitting.value = true
+  const savedDraft = updateDraft.snapshot()
   try {
     if (isEdit.value) {
       await templateStore.updateTemplate({
@@ -386,6 +391,7 @@ async function handleSubmit() {
         description: form.value.description || undefined
       })
     }
+    updateDraft.markSaved(savedDraft)
     emit('saved')
   } catch (error) {
     ElMessage.error(`${t('errors.saveFailed')}: ${error}`)

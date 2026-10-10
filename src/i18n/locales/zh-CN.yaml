@@ -156,9 +156,44 @@ settings:
     check: 检查更新
     newVersion: 发现新版本
     upToDate: 已是最新版本
+    skipped: "发现版本 {version}，但您已跳过此版本"
     install: 安装并重启
     installing: 正在安装
     installConfirm: 发现新版本 {version}，安装完成后将重启应用，是否继续？
+
+updater:
+  title: 应用更新
+  autoCheck: 自动检查更新
+  autoDownload: 在后台自动下载更新
+  download: 下载更新
+  downloadFailed: 下载更新失败
+  restart: 重新启动并更新
+  later: 稍后
+  skip: 跳过此版本
+  releaseDate: 发布日期
+  releaseNotes: 更新说明
+  failure: 更新失败
+  confirm: "是否安装 {version} 并重新启动？安装可能关闭应用，以下活动将被中断，未保存的内容可能丢失。"
+  phases:
+    idle: 等待检查
+    checking: 正在检查更新
+    up_to_date: 已是最新版本
+    skipped: 已跳过此版本
+    available: 发现可用更新
+    downloading: 正在下载更新
+    ready: 下载完成，等待安装
+    installing: 正在准备或安装更新
+  impacts:
+    mqtt: MQTT 连接（已连接、连接中或重连中）将断开
+    scheduled: 定时发布将停止
+    timed: 定时消息将停止
+    publish: 未保存的发布草稿可能丢失
+    server: 未保存的服务器配置可能丢失
+    subscription: 未保存的订阅更改可能丢失
+    template: 未保存的模板更改可能丢失
+    script: 未保存的脚本更改可能丢失
+    env: 未保存的环境变量更改可能丢失
+    settings: 未保存的设置可能丢失
 
 publish:
   title: 发布消息

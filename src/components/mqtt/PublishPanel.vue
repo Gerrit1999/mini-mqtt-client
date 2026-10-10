@@ -196,6 +196,7 @@ import { decodePayload } from "@/utils/payloadCodec";
 import type { PayloadFormat } from "@/types/mqtt";
 import type { ContentLayout } from "@/stores/app";
 import { usePublishPipeline } from "@/composables/usePublishPipeline";
+import { useUpdateDraft } from "@/composables/useUpdateProtection";
 
 const { t } = useI18n();
 
@@ -281,6 +282,7 @@ const publishData = reactive({
 });
 
 const payloadFormat = ref<PayloadFormat>("json");
+useUpdateDraft('publish', () => ({ ...publishData, format: payloadFormat.value }), () => true);
 
 const isConnected = computed(() => {
   const serverId = serverStore.activeServerId;
