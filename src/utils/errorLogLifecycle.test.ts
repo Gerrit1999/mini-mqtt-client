@@ -52,6 +52,15 @@ describe('error logging exit lifecycle', () => {
     expect(mocks.destroy).toHaveBeenCalledTimes(1)
   })
 
+  it('releases update resources after flushing and before native destroy', async () => {
+    const order: string[] = []
+    mocks.flush.mockImplementation(async () => { order.push('flush') })
+    mocks.destroy.mockImplementation(async () => { order.push('destroy') })
+    cleanup = await setupErrorLogLifecycle(async () => { order.push('dispose updater') })
+    await mocks.listen.mock.calls[0][0]({ preventDefault: vi.fn() })
+    expect(order).toEqual(['flush', 'dispose updater', 'destroy'])
+  })
+
   it('handles native destroy and listener setup failures out of band', async () => {
     mocks.destroy.mockRejectedValueOnce(new Error('close denied'))
     cleanup = await setupErrorLogLifecycle()

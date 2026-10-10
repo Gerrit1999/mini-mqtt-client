@@ -44,6 +44,7 @@
 
   <!-- 系统设置对话框 -->
   <SettingsDialog v-model:visible="showSettingsDialog" />
+  <UpdateStatus />
 
   <!-- 脚本管理对话框 -->
   <ScriptDialog
@@ -67,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import MainContent from "@/components/mqtt/MainContent.vue";
@@ -77,6 +78,9 @@ import ScheduledPublishDialog from "@/components/mqtt/ScheduledPublishDialog.vue
 import SettingsDialog from "@/components/settings/SettingsDialog.vue";
 import ScriptDialog from "@/components/script/ScriptDialog.vue";
 import EnvDrawer from "@/components/env/EnvDrawer.vue";
+import UpdateStatus from "@/components/settings/UpdateStatus.vue";
+import { useUpdaterStore } from "@/stores/updater";
+import { useUpdateProtection } from "@/composables/useUpdateProtection";
 import { useAppStore } from "@/stores/app";
 import { useMqttStore } from "@/stores/mqtt";
 import { useServerStore } from "@/stores/server";
@@ -87,6 +91,8 @@ import type { PayloadFormat } from "@/types/mqtt";
 const { t } = useI18n();
 
 const appStore = useAppStore();
+const updater = useUpdaterStore();
+onUnmounted(() => { void updater.dispose().catch(error => console.error('Updater cleanup:', error)); });
 const mqttStore = useMqttStore();
 const serverStore = useServerStore();
 const templateStore = useTemplateStore();
@@ -107,6 +113,8 @@ const isScheduledPublishRunning = ref(false);
 
 // 定时消息状态
 const isTimedMessageRunning = ref(false);
+useUpdateProtection('scheduled', () => isScheduledPublishRunning.value ? 'running' : false);
+useUpdateProtection('timed', () => isTimedMessageRunning.value ? 'running' : false);
 
 // 系统设置对话框
 const showSettingsDialog = ref(false);
@@ -117,19 +125,20 @@ const showScriptDialog = ref(false);
 // 环境变量抽屉
 const showEnvDrawer = ref(false);
 
-onMounted(() => {
+onMounted(async () => {
   // 初始化主题
-  appStore.initTheme();
+  await appStore.initTheme();
   // 初始化语言
-  appStore.initLocale();
+  await appStore.initLocale();
   // 初始化应用设置
-  appStore.initAppSettings();
+  await appStore.initAppSettings();
   // 初始化自动滚动设置
   appStore.initAutoScroll();
   // 初始化消息区与发送区布局
   appStore.initContentLayout();
   // 初始化 MQTT 事件监听
-  mqttStore.initListeners();
+  await mqttStore.initListeners();
+  updater.initialize();
 });
 
 // 处理保存模板请求

@@ -156,9 +156,44 @@ settings:
     check: Check Updates
     newVersion: New version available
     upToDate: You are up to date
+    skipped: "Version {version} is available but you skipped it"
     install: Install and Restart
     installing: Installing
     installConfirm: "New version {version} is available. The app will restart after installation. Continue?"
+
+updater:
+  title: Application Update
+  autoCheck: Automatically check for updates
+  autoDownload: Automatically download updates in the background
+  download: Download Update
+  downloadFailed: Failed to download update
+  restart: Restart and Update
+  later: Later
+  skip: Skip This Version
+  releaseDate: Release Date
+  releaseNotes: Release Notes
+  failure: Update failed
+  confirm: "Install {version} and restart? Installation may close the app. The following activities will be interrupted and unsaved changes may be lost."
+  phases:
+    idle: Waiting
+    checking: Checking for updates
+    up_to_date: You are up to date
+    skipped: Version skipped
+    available: Update available
+    downloading: Downloading update
+    ready: Downloaded and ready to install
+    installing: Preparing or installing update
+  impacts:
+    mqtt: MQTT connections (connected, connecting or reconnecting) will disconnect
+    scheduled: Scheduled publishing will stop
+    timed: Timed messages will stop
+    publish: Unsaved publish draft may be lost
+    server: Unsaved server configuration may be lost
+    subscription: Unsaved subscription changes may be lost
+    template: Unsaved template changes may be lost
+    script: Unsaved script changes may be lost
+    env: Unsaved environment variable changes may be lost
+    settings: Unsaved settings may be lost
 
 publish:
   title: Publish Message

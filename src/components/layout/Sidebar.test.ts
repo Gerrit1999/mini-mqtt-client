@@ -1,15 +1,15 @@
-import { flushPromises, shallowMount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import ElementPlus, { ElDialog } from "element-plus";
+import { flushPromises, shallowMount, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ElementPlus, { ElDialog, ElInput, ElMessageBox } from "element-plus";
+import { defineComponent, h, type VNode } from 'vue';
 import type { Subscription } from "@/types/mqtt";
 import SubscriptionTopicTree from "@/components/mqtt/SubscriptionTopicTree.vue";
 import Sidebar from "./Sidebar.vue";
+import { createPinia, setActivePinia } from 'pinia';
+import { useUpdaterStore } from '@/stores/updater';
 
 const appStore = vi.hoisted(() => ({
   theme: "light",
-  updateInfo: null,
-  checkUpdate: vi.fn(),
-  installUpdate: vi.fn(),
   setCopyToPublish: vi.fn(),
   toggleTheme: vi.fn(),
 }));
@@ -33,8 +33,10 @@ const subscriptionStore = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn().mockResolvedValue("1.7.3"),
 }));
+vi.mock('@tauri-apps/plugin-updater', () => ({ check: async () => ({ version: '1.9.0', download: async () => {}, close: async () => {} }) }));
 
-vi.mock("vue-i18n", () => ({
+vi.mock("vue-i18n", async importOriginal => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
   useI18n: () => ({
     t: (key: string) => key,
   }),
@@ -55,6 +57,7 @@ vi.mock("@/stores/subscription", () => ({
 vi.mock("@/stores/mqtt", () => ({
   useMqttStore: () => ({
     subscriptionStates: new Map(),
+    connectionStates: new Map(),
     getConnectionStatus: () => "connected",
   }),
 }));
@@ -80,6 +83,7 @@ function mountSidebar() {
   return shallowMount(Sidebar, {
     global: {
       plugins: [ElementPlus],
+      renderStubDefaultSlot: true,
       mocks: {
         $t: (key: string) => key,
       },
@@ -88,8 +92,46 @@ function mountSidebar() {
 }
 
 describe("Sidebar subscription publish action", () => {
+  afterEach(() => vi.restoreAllMocks());
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    setActivePinia(createPinia());
+  });
+
+  it('opens existing update feedback from the version badge without installing', async () => {
+    const updater = useUpdaterStore();
+    updater.info = { hasUpdate: true, latestVersion: 'v1.9.0', currentVersion: '1.8.1' };
+    updater.deferred = true;
+    const wrapper = mountSidebar();
+    await flushPromises();
+    await wrapper.get('.version-tag').trigger('click');
+    expect(updater.deferred).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('protects changed subscription forms and releases them on Cancel', async () => {
+    const updater = useUpdaterStore();
+    await updater.check();
+    await updater.download();
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel');
+    const wrapper = mountSidebar();
+    await wrapper.get('[aria-label="sidebar.addSubscription"]').trigger('click');
+    const messageText = () => {
+      const message = mount(defineComponent({ render: () => h('div', [confirm.mock.calls.at(-1)![0] as VNode]) }));
+      const text = message.text();
+      message.unmount();
+      return text;
+    };
+    await updater.install();
+    expect(messageText()).not.toContain('Unsaved subscription');
+    wrapper.findAllComponents(ElInput).find(input => input.props('placeholder') === 'e.g., sensor/+/temperature')!.vm.$emit('update:modelValue', 'changed/topic');
+    await updater.install();
+    expect(messageText()).toContain('Unsaved subscription');
+    wrapper.findAllComponents(ElDialog)[0].vm.$emit('update:modelValue', false);
+    await updater.install();
+    expect(messageText()).not.toContain('Unsaved subscription');
+    wrapper.unmount();
   });
 
   it("loads a concrete subscription topic into the publish panel", async () => {
@@ -106,6 +148,7 @@ describe("Sidebar subscription publish action", () => {
       retain: false,
       payloadType: "text",
     });
+    wrapper.unmount();
   });
 
   it("asks for a concrete publish topic when the filter has wildcards", async () => {
@@ -119,5 +162,6 @@ describe("Sidebar subscription publish action", () => {
 
     expect(appStore.setCopyToPublish).not.toHaveBeenCalled();
     expect(wrapper.findAllComponents(ElDialog)[1].props("modelValue")).toBe(true);
+    wrapper.unmount();
   });
 });

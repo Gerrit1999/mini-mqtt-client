@@ -184,6 +184,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useScriptStore, type Script, type ScriptType } from '@/stores/script'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readTextFile } from '@tauri-apps/plugin-fs'
+import { useUpdateDraft } from '@/composables/useUpdateProtection'
 
 const { t } = useI18n()
 
@@ -276,6 +277,7 @@ const formData = ref({
   code: '',
   description: '',
 })
+const updateDraft = useUpdateDraft('script', () => formData.value, () => props.visible && (!!selectedScript.value || isAdding.value))
 
 // 打开对话框时加载脚本
 function handleOpen() {
@@ -295,6 +297,7 @@ function resetForm() {
     code: getDefaultCode('before_publish'),
     description: '',
   }
+  updateDraft.markSaved()
 }
 
 // 获取默认代码
@@ -326,6 +329,7 @@ function handleSelect(script: Script) {
     code: script.code,
     description: script.description || '',
   }
+  updateDraft.markSaved()
 }
 
 // 新增脚本
@@ -347,27 +351,36 @@ async function handleSave() {
   }
 
   saving.value = true
+  const savingForm = formData.value
+  const serverId = props.serverId
+  const isCurrentForm = () => props.visible && props.serverId === serverId && formData.value === savingForm
+  const savedDraft = updateDraft.snapshot()
   try {
     if (isAdding.value) {
-      await scriptStore.createScript({
-        server_id: props.serverId,
+      const request = {
+        server_id: serverId,
         name: formData.value.name,
         script_type: formData.value.script_type,
         code: formData.value.code,
         enabled: true,
         description: formData.value.description || undefined,
-      })
+      }
+      const id = await scriptStore.createScript(request)
       ElMessage.success(t('script.saveSuccess'))
-      isAdding.value = false
+      if (isCurrentForm()) {
+        selectedScript.value = scriptStore.scripts.find(script => script.id === id) || { ...request, id }
+        isAdding.value = false
+      }
     } else if (selectedScript.value?.id) {
       await scriptStore.updateScript({
         id: selectedScript.value.id,
         name: formData.value.name,
         code: formData.value.code,
         description: formData.value.description || undefined,
-      }, props.serverId)
+      }, serverId)
       ElMessage.success(t('script.saveSuccess'))
     }
+    if (isCurrentForm()) updateDraft.markSaved(savedDraft)
   } catch (error) {
     ElMessage.error(`${t('errors.saveFailed')}: ${error}`)
   } finally {

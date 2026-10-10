@@ -6,6 +6,7 @@
     :close-on-click-modal="false"
     class="settings-dialog"
     @open="loadSettings"
+    @close="handleClose"
   >
     <div class="settings-content">
       <!-- 主题设置 -->
@@ -210,32 +211,32 @@
           <el-button
             size="small"
             :icon="Refresh"
-            :loading="checkingUpdate"
+            :loading="updater.phase === 'checking'"
             @click="handleCheckUpdate"
           >
             {{ $t('settings.update.check') }}
           </el-button>
-          <div v-if="updateInfo" class="update-status">
-            <el-tag v-if="updateInfo.hasUpdate" type="success" effect="plain">
-              {{ $t('settings.update.newVersion') }}: {{ updateInfo.latestVersion }}
+          <div v-if="updater.info" class="update-status">
+            <el-tag v-if="updater.info.hasUpdate" type="success" effect="plain">
+              {{ $t('settings.update.newVersion') }}: {{ updater.info.latestVersion }}
             </el-tag>
-            <el-tag v-else type="info" effect="plain">
+            <el-tag v-else-if="updater.phase === 'skipped'" type="info" effect="plain">
+              {{ $t('settings.update.skipped', { version: updater.info.latestVersion }) }}
+            </el-tag>
+            <el-tag v-else-if="updater.phase === 'up_to_date'" type="info" effect="plain">
               {{ $t('settings.update.upToDate') }}
             </el-tag>
-            <el-button 
-              v-if="updateInfo.hasUpdate"
-              size="small" 
-              type="primary"
-              :icon="Download"
-              :loading="installingUpdate"
-              @click="handleInstallUpdate"
-            >
-              {{ installingUpdate && updateProgress !== null
-                ? `${$t('settings.update.installing')} ${updateProgress}%`
-                : $t('settings.update.install') }}
-            </el-button>
           </div>
         </div>
+        <div class="setting-row">
+          <span>{{ $t('updater.autoCheck') }}</span>
+          <el-switch v-model="currentAutoCheck" :aria-label="$t('updater.autoCheck')" />
+        </div>
+        <div class="setting-row">
+          <span>{{ $t('updater.autoDownload') }}</span>
+          <el-switch v-model="currentAutoDownload" :aria-label="$t('updater.autoDownload')" />
+        </div>
+        <UpdateStatus embedded />
       </div>
     </div>
 
@@ -256,7 +257,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sunny, Moon, Platform, FolderOpened, CopyDocument, Delete, Refresh, Download } from '@element-plus/icons-vue'
+import { Sunny, Moon, Platform, FolderOpened, CopyDocument, Delete, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -264,6 +265,9 @@ import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore, type ContentLayout, type Theme, type Locale } from '@/stores/app'
 import { useMqttStore } from '@/stores/mqtt'
 import { useMessageStore } from '@/stores/message'
+import { useUpdaterStore } from '@/stores/updater'
+import { useUpdateProtection } from '@/composables/useUpdateProtection'
+import UpdateStatus from './UpdateStatus.vue'
 
 const MESSAGE_LIMIT_MIN = 100
 const MESSAGE_LIMIT_MAX = 10000
@@ -283,6 +287,7 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const updater = useUpdaterStore()
 const mqttStore = useMqttStore()
 const messageStore = useMessageStore()
 const { t } = useI18n()
@@ -312,11 +317,11 @@ const currentDataPath = ref('')
 const newDataPath = ref('')
 const logPath = ref('')
 const currentVersion = ref('')
-const checkingUpdate = ref(false)
-const installingUpdate = computed(() => appStore.installingUpdate)
-const updateProgress = computed(() => appStore.updateProgress)
+const currentAutoCheck = ref(updater.autoCheck)
+const originalAutoCheck = ref(updater.autoCheck)
+const currentAutoDownload = ref(updater.autoDownload)
+const originalAutoDownload = ref(updater.autoDownload)
 const cleaningMessages = ref(false)
-const updateInfo = computed(() => appStore.updateInfo)
 
 // 是否有更改
 const hasChanges = computed(() => {
@@ -327,8 +332,15 @@ const hasChanges = computed(() => {
          currentMqttPacketSizeLimitKb.value !== originalMqttPacketSizeLimitKb.value ||
          currentMessageRetentionDays.value !== originalMessageRetentionDays.value ||
          currentMessageRetentionCount.value !== originalMessageRetentionCount.value ||
+         currentAutoCheck.value !== originalAutoCheck.value ||
+         currentAutoDownload.value !== originalAutoDownload.value ||
          newDataPath.value !== ''
 })
+useUpdateProtection('settings', () => props.visible && hasChanges.value ? JSON.stringify([
+  currentTheme.value, currentLocale.value, currentContentLayout.value, currentMessageLimit.value,
+  currentMqttPacketSizeLimitKb.value, currentMessageRetentionDays.value, currentMessageRetentionCount.value,
+  currentAutoCheck.value, currentAutoDownload.value, newDataPath.value,
+]) : false)
 
 // 加载设置
 async function loadSettings() {
@@ -347,7 +359,8 @@ async function loadSettings() {
   currentMessageRetentionCount.value = appStore.messageRetentionCount
   originalMessageRetentionCount.value = appStore.messageRetentionCount
   newDataPath.value = ''
-  appStore.clearUpdateInfo()
+  currentAutoCheck.value = originalAutoCheck.value = updater.autoCheck
+  currentAutoDownload.value = originalAutoDownload.value = updater.autoDownload
   
   try {
     currentVersion.value = await getVersion()
@@ -564,6 +577,12 @@ async function handleSave() {
       await invoke('cleanup_message_history', { vacuum: false })
     }
     
+    updater.setPreferences({ autoCheck: currentAutoCheck.value, autoDownload: currentAutoDownload.value })
+    originalAutoCheck.value = currentAutoCheck.value
+    originalAutoDownload.value = currentAutoDownload.value
+    originalTheme.value = currentTheme.value
+    originalLocale.value = currentLocale.value
+    newDataPath.value = ''
     dialogVisible.value = false
   } catch (e: any) {
     if (e !== 'cancel') {
@@ -579,49 +598,24 @@ function handleClose() {
   // 如果主题已更改但未保存，恢复原始主题
   if (currentTheme.value !== originalTheme.value && !saving.value) {
     appStore.setTheme(originalTheme.value)
+    currentTheme.value = originalTheme.value
   }
   // 如果语言已更改但未保存，恢复原始语言
   if (currentLocale.value !== originalLocale.value && !saving.value) {
     appStore.setLocale(originalLocale.value)
+    currentLocale.value = originalLocale.value
   }
+  currentAutoCheck.value = originalAutoCheck.value
+  currentAutoDownload.value = originalAutoDownload.value
+  newDataPath.value = ''
   dialogVisible.value = false
 }
 
 // 检查更新
 async function handleCheckUpdate() {
-  checkingUpdate.value = true
-  appStore.clearUpdateInfo()
-  
   try {
-    const result = await appStore.checkUpdate()
-    
-    if (result && !result.hasUpdate) {
-      ElMessage.success(t('settings.update.upToDate'))
-    }
-  } catch (e) {
-    ElMessage.error(`${t('errors.checkUpdateFailed')}: ${e}`)
-  } finally {
-    checkingUpdate.value = false
-  }
-}
-
-async function handleInstallUpdate() {
-  try {
-    await ElMessageBox.confirm(
-      t('settings.update.installConfirm', { version: updateInfo.value?.latestVersion }),
-      t('settings.update.newVersion'),
-      {
-        confirmButtonText: t('settings.update.install'),
-        cancelButtonText: t('common.cancel'),
-        type: 'info',
-      }
-    )
-    await appStore.installUpdate()
-  } catch (e) {
-    if (e !== 'cancel') {
-      ElMessage.error(`${t('errors.updateInstallFailed')}: ${e}`)
-    }
-  }
+    await updater.check({ interactive: true })
+  } catch { /* The updater reports interactive failures. */ }
 }
 </script>
 

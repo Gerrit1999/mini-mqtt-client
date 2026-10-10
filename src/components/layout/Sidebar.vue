@@ -11,11 +11,11 @@
         <span class="logo-text">MQTT Client</span>
         <span 
           class="version-tag" 
-          :class="{ 'has-update': appStore.updateInfo?.hasUpdate }"
+          :class="{ 'has-update': updater.info?.hasUpdate }"
           @click="handleVersionClick"
         >
           v{{ appVersion }}
-          <span v-if="appStore.updateInfo?.hasUpdate" class="update-dot" />
+          <span v-if="updater.info?.hasUpdate" class="update-dot" />
         </span>
       </div>
     </div>
@@ -388,6 +388,8 @@ import {
   FolderOpened,
 } from "@element-plus/icons-vue";
 import { useAppStore } from "@/stores/app";
+import { useUpdaterStore } from "@/stores/updater";
+import { useUpdateDraft } from "@/composables/useUpdateProtection";
 import { useServerStore } from "@/stores/server";
 import { useSubscriptionStore } from "@/stores/subscription";
 import { useMqttStore } from "@/stores/mqtt";
@@ -400,6 +402,7 @@ import type { MqttServer, Subscription } from "@/types/mqtt";
 const { t } = useI18n();
 
 const appStore = useAppStore();
+const updater = useUpdaterStore();
 const serverStore = useServerStore();
 const subscriptionStore = useSubscriptionStore();
 const mqttStore = useMqttStore();
@@ -479,8 +482,6 @@ onMounted(async () => {
     appVersion.value = "1.0.0";
   }
   
-  // 启动时检查更新
-  appStore.checkUpdate();
 });
 
 // 监听活动服务器变化，加载订阅列表
@@ -657,24 +658,7 @@ const handleConfirmMoveServer = () => {
 
 // 版本号点击处理
 const handleVersionClick = async () => {
-  if (appStore.updateInfo?.hasUpdate) {
-    try {
-      await ElMessageBox.confirm(
-        t('sidebar.update.confirmDownload', { version: appStore.updateInfo.latestVersion }),
-        t('sidebar.update.newVersionFound'),
-        {
-          confirmButtonText: t('sidebar.update.installNow'),
-          cancelButtonText: t('common.cancel'),
-          type: 'info',
-        }
-      );
-      await appStore.installUpdate();
-    } catch (e) {
-      if (e !== 'cancel') {
-        ElMessage.error(`${t('errors.updateInstallFailed')}: ${e}`);
-      }
-    }
-  }
+  if (updater.info?.hasUpdate) updater.deferred = false;
 };
 
 // ===== 订阅相关 =====
@@ -704,6 +688,7 @@ const subFormData = reactive({
   qos: 0,
   color: "",
 });
+const subscriptionDraft = useUpdateDraft('subscription', () => subFormData, () => showSubDialog.value);
 
 const handleAddSubscription = () => {
   subFormData.topic = "";
@@ -712,6 +697,7 @@ const handleAddSubscription = () => {
   isEditingSubscription.value = false;
   editingSubscriptionId.value = null;
   editingOldTopic.value = "";
+  subscriptionDraft.markSaved();
   showSubDialog.value = true;
 };
 
@@ -722,6 +708,7 @@ const handleEditSubscription = (sub: Subscription) => {
   isEditingSubscription.value = true;
   editingSubscriptionId.value = sub.id!;
   editingOldTopic.value = sub.topic;
+  subscriptionDraft.markSaved();
   showSubDialog.value = true;
 };
 
@@ -825,6 +812,7 @@ const handleConfirmSubscription = async () => {
   }
 
   subLoading.value = true;
+  const savedDraft = subscriptionDraft.snapshot();
   try {
     if (isEditingSubscription.value && editingSubscriptionId.value) {
       // 编辑模式
@@ -851,6 +839,7 @@ const handleConfirmSubscription = async () => {
       }
       ElMessage.success(t('success.saved'));
     }
+    subscriptionDraft.markSaved(savedDraft);
     showSubDialog.value = false;
   } catch (error) {
     console.error("Subscribe failed:", error);
