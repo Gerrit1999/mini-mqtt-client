@@ -50,6 +50,19 @@ try {
   await server.listen();
   browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
   const url = server.resolvedUrls.local[0];
+  if (process.env.LIVE_FOLLOW_FORMAT_OVERFLOW) await verifyDisabledFormatOverflow(browser, url);
+  else if (process.env.LIVE_FOLLOW_DISABLED) await verifyDisabledEmptyOverflow(browser, url);
+  else if (process.env.LIVE_FOLLOW_EMPTY) await verifyEmptyLiveFollow(browser, url);
+  else if (process.env.LIVE_FOLLOW_STATIC) await verifyStaticLiveFollow(browser, url);
+  else {
+  await verifyDisabledEmptyOverflow(browser, url);
+  await verifyDisabledFormatOverflow(browser, url);
+  await verifyEmptyLiveFollow(browser, url);
+  await verifyEmptyLiveFollow(browser, url, { gutter: true, fixedHeader: true, batches: 2 });
+  await verifyStaticLiveFollow(browser, url, { count: 240, batch: 128, history: true });
+  await verifyLiveFollow(browser, url);
+  }
+  if (!process.env.LIVE_FOLLOW_ONLY && !process.env.LIVE_FOLLOW_EMPTY && !process.env.LIVE_FOLLOW_STATIC && !process.env.LIVE_FOLLOW_DISABLED && !process.env.LIVE_FOLLOW_FORMAT_OVERFLOW) {
   await verifyReviewRegressions(browser, url);
   await verifyToolbarRegressions(browser, url);
   await verifyContentWidthRegression(browser, url);
@@ -104,8 +117,224 @@ try {
   }
   }
   console.log(JSON.stringify({ baselineRef, chromium: browser.version(), dataset: 3000, viewport: "1200x800", results }, null, 2));
+  }
 } finally {
   await browser?.close(); await server?.close(); await rm(temp, { recursive: true, force: true });
+}
+
+async function verifyDisabledFormatOverflow(browser, url) {
+  const page = await browser.newPage({ viewport: { width: 532, height: 800 } });
+  try {
+    await page.goto(`${url}?version=after&count=1&autoScroll&emptyHistory&realLocale&receiveOnly`);
+    await page.waitForSelector(".message-row");
+    await page.evaluate(() => { window.fixture.data.live[1] = window.fixture.rows(1, 11); });
+    await page.addStyleTag({ content: `
+      #app { height: 420px; }
+      .panel-header { height: 180px; }
+      .message-scroll-wrapper { box-sizing: border-box; border-right: 0 solid transparent; }
+      .message-scroll-wrapper:has(.message-body--expanded) { border-right-width: 6px; }
+    ` });
+    const sample = () => page.evaluate(async () => {
+      for (let i = 0; i < 30; i++) await new Promise(requestAnimationFrame);
+      const v = document.querySelector(".message-scroll-wrapper");
+      return { outer: v.offsetWidth, width: v.clientWidth, height: v.clientHeight,
+        extent: v.scrollHeight, top: v.scrollTop, gap: v.scrollHeight - v.clientHeight - v.scrollTop };
+    });
+    await sample();
+    await page.locator(".toolbar-icon-action.is-active").click();
+    const before = await sample();
+    assert.equal(before.extent, before.height, "collapsed short content has no overflow");
+    await page.locator(".format-toggle .el-switch").evaluate((s) => s.click());
+    const after = await sample();
+    console.log("Chromium disabled short format overflow gutter", JSON.stringify({ before, after }));
+    assert.equal(after.outer, before.outer);
+    assert.equal(after.width, before.width - 6);
+    assert(after.extent > after.height, "explicit expansion introduces overflow");
+    assert(after.gap <= 3, "disabled already-bottom explicit format overflow preserves bottom");
+  } finally { await page.close(); }
+}
+
+async function verifyDisabledEmptyOverflow(browser, url) {
+  const page = await browser.newPage({ viewport: { width: 532, height: 800 } });
+  try {
+    await page.goto(`${url}?version=after&count=0&limit=1000&autoScroll&emptyHistory&realLocale&receiveOnly`);
+    await page.waitForSelector(".empty-state");
+    // Match native's first-overflow 6 px gutter without changing its border box.
+    await page.addStyleTag({ content: `
+      .panel-header { height: 180px; }
+      .message-scroll-wrapper { box-sizing: border-box; border-right: 0 solid transparent; }
+      .message-scroll-wrapper:has(.message-items) { border-right-width: 6px; }
+    ` });
+    await page.locator(".toolbar-icon-action.is-active").click();
+    const result = await page.evaluate(async () => {
+      const sample = () => {
+        const v = document.querySelector(".message-scroll-wrapper");
+        return { outer: v.offsetWidth, width: v.clientWidth, height: v.clientHeight,
+          top: v.scrollTop, gap: v.scrollHeight - v.clientHeight - v.scrollTop,
+          active: !!document.querySelector(".toolbar-icon-action.is-active"),
+          rows: document.querySelectorAll(".message-row").length };
+      };
+      for (let i = 0; i < 15; i++) await new Promise(requestAnimationFrame);
+      const before = sample();
+      window.fixture.append(128, 1000);
+      const start = performance.now();
+      while (performance.now() - start < 1000) await new Promise(requestAnimationFrame);
+      return { before, after: sample() };
+    });
+    console.log("Chromium disabled empty first-overflow gutter", JSON.stringify(result));
+    assert.equal(result.after.outer, result.before.outer, "overflow keeps outer width");
+    assert.equal(result.after.width, result.before.width - 6, "overflow reserves native-sized gutter");
+    assert.equal(result.after.height, result.before.height, "overflow keeps viewport height");
+    assert(!result.before.active && !result.after.active && result.after.rows > 0);
+    assert(Math.abs(result.after.top - result.before.top) <= 3, "disabled first arrivals retain top through overflow");
+    assert(result.after.gap > 3, "disabled first arrivals do not force bottom");
+  } finally { await page.close(); }
+}
+
+async function verifyEmptyLiveFollow(browser, url, options = {}) {
+  const page = await browser.newPage({ viewport: { width: 528, height: 800 } });
+  try {
+    await page.goto(`${url}?version=${process.env.LIVE_FOLLOW_VERSION ?? "after"}&count=0&limit=1000&autoScroll&emptyHistory&realLocale&receiveOnly`);
+    await page.waitForSelector(".empty-state");
+    if (options.fixedHeader || process.env.LIVE_FOLLOW_FIXED_HEADER) await page.addStyleTag({ content: ".panel-header { height: 180px; }" });
+    if (options.gutter || process.env.LIVE_FOLLOW_GUTTER) await page.addStyleTag({ content: `
+      .message-scroll-wrapper { box-sizing: border-box; border-right: 0 solid transparent; }
+      .message-scroll-wrapper:has(.message-items) { border-right-width: 6px; }
+    ` });
+    const results = await page.evaluate(async (batches) => {
+      const samples = [];
+      for (let i = 0; i < 15; i++) await new Promise(requestAnimationFrame);
+      const initial = document.querySelector(".message-scroll-wrapper");
+      samples.push({ batch: -1, gap: initial.scrollHeight - initial.clientHeight - initial.scrollTop,
+        height: initial.clientHeight, width: initial.clientWidth, top: initial.scrollTop, received: 0, live: 0 });
+      for (let batch = 0; batch < batches; batch++) {
+        window.fixture.append(128, 1000);
+        const start = performance.now();
+        while (performance.now() - start < 300) await new Promise(requestAnimationFrame);
+        const v = document.querySelector(".message-scroll-wrapper");
+        samples.push({ batch, gap: v.scrollHeight - v.clientHeight - v.scrollTop,
+          height: v.clientHeight, width: v.clientWidth, top: v.scrollTop,
+          received: window.fixture.data.received[1], live: window.fixture.data.live[1].length });
+      }
+      return samples;
+    }, options.batches ?? Number(process.env.LIVE_FOLLOW_BATCHES ?? 32));
+    console.log("Chromium empty initial history continuous 128 arrivals", JSON.stringify(results));
+    assert(results.every((r) => r.gap <= 3), "empty-to-first128 and continuous batches follow");
+    assert(results.at(-1).received === (options.batches ?? Number(process.env.LIVE_FOLLOW_BATCHES ?? 32)) * 128, "receive counter is cumulative at the cap");
+  } finally { await page.close(); }
+}
+
+async function verifyStaticLiveFollow(browser, url, options = {}) {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  try {
+    const count = options.count ?? Number(process.env.LIVE_FOLLOW_COUNT ?? 80);
+    await page.goto(`${url}?version=${process.env.LIVE_FOLLOW_VERSION ?? "after"}&count=${count}&limit=${count}&autoScroll&receiveOnly${options.history || process.env.LIVE_FOLLOW_HISTORY ? "&retainedHistory" : ""}`);
+    await page.waitForSelector(".message-row");
+    const sample = () => page.evaluate(async () => {
+      for (let i = 0; i < 15; i++) await new Promise(requestAnimationFrame);
+      const v = document.querySelector(".message-scroll-wrapper");
+      const vm = document.querySelector(".message-list").__vueParentComponent.setupState;
+      return { gap: v.scrollHeight - v.clientHeight - v.scrollTop, height: v.clientHeight,
+        live: window.fixture.data.live[1].length, history: window.fixture.data.history[1]?.length ?? 0,
+        merged: vm.filteredMessages.length, tail: window.fixture.data.live[1].at(-1).id };
+    });
+    await sample();
+    if (!process.env.LIVE_FOLLOW_COLLAPSED) {
+      await page.locator(".format-toggle .el-switch").evaluate((s) => s.click());
+      await sample();
+    }
+    const initial = await sample();
+    const batch = options.batch ?? Number(process.env.LIVE_FOLLOW_BATCH ?? 10);
+    for (let step = 0; step < Math.ceil(count * 5 / batch); step++) {
+      await page.evaluate(({count, batch}) => window.fixture.append(batch, count), {count, batch});
+      const after = await sample();
+      assert.equal(after.height, initial.height, "static viewport height remains unchanged");
+      if (step % 8 === 0 || after.gap > 3) console.log("Chromium static live follow", JSON.stringify({ step, initial, after }));
+      assert(after.gap <= 3, `static no-input sustained receive follows ${JSON.stringify({ step, after })}`);
+    }
+    await page.evaluate(async (count) => {
+      for (let frame = 0; frame < count * 2; frame++) {
+        window.fixture.append(frame % 4 === 0 ? 10 : 1, count);
+        await new Promise(requestAnimationFrame);
+      }
+    }, count);
+    const burst = await sample();
+    console.log("Chromium static per-frame live follow", JSON.stringify({ initial, burst }));
+    assert(burst.gap <= 3, "static per-frame arrivals keep following");
+    for (let sparse = 0; sparse < 20; sparse++) {
+      await page.evaluate((count) => window.fixture.append(1, count), count);
+      const after = await sample();
+      assert(after.gap <= 3, `static sparse arrival follows ${JSON.stringify(after)}`);
+    }
+    console.log("Chromium static sparse arrivals passed", JSON.stringify(await sample()));
+    const anchor = () => page.evaluate(() => {
+      const top = document.querySelector(".message-scroll-wrapper").getBoundingClientRect().top;
+      const row = [...document.querySelectorAll(".message-row")].find((r) => r.getBoundingClientRect().bottom > top + 1);
+      return { key: row?.dataset.messageKey, offset: row?.getBoundingClientRect().top - top };
+    });
+    await page.locator(".message-scroll-wrapper").hover();
+    await page.mouse.wheel(0, -700);
+    assert((await sample()).gap > 400, "actual wheel moves reader above bottom in capped queue");
+    const reading = await anchor();
+    await page.evaluate((count) => window.fixture.append(1, count), count);
+    await sample();
+    const afterReading = await anchor();
+    assert.equal(afterReading.key, reading.key, "capped/history arrival preserves manual reader identity");
+    assert(Math.abs(afterReading.offset - reading.offset) <= 3, "capped/history arrival preserves manual reader offset");
+  } finally { await page.close(); }
+}
+
+async function verifyLiveFollow(browser, url) {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  try {
+    await page.goto(`${url}?version=${process.env.LIVE_FOLLOW_VERSION ?? "after"}&count=80&limit=80&autoScroll&receiveOnly`);
+    await page.waitForSelector(".message-row");
+    const sample = () => page.evaluate(async () => {
+      for (let i = 0; i < 15; i++) await new Promise(requestAnimationFrame);
+      const v = document.querySelector(".message-scroll-wrapper");
+      return { gap: v.scrollHeight - v.clientHeight - v.scrollTop,
+        count: window.fixture.data.live[1].length,
+        tail: window.fixture.data.live[1].at(-1).id, mounted: document.querySelectorAll(".message-row").length };
+    });
+    const initial = await sample();
+    assert(initial.gap <= 3, `live follow initial bottom ${JSON.stringify(initial)}`);
+    if (!process.env.LIVE_FOLLOW_MINIMAL) {
+      await page.locator(".format-toggle .el-switch").click();
+      await sample();
+    }
+    await page.evaluate(() => { document.querySelector("#app").style.height = "580px"; });
+    const resized = await sample();
+    console.log("Chromium no-input height shrink", JSON.stringify(resized));
+    await page.evaluate((limit) => window.fixture.append(1, limit), process.env.LIVE_FOLLOW_UNCAPPED ? 20000 : 80);
+    const resizedArrival = await sample();
+    assert(resizedArrival.gap <= 3, `no-input arrival after viewport shrink follows ${JSON.stringify({ resized, resizedArrival })}`);
+    if (process.env.LIVE_FOLLOW_MINIMAL) return;
+    await page.evaluate(async () => {
+      for (let frame = 0; frame < 100; frame++) {
+        window.fixture.append(frame % 4 === 0 ? 10 : 1, 80);
+        await new Promise(requestAnimationFrame);
+      }
+    });
+    const burst = await sample();
+    console.log("Chromium overlapping rolling arrivals", JSON.stringify(burst));
+    assert(burst.gap <= 3, `no-input continuous rolling follow ${JSON.stringify(burst)}`);
+    for (let step = 0; step < 20; step++) {
+      await page.evaluate(() => window.fixture.append(10, 80));
+      const after = await sample();
+      if (step === 19) console.log("Chromium rolling expanded arrivals", JSON.stringify({ step, initial, after }));
+      assert(after.gap <= 3, `no-input rolling arrival follows bottom ${JSON.stringify(after)}`);
+    }
+    await page.evaluate(() => { window.fixture.app.autoScroll = false; });
+    for (const width of [900, 520, 1200]) {
+      await page.setViewportSize({ width, height: 800 });
+      const reflow = await sample();
+      assert(reflow.gap <= 3, `disabled auto-scroll preserves already-bottom width reflow ${JSON.stringify(reflow)}`);
+    }
+    await page.locator(".format-toggle .el-switch").evaluate((s) => s.click());
+    assert((await sample()).gap <= 3, "disabled auto-scroll preserves already-bottom format reflow");
+    await page.evaluate(() => window.fixture.append(1, 80));
+    assert((await sample()).gap > 3, "disabled arrivals do not jump to new bottom after reflow");
+  } finally { await page.close(); }
 }
 
 async function verifyContentWidthRegression(browser, url) {

@@ -36,6 +36,9 @@ const mockClearHistory = vi.fn(() => Promise.resolve());
 const mockGetHasMoreHistory = vi.fn(() => false);
 const mockSetCopyToPublish = vi.fn();
 const mockServer = reactive({ activeServerId: 1 });
+const mockApp = reactive({ autoScroll: true, messageLimit: 1000,
+  setAutoScroll: vi.fn(), setCopyToPublish: mockSetCopyToPublish,
+  getDateLocale: () => "zh-CN" });
 
 vi.mock("@/stores/server", () => ({
   useServerStore: () => mockServer,
@@ -63,13 +66,7 @@ vi.mock("@/stores/message", () => ({
 }));
 
 vi.mock("@/stores/app", () => ({
-  useAppStore: () => ({
-    autoScroll: true,
-    messageLimit: 1000,
-    setAutoScroll: vi.fn(),
-    setCopyToPublish: mockSetCopyToPublish,
-    getDateLocale: () => "zh-CN",
-  }),
+  useAppStore: () => mockApp,
 }));
 
 vi.mock("@/stores/subscription", () => ({
@@ -226,6 +223,7 @@ describe("MessageList Topic 筛选", () => {
   });
   beforeEach(() => {
     mockServer.activeServerId = 1;
+    mockApp.autoScroll = true;
     // jsdom has no layout. Supply fixed geometry to exercise the real virtualizer;
     // variable-height layout and anchoring are verified separately in Chromium.
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
@@ -267,6 +265,64 @@ describe("MessageList Topic 筛选", () => {
   }
 
   describe("topics computed", () => {
+    // These check eligibility/cancellation only. Real bottom geometry and the
+    // retained-history rollover regression are asserted by the Chromium runner.
+    for (const empty of [true, false]) {
+    for (const supersede of ["wheel", "touchmove", "pointerdown", "keydown", "disable", "filter", "server", "unmount"]) {
+      it(`cancels pending ${empty ? "first-live" : "rolling-tail"} follow on ${supersede}`, async () => {
+        const live = reactive<{ rows: MqttMessage[] }>({ rows: empty ? [] : Array.from({ length: 12 }, (_, i) => ({
+          ...createTestMessages()[0], id: i + 13, seq: i + 13,
+        })) });
+        mockMessages.mockImplementation(() => live.rows);
+        mockHistoryMessages.mockReturnValue(empty ? [] : Array.from({ length: 12 }, (_, i) => ({
+          id: i + 1, server_id: 1, direction: "receive", topic: "history", payload: "old",
+          qos: 0, retain: false, created_at: "2024-01-01T00:00:00Z",
+        })));
+        const wrapper = createWrapper();
+        await flushPromises();
+        const vm = wrapper.vm as any;
+        vi.spyOn(vm.virtualizer, "isAtEnd").mockReturnValue(true);
+        const scroll = vi.spyOn(vm.virtualizer, "scrollToEnd");
+        const next = { ...createTestMessages()[0], id: 25, seq: 25 };
+        live.rows = empty ? [next] : live.rows.slice(1).concat(next);
+        // Library append detection may attempt its own pre-render call with
+        // { behavior: "auto" }. This guard concerns our deferred correction.
+        expect(scroll.mock.calls.filter((args) => args.length === 0)).toHaveLength(0);
+        if (["wheel", "touchmove", "pointerdown", "keydown"].includes(supersede)) {
+          wrapper.find(".message-scroll-wrapper").element.dispatchEvent(
+            supersede === "keydown" ? new KeyboardEvent("keydown", { key: "PageUp" }) : new Event(supersede));
+        } else if (supersede === "disable") mockApp.autoScroll = false;
+        else if (supersede === "filter") vm.searchKeyword = "history";
+        else if (supersede === "server") {
+          mockFetchMessageHistory.mockImplementationOnce(() => new Promise<void>(() => {}));
+          mockServer.activeServerId = 2;
+        } else wrapper.unmount();
+        await flushPromises();
+        expect(scroll.mock.calls.filter((args) => args.length === 0)).toHaveLength(0);
+      });
+    }
+    }
+    for (const supersede of ["wheel", "disable", "filter", "server", "unmount"]) {
+      it(`cancels pending measurement reflow on ${supersede}`, async () => {
+        mockMessages.mockReturnValue(createTestMessages());
+        const wrapper = createWrapper();
+        await flushPromises();
+        const vm = wrapper.vm as any;
+        const end = vi.spyOn(vm.virtualizer, "scrollToEnd");
+        const index = vi.spyOn(vm.virtualizer, "scrollToIndex");
+        const reflow = vm.invalidateMeasurements();
+        if (supersede === "wheel") wrapper.find(".message-scroll-wrapper").element.dispatchEvent(new Event("wheel"));
+        else if (supersede === "disable") mockApp.autoScroll = false;
+        else if (supersede === "filter") vm.searchKeyword = "sensor";
+        else if (supersede === "server") {
+          mockFetchMessageHistory.mockImplementationOnce(() => new Promise<void>(() => {}));
+          mockServer.activeServerId = 2;
+        } else wrapper.unmount();
+        await reflow;
+        expect(end).not.toHaveBeenCalled();
+        expect(index).not.toHaveBeenCalled();
+      });
+    }
     it("does not override manual reading when the same server's initial request completes", async () => {
       let finish!: () => void;
       mockFetchMessageHistory.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));

@@ -118,6 +118,7 @@
       @touchmove.passive="supersedeInitialAlignment"
       @pointerdown.self="supersedeInitialAlignment"
       @keydown="handleScrollKey"
+      @scroll.passive="rememberViewportEnd"
     >
       <div v-if="showLoadMore" ref="loadMoreRow" class="load-more-row">
         <el-button
@@ -398,7 +399,23 @@ let layoutGeneration = 0;
 let scrollIntentGeneration = 0;
 let resizeObserver: ResizeObserver | undefined;
 let viewportWidth: number | undefined;
+let viewportHeight: number | undefined;
+let viewportOuterWidth: number | undefined;
+let viewportOverflow = false;
+let viewportMessages: MqttMessage[] | undefined;
+let viewportAtEnd = false;
 let viewportAnchor: string | undefined;
+
+function rememberViewportEnd() {
+  const viewport = listViewport.value;
+  // Resize/row observers can notify before our viewport observer. Keep the
+  // bottom state from the last committed viewport geometry until it catches up.
+  if (viewport && viewport.clientWidth === viewportWidth && viewport.clientHeight === viewportHeight) {
+    viewportAtEnd = virtualizer.value.isAtEnd();
+    viewportOverflow = viewport.scrollHeight > viewport.clientHeight;
+    viewportMessages = filteredMessages.value;
+  }
+}
 
 function scrollToBottom() {
   virtualizer.value.scrollToEnd();
@@ -406,6 +423,7 @@ function scrollToBottom() {
 
 function supersedeInitialAlignment() {
   scrollIntentGeneration++;
+  viewportAtEnd = false;
 }
 
 function handleScrollKey(event: KeyboardEvent) {
@@ -417,16 +435,46 @@ function handleScrollKey(event: KeyboardEvent) {
 onMounted(() => {
   if (typeof ResizeObserver === "undefined") return;
   viewportWidth = listViewport.value?.clientWidth;
+  viewportHeight = listViewport.value?.clientHeight;
+  viewportOuterWidth = listViewport.value?.offsetWidth;
+  rememberViewportEnd();
   resizeObserver = new ResizeObserver(() => {
     historyControlHeight.value = loadMoreRow.value?.offsetHeight ?? 0;
     const width = listViewport.value?.clientWidth;
+    const height = listViewport.value?.clientHeight;
+    const follow = viewportAtEnd && appStore.autoScroll;
     if (width !== viewportWidth) {
+      const viewport = listViewport.value;
+      // First arrivals can introduce a scrollbar at an unchanged outer width.
+      // Empty/short content was at end, but disabled arrivals must keep its top.
+      const firstOverflow = viewport && viewport.offsetWidth === viewportOuterWidth &&
+        !viewportOverflow && viewport.scrollHeight > viewport.clientHeight &&
+        filteredMessages.value !== viewportMessages;
+      const atEnd = viewportAtEnd && (appStore.autoScroll || !firstOverflow);
       viewportWidth = width;
-      invalidateMeasurements(viewportAnchor);
+      viewportHeight = height;
+      viewportOuterWidth = viewport?.offsetWidth;
+      const anchor = firstOverflow && !appStore.autoScroll && !viewportAnchor
+        ? filteredMessages.value[0] && getMessageKey(filteredMessages.value[0]) : viewportAnchor;
+      invalidateMeasurements(anchor, atEnd);
+    } else if (height !== viewportHeight) {
+      viewportHeight = height;
+      if (follow) scheduleBottomAlignment();
     }
   });
   if (listViewport.value) resizeObserver.observe(listViewport.value);
 });
+
+async function scheduleBottomAlignment() {
+  const generation = ++layoutGeneration;
+  const intent = scrollIntentGeneration;
+  // A sync data watcher runs before Vue queues the adapter/render update.
+  // Yield once so nextTick waits for that commit and newer control actions.
+  await Promise.resolve();
+  await nextTick();
+  if (generation !== layoutGeneration || intent !== scrollIntentGeneration || !appStore.autoScroll) return;
+  scrollToBottom();
+}
 
 onUnmounted(() => {
   historyGeneration++;
@@ -719,6 +767,23 @@ function applyMessageFilters(source: MqttMessage[]): MqttMessage[] {
 // 过滤后的消息
 const filteredMessages = computed(() => applyMessageFilters(messages.value));
 
+// Retained history can pin the first key while the capped live window trims
+// rows from the middle. That is not TanStack's contiguous append-with-trim
+// shape. Capture bottom intent before the adapter changes its options, and
+// reconcile only a new live tail that did not grow the merged row count, or
+// the first live rows (the adapter tries to follow before their cache exists).
+watch(() => {
+  const tail = filteredMessages.value.at(-1);
+  return { server: serverStore.activeServerId, key: tail && getMessageKey(tail),
+    seq: tail?.seq, count: filteredMessages.value.length };
+}, (tail, previous) => {
+  if (tail.server === previous.server && tail.key !== previous.key && tail.seq !== undefined &&
+      (previous.count === 0 || (previous.seq !== undefined && tail.seq > previous.seq && tail.count <= previous.count)) &&
+      appStore.autoScroll && virtualizer.value.isAtEnd()) {
+    scheduleBottomAlignment();
+  }
+}, { flush: "sync" });
+
 // Capture immutable keys in each options snapshot. The previous snapshot must
 // still describe the old layout when the library detects prepend/append.
 const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => {
@@ -755,7 +820,8 @@ onUpdated(() => {
   // width: the library's border-box width misses scrollbar/gutter changes.
   // This needs only one viewport read, rather than every row's rect.
   const instance = virtualizer.value;
-  if (listViewport.value?.clientWidth !== viewportWidth) return;
+  rememberViewportEnd();
+  if (listViewport.value?.clientWidth !== viewportWidth || listViewport.value?.clientHeight !== viewportHeight) return;
   const row = instance.getVirtualItemForOffset((instance.scrollOffset ?? 0) + 1);
   viewportAnchor = row ? String(row.key) : undefined;
 });
@@ -771,17 +837,17 @@ watch(loadMoreRow, (element, previous) => {
   }
 }, { flush: "post" });
 
-async function invalidateMeasurements(previousKey?: string) {
+async function invalidateMeasurements(previousKey?: string, atEnd = virtualizer.value.isAtEnd()) {
   const generation = ++layoutGeneration;
+  const intent = scrollIntentGeneration;
   const instance = virtualizer.value;
-  const atEnd = instance.isAtEnd();
   const anchor = instance.getVirtualItemForOffset(instance.scrollOffset ?? 0);
   instance.measure();
   await nextTick();
   // Let row ResizeObservers and their pending scroll compensation finish
   // before issuing an absolute target against the rebuilt measurements.
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  if (generation !== layoutGeneration) return;
+  if (generation !== layoutGeneration || intent !== scrollIntentGeneration) return;
   if (anchor) {
     const index = filteredMessages.value.findIndex((msg) => getMessageKey(msg) === (previousKey ?? anchor.key));
     if (index >= 0) {
@@ -802,6 +868,7 @@ watch([searchKeyword, searchMatchCase, searchWholeWord, searchUseRegex, directio
   virtualizer.value.scrollToOffset(0);
 }, { deep: true });
 watch(() => appStore.autoScroll, (enabled) => {
+  layoutGeneration++;
   if (enabled) scrollToBottom();
 });
 
