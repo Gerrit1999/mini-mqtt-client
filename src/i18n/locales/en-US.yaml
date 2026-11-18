@@ -317,6 +317,8 @@ script:
   testSuccess: Test passed
   testError: Test failed
   functions: Available Functions
+  copyFunctionHint: Click a function or press Enter or Space when it is focused to copy its signature.
+  copyFunction: Copy {signature}
   importJs: Import JS
   codeHint:
     beforePublish: Define process(payload) function, return processed payload

@@ -112,59 +112,28 @@
     :append-to-body="true"
     :close-on-click-modal="false"
   >
+    <p class="function-copy-hint">{{ $t('script.copyFunctionHint') }}</p>
     <div class="function-list">
-      <div class="function-category">
-        <h4>{{ $t('script.functionCategories.basic') }}</h4>
-        <el-table :data="basicFunctions" size="small">
-          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="200" />
-          <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
-        </el-table>
-      </div>
-      
-      <div class="function-category">
-        <h4>{{ $t('script.functionCategories.encoding') }}</h4>
-        <el-table :data="encodingFunctions" size="small">
-          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="250" />
-          <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
-        </el-table>
-      </div>
-      
-      <div class="function-category">
-        <h4>{{ $t('script.functionCategories.hash') }}</h4>
-        <el-table :data="hashFunctions" size="small">
-          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="250" />
-          <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
-        </el-table>
-      </div>
-      
-      <div class="function-category">
-        <h4>{{ $t('script.functionCategories.aes') }}</h4>
-        <el-table :data="aesFunctions" size="small">
-          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="320" />
-          <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
-        </el-table>
-      </div>
-
-      <div class="function-category">
-        <h4>{{ $t('script.functionCategories.compression') }}</h4>
-        <el-table :data="compressionFunctions" size="small">
-          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="320" />
-          <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
-        </el-table>
-      </div>
-      
-      <div class="function-category">
-        <h4>{{ $t('script.functionCategories.other') }}</h4>
-        <el-table :data="otherFunctions" size="small">
-          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="200" />
-          <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
-        </el-table>
-      </div>
-      
-      <div class="function-category">
-        <h4>{{ $t('script.functionCategories.env') }}</h4>
-        <el-table :data="envFunctions" size="small">
-          <el-table-column prop="name" :label="$t('script.functionColumns.function')" width="200" />
+      <div v-for="category in functionCategories" :key="category.titleKey" class="function-category">
+        <h4>{{ $t(category.titleKey) }}</h4>
+        <el-table :data="category.functions" size="small">
+          <el-table-column prop="name" :label="$t('script.functionColumns.function')" :width="category.width">
+            <template #default="{ row }">
+              <template v-for="(entry, index) in row ? getFunctionHelpEntries(row.name) : []" :key="index">
+                <button
+                  v-if="entry.copyable"
+                  type="button"
+                  class="function-copy-button"
+                  :title="$t('script.copyFunction', { signature: entry.text })"
+                  :aria-label="$t('script.copyFunction', { signature: entry.text })"
+                  @click="copyFunction(entry.text)"
+                >
+                  {{ entry.text }}
+                </button>
+                <span v-else>{{ entry.text }}</span>
+              </template>
+            </template>
+          </el-table-column>
           <el-table-column prop="desc" :label="$t('script.functionColumns.description')" />
         </el-table>
       </div>
@@ -185,6 +154,7 @@ import { useScriptStore, type Script, type ScriptType } from '@/stores/script'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 import { useUpdateDraft } from '@/composables/useUpdateProtection'
+import { getFunctionHelpEntries } from './functionHelp'
 
 const { t } = useI18n()
 
@@ -270,6 +240,25 @@ const envFunctions = computed(() => [
   { name: 'env.replace(text)', desc: t('script.envFunctions.replace') },
   { name: 'env.all()', desc: t('script.envFunctions.getAll') },
 ])
+
+const functionCategories = computed(() => [
+  { titleKey: 'script.functionCategories.basic', functions: basicFunctions, width: 200 },
+  { titleKey: 'script.functionCategories.encoding', functions: encodingFunctions, width: 250 },
+  { titleKey: 'script.functionCategories.hash', functions: hashFunctions, width: 250 },
+  { titleKey: 'script.functionCategories.aes', functions: aesFunctions, width: 320 },
+  { titleKey: 'script.functionCategories.compression', functions: compressionFunctions, width: 320 },
+  { titleKey: 'script.functionCategories.other', functions: otherFunctions, width: 200 },
+  { titleKey: 'script.functionCategories.env', functions: envFunctions.value, width: 200 },
+])
+
+async function copyFunction(signature: string) {
+  try {
+    await navigator.clipboard.writeText(signature)
+    ElMessage.success(t('success.copied'))
+  } catch {
+    ElMessage.error(t('errors.copyFailed'))
+  }
+}
 
 const formData = ref({
   name: '',
@@ -584,6 +573,29 @@ async function handleImportFile() {
 .function-list {
   max-height: 500px;
   overflow-y: auto;
+}
+
+.function-copy-hint {
+  margin: 0 0 12px;
+}
+
+.function-copy-button {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: 2px;
+  }
 }
 
 .function-category {

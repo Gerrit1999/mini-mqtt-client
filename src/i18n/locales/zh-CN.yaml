@@ -317,6 +317,8 @@ script:
   testSuccess: 测试通过
   testError: 测试失败
   functions: 可用函数
+  copyFunctionHint: 点击函数，或聚焦后按 Enter 或空格键，即可复制函数签名。
+  copyFunction: 复制 {signature}
   importJs: 导入 JS
   codeHint:
     beforePublish: 定义 process(payload) 函数，返回处理后的 payload
