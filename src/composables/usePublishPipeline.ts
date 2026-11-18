@@ -3,7 +3,7 @@ import { ScriptEngine } from "@/utils/scriptEngine";
 import { getCachedScripts } from "@/utils/scriptCache";
 import { replaceEnvVariables } from "@/utils/envReplacer";
 import { handleScriptError } from "@/utils/errorHandler";
-import { decodePayload } from "@/utils/payloadCodec";
+import { decodePayload, encodePayloadForStorage } from "@/utils/payloadCodec";
 import type { PayloadFormat } from "@/types/mqtt";
 
 export interface PublishRequest {
@@ -53,18 +53,27 @@ export function usePublishPipeline() {
     if (isCancelled()) return cancelled();
     const topic = replaceEnvVariables(request.topic, envVariables);
     let payload = replaceEnvVariables(request.payload, envVariables);
+    let format = request.format;
+    let payloadBytes: Uint8Array | undefined;
 
     try {
       const scripts = await getCachedScripts(request.serverId, "before_publish");
       if (isCancelled()) return cancelled();
       if (scripts.length > 0) {
-        payload = await ScriptEngine.executeBeforePublish(
+        const processedPayload = await ScriptEngine.executeBeforePublish(
           scripts,
           payload,
           topic,
-          envVariables
+          envVariables,
+          format
         );
-        decodePayload(payload, request.format);
+        if (typeof processedPayload === "string") {
+          payload = processedPayload;
+          payloadBytes = decodePayload(payload, format);
+        } else {
+          payloadBytes = processedPayload;
+          ({ payload, format } = encodePayloadForStorage(payloadBytes, format));
+        }
       }
     } catch (error) {
       const publishCancelled = isCancelled();
@@ -101,7 +110,8 @@ export function usePublishPipeline() {
         payload,
         qos: request.qos,
         retain: request.retain,
-        format: request.format,
+        format,
+        payloadBytes,
         seq,
       });
       return { success: true, topic, payload };

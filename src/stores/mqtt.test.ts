@@ -6,6 +6,9 @@ import { ElMessage } from "element-plus";
 import { ScriptEngine } from "@/utils/scriptEngine";
 import { clearScriptCache } from "@/utils/scriptCache";
 import { RECEIVE_LIMITS } from "@/utils/receiveQueue";
+import { decodePayload } from "@/utils/payloadCodec";
+import { gzip } from "pako";
+import type { ReceivedHistoryInput } from "@/types/mqtt";
 
 const { translate } = vi.hoisted(() => ({
   translate: vi.fn((key: string) => key),
@@ -68,13 +71,10 @@ vi.mock("@/stores/app", () => ({
   }),
 }));
 
-vi.mock("@/utils/scriptEngine", () => ({
-  ScriptEngine: {
-    executeAfterReceive: vi.fn((_scripts: any[], payload: string) =>
-      Promise.resolve(payload)
-    ),
-  },
-}));
+vi.mock("@/utils/scriptEngine", async (importOriginal) => {
+  const { ScriptEngine } = await importOriginal<typeof import("@/utils/scriptEngine")>();
+  return { ScriptEngine: { executeAfterReceive: vi.fn(ScriptEngine.executeAfterReceive.bind(ScriptEngine)) } };
+});
 
 vi.mock("@/utils/errorHandler", () => ({
   handleScriptError: vi.fn(),
@@ -93,7 +93,7 @@ describe("useMqttStore", () => {
     publishStateListener = null;
     vi.clearAllMocks();
     clearScriptCache();
-    vi.mocked(ScriptEngine.executeAfterReceive).mockImplementation(async (_scripts, payload) => payload);
+    vi.mocked(ScriptEngine.executeAfterReceive).mockReset();
     vi.useFakeTimers();
   });
 
@@ -831,21 +831,46 @@ describe("useMqttStore", () => {
       expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === "save_received_message")).toBe(false);
     });
 
+    it.each([
+      { bytes: [0, 255, 128], format: "hex", stored: "00FF80" },
+      { bytes: [239, 187, 191, 65], format: "hex", stored: "EFBBBF41" },
+      { bytes: [], format: "text", stored: "" },
+    ])("displays and persists the exact bytes returned by the receive chain ($stored)", async ({ bytes, format, stored }) => {
+      const store = useMqttStore();
+      await store.initListeners();
+      mockedInvoke.mockImplementation(async command => {
+        if (command === "get_enabled_scripts") return [
+          { code: "return pako.ungzip(payloadBytes).subarray(1, -1);" },
+          { code: "return payload;" },
+        ];
+        if (command === "save_received_messages") return [200];
+        return [];
+      });
+
+      deliver([message(0, 1, Array.from(gzip(new Uint8Array([1, ...bytes, 2]))))]);
+      await store.flushReceiveQueue();
+
+      expect(store.getServerMessages(1)[0]).toMatchObject({ id: 200, payload: new Uint8Array(bytes) });
+      const [, args] = mockedInvoke.mock.calls.find(([command]) => command === "save_received_messages")!;
+      const { messages: [row] } = args as { messages: ReceivedHistoryInput[] };
+      expect(row).toMatchObject({ payload: stored, payload_format: format });
+      expect(Array.from(decodePayload(row.payload, row.payload_format))).toEqual(bytes);
+    });
+
     it("protects binary bytes from a failed script and tolerates script/env cache load failures", async () => {
       const store = useMqttStore();
       await store.initListeners();
       mockedInvoke.mockImplementation(async command => {
-        if (command === "get_enabled_scripts") return [{ code: "failure" }];
+        if (command === "get_enabled_scripts") return [
+          { name: "failed transform", code: 'payloadBytes[0] = 42; throw new Error("failed transform");' },
+          { name: "later transform", code: "return new Uint8Array();" },
+        ];
         if (command === "list_env_variables") throw new Error("env unavailable");
         return [];
       });
-      vi.mocked(ScriptEngine.executeAfterReceive).mockImplementationOnce(async (_scripts, _payload, _topic, env, bytes) => {
-        expect(env).toEqual({});
-        bytes![0] = 42;
-        throw new Error("failed transform");
-      });
       deliver([message(0)]);
       await store.flushReceiveQueue();
+      expect(ScriptEngine.executeAfterReceive).toHaveBeenCalledWith(expect.any(Array), new Uint8Array([0, 255, 128, 65]), "receive/0", {});
       expect(store.getServerMessages(1)[0]).toMatchObject({ payload: new Uint8Array([0, 255, 128, 65]), scriptError: "failed transform" });
       expect(mockedInvoke).toHaveBeenCalledWith("save_received_messages", { messages: [expect.objectContaining({ payload: "00FF8041", payload_format: "hex" })] });
       clearScriptCache();

@@ -28,9 +28,7 @@ import { ReceiveQueue } from "@/utils/receiveQueue";
 import { useAppStore } from "@/stores/app";
 import {
   decodePayload,
-  detectPayloadFormat,
-  encodePayload,
-  type DetectedPayloadFormat,
+  encodePayloadForStorage,
 } from "@/utils/payloadCodec";
 
 interface ConnectionState {
@@ -49,8 +47,8 @@ interface EnvCache {
   timestamp: number;
 }
 
-type StoredPayloadFormat = DetectedPayloadFormat;
 type TrackedPublishRequest = Omit<PublishPayload, "operation_id" | "payload_bytes"> & {
+  payloadBytes?: Uint8Array;
   seq?: number;
   scriptError?: string;
 };
@@ -156,7 +154,7 @@ export const useMqttStore = defineStore("mqtt", () => {
         // Admission reserves 8x input bytes for byte copies and UTF-16/hex history.
         const expansion = Math.max(0, bytes.length - item.payload.length) * 8;
         if (expansion && !reserve(expansion)) { receiveQueue.drop(); continue; }
-        const stored = detectStoredPayloadFormat(bytes);
+        const stored = encodePayloadForStorage(bytes);
         displayed.push(message);
         history.push({
           server_id: message.server_id, topic: message.topic, payload: stored.payload,
@@ -206,13 +204,6 @@ export const useMqttStore = defineStore("mqtt", () => {
     const nextMap = new Map(receivedCountByServer.value);
     nextMap.set(serverId, (nextMap.get(serverId) ?? 0) + amount);
     receivedCountByServer.value = nextMap;
-  }
-
-  function detectStoredPayloadFormat(
-    payloadBytes: Uint8Array
-  ): { payload: string; format: StoredPayloadFormat } {
-    const format = detectPayloadFormat(payloadBytes);
-    return { payload: encodePayload(payloadBytes, format), format };
   }
 
   // 批量处理消息队列
@@ -430,17 +421,16 @@ export const useMqttStore = defineStore("mqtt", () => {
       const scripts = await getCachedScripts(msg.server_id, "after_receive").catch(() => []);
 
       if (scripts.length > 0) {
-        const originalPayloadBytes = new Uint8Array(payloadBytes);
-        const originalPayload = new TextDecoder().decode(payloadBytes);
         const envVariables = await getCachedEnvVariables(msg.server_id).catch(() => ({}));
         const processedPayload = await ScriptEngine.executeAfterReceive(
           scripts,
-          originalPayload,
+          payloadBytes,
           msg.topic,
-          envVariables,
-          originalPayloadBytes
+          envVariables
         );
-        payloadBytes = new TextEncoder().encode(processedPayload);
+        payloadBytes = typeof processedPayload === "string"
+          ? decodePayload(processedPayload, "text")
+          : processedPayload;
       }
     } catch (error: any) {
       // 记录脚本错误
@@ -495,7 +485,7 @@ export const useMqttStore = defineStore("mqtt", () => {
   ): Promise<MessageHistory> => {
     const operationId = createOperationId();
     const seq = request.seq ?? nextSeq++;
-    const payloadBytes = decodePayload(request.payload, request.format);
+    const payloadBytes = request.payloadBytes ?? decodePayload(request.payload, request.format);
     const pendingMessage: MqttMessage = {
       server_id: serverId,
       direction: "publish",

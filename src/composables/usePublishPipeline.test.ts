@@ -5,7 +5,9 @@ import { useMqttStore } from "@/stores/mqtt";
 import { useEnvStore } from "@/stores/env";
 import { usePublishPipeline } from "@/composables/usePublishPipeline";
 import { clearScriptCache } from "@/utils/scriptCache";
-import { ScriptEngine } from "@/utils/scriptEngine";
+import { decodePayload } from "@/utils/payloadCodec";
+import type { Script } from "@/stores/script";
+import type { PayloadFormat, PublishPayload } from "@/types/mqtt";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
@@ -14,11 +16,17 @@ vi.mock("element-plus", () => ({
   ElNotification: vi.fn(),
 }));
 vi.mock("@/i18n", () => ({ default: { global: { t: (key: string) => key } } }));
-vi.mock("@/utils/scriptEngine", () => ({
-  ScriptEngine: { executeBeforePublish: vi.fn(async (_scripts: any[], payload: string) => payload) },
-}));
-
 const mockedInvoke = vi.mocked(invoke);
+
+function setPublishScripts(...codes: string[]) {
+  const backend = mockedInvoke.getMockImplementation()!;
+  const scripts: Script[] = codes.map((code, id) => ({
+    id, server_id: 1, name: `publish transform ${id}`, script_type: "before_publish", code, enabled: true,
+  }));
+  mockedInvoke.mockImplementation((command, args) => command === "get_enabled_scripts"
+    ? Promise.resolve(scripts)
+    : backend(command, args));
+}
 
 describe("usePublishPipeline", () => {
   beforeEach(() => {
@@ -26,10 +34,6 @@ describe("usePublishPipeline", () => {
     vi.useFakeTimers();
     clearScriptCache();
     vi.clearAllMocks();
-    vi.mocked(ScriptEngine.executeBeforePublish).mockClear();
-    vi.mocked(ScriptEngine.executeBeforePublish).mockImplementation(
-      async (_scripts, payload) => payload
-    );
     mockedInvoke.mockImplementation(async (command: string, args?: any) => {
       if (command === "list_env_variables") {
         return args.serverId === 1
@@ -148,25 +152,16 @@ describe("usePublishPipeline", () => {
   });
 
   it("does not call MQTT publish when a script throws or returns an invalid format", async () => {
-    mockedInvoke.mockImplementation(async (command: string) => {
-      if (command === "list_env_variables") return [];
-      if (command === "get_enabled_scripts") return [{
-        id: 1,
-        server_id: 1,
-        name: "before publish",
-        script_type: "before_publish",
-        code: "function process(payload) { return payload; }",
-        enabled: true,
-      }];
-      return undefined;
-    });
+    setPublishScripts(
+      'if (topic === "device/failure") throw new Error("script boom"); return "not hex";',
+      'if (topic === "device/failure") throw new Error("chain should have stopped");'
+    );
     const mqttStore = useMqttStore();
     const { publish } = usePublishPipeline();
 
-    vi.mocked(ScriptEngine.executeBeforePublish).mockRejectedValueOnce(new Error("script boom"));
     const thrown = await publish({
       serverId: 1,
-      topic: "device",
+      topic: "device/failure",
       payload: "original",
       qos: 0,
       retain: false,
@@ -176,7 +171,6 @@ describe("usePublishPipeline", () => {
     expect(thrown.scriptError).toContain("script boom");
     expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
 
-    vi.mocked(ScriptEngine.executeBeforePublish).mockResolvedValueOnce("not hex");
     const invalid = await publish({
       serverId: 1,
       topic: "device",
@@ -190,6 +184,26 @@ describe("usePublishPipeline", () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith("publish_message", expect.anything());
     vi.advanceTimersByTime(100);
     expect(mqttStore.getServerMessages(1)).toHaveLength(2);
+  });
+
+  it.each<{ format: PayloadFormat; input: string; code: string; storedFormat: PayloadFormat; stored: string; bytes: number[] }>([
+    { format: "hex", input: "41 00 FF 80 42", code: "return payloadBytes.subarray(1, -1);", storedFormat: "hex", stored: "00FF80", bytes: [0, 255, 128] },
+    { format: "base64", input: "QQD/gEI=", code: "return payloadBytes.subarray(1, -1);", storedFormat: "base64", stored: "AP+A", bytes: [0, 255, 128] },
+    { format: "json", input: '{"value":1}', code: "return new Uint8Array([0, 255, 128]);", storedFormat: "hex", stored: "00FF80", bytes: [0, 255, 128] },
+    { format: "text", input: "word", code: "return payloadBytes.subarray(payloadBytes.length);", storedFormat: "text", stored: "", bytes: [] },
+  ])("preserves binary script output in wire bytes, display and history for $format", async ({ format, input, code, storedFormat, stored, bytes }) => {
+    setPublishScripts(code, "return pako.ungzip(pako.gzip(payloadBytes));", "return payload;");
+    const mqttStore = useMqttStore();
+    const { publish } = usePublishPipeline();
+
+    const result = await publish({ serverId: 1, topic: "binary", payload: input, qos: 0, retain: false, format });
+
+    expect(result).toMatchObject({ success: true, payload: stored });
+    const [, args] = mockedInvoke.mock.calls.find(([command]) => command === "publish_message")!;
+    const { message } = args as { message: PublishPayload };
+    expect(message).toMatchObject({ payload: stored, payload_bytes: bytes, format: storedFormat });
+    expect(Array.from(decodePayload(message.payload, message.format))).toEqual(bytes);
+    expect(mqttStore.getServerMessages(1)[0]).toMatchObject({ payload: new Uint8Array(bytes), payload_type: storedFormat });
   });
 
   it("invalidates the affected server variable cache after edits", async () => {

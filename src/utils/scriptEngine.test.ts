@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ScriptEngine } from "./scriptEngine";
 import { gzip } from "pako";
+import type { Script } from "@/stores/script";
 
 describe("ScriptEngine payload codecs", () => {
   it("encodes a 200KB payload as Base64 without overflowing the call stack", async () => {
@@ -21,8 +22,7 @@ describe("ScriptEngine payload codecs", () => {
     );
 
     expect(result).toHaveLength(266_668);
-    expect(result.startsWith("YWFhYWFh")).toBe(true);
-    expect(result.endsWith("YWE=")).toBe(true);
+    expect(result).toMatch(/^YWFhYWFh.*YWE=$/);
   });
 
   it("keeps binary payloadBytes available to compression helpers", async () => {
@@ -39,13 +39,53 @@ describe("ScriptEngine payload codecs", () => {
           enabled: true,
         },
       ],
-      new TextDecoder().decode(compressedBytes),
-      "test/topic",
-      undefined,
-      compressedBytes
+      compressedBytes,
+      "test/topic"
     );
 
     expect(result).toBe("AP8BQQ==");
+  });
+});
+
+describe("ScriptEngine payload chains", () => {
+  function scripts(...codes: string[]): Script[] {
+    return codes.map((code, id) => ({
+      id, server_id: 1, name: `transform ${id}`, code, script_type: "after_receive", enabled: true,
+    }));
+  }
+
+  it("recomputes payloadBytes after a text result and carries a byte view through later scripts", async () => {
+    const result = await ScriptEngine.executeAfterReceive(
+      scripts(
+        'return "中";',
+        'if (payload !== "中" || crypto.bytesToHex(payloadBytes) !== "e4b8ad") throw new Error("stale payload");\n' +
+        'return new Uint8Array([1, 0, 255, 128, 2]).subarray(1, 4);',
+        'if (crypto.bytesToHex(payloadBytes) !== "00ff80") throw new Error("stale bytes"); return payload;'
+      ),
+      new Uint8Array([255]),
+      "test/topic"
+    );
+
+    expect(result).toEqual(new Uint8Array([0, 255, 128]));
+  });
+
+  it.each(["payload", "null", "undefined"])("preserves input bytes when returning %s", async (value) => {
+    const input = new Uint8Array([0, 255, 128]);
+    const result = await ScriptEngine.executeAfterReceive(
+      scripts(`payloadBytes.fill(42); return ${value};`), input, "test/topic"
+    );
+
+    expect(result).toEqual(new Uint8Array([0, 255, 128]));
+    expect(input).toEqual(new Uint8Array([0, 255, 128]));
+  });
+
+  it.each([
+    ['return "";', ""],
+    ['return { ready: true };', '{"ready":true}'],
+    ['return false;', "false"],
+  ])("normalizes %s as text", async (code, expected) => {
+    expect(await ScriptEngine.executeAfterReceive(scripts(code), new Uint8Array([255]), "test/topic"))
+      .toBe(expected);
   });
 });
 

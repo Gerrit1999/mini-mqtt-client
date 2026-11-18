@@ -1,10 +1,16 @@
 import type { Script } from "@/stores/script";
+import type { PayloadFormat } from "@/types/mqtt";
 import { decodePayload, encodePayload } from "@/utils/payloadCodec";
 import { ScriptCompilerCache } from "@/utils/scriptCompiler";
 import { deflate, gzip, inflate, ungzip } from "pako";
 
 type CompiledScript = (...args: unknown[]) => Promise<unknown>;
 type AsyncFunctionConstructor = new (...args: string[]) => CompiledScript;
+type ScriptPayload = string | Uint8Array;
+
+function isUint8Array(value: unknown): value is Uint8Array {
+  return ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === "[object Uint8Array]";
+}
 
 // Execution metadata travels to the publish/receive caller, which owns persistence.
 export class ScriptExecutionError extends Error {
@@ -584,25 +590,13 @@ export class ScriptEngine {
    * @returns 处理后的 payload
    */
   static async executeBeforePublish(
-    scripts: Script[], 
-    payload: string, 
+    scripts: Script[],
+    payload: string,
     topic: string,
-    envVariables?: Record<string, string>
-  ): Promise<string> {
-    let result = payload;
-    
-    for (const script of scripts) {
-      try {
-        result = await this.executeScript(script.code, { payload: result, topic, env: envVariables });
-      } catch (error: any) {
-        const errorMessage = `脚本执行失败 [${script.name}]: ${error?.message || error}`;
-        console.error(errorMessage, error);
-        // 抛出错误，让调用方决定如何处理
-        throw new ScriptExecutionError(script, error);
-      }
-    }
-    
-    return result;
+    envVariables?: Record<string, string>,
+    format: PayloadFormat = "text"
+  ): Promise<ScriptPayload> {
+    return this.executeScripts(scripts, payload, topic, envVariables, format);
   }
 
   /**
@@ -614,40 +608,64 @@ export class ScriptEngine {
    * @returns 处理后的 payload
    */
   static async executeAfterReceive(
-    scripts: Script[], 
-    payload: string, 
+    scripts: Script[],
+    payload: ScriptPayload,
     topic: string,
-    envVariables?: Record<string, string>,
-    payloadBytes?: Uint8Array
-  ): Promise<string> {
+    envVariables?: Record<string, string>
+  ): Promise<ScriptPayload> {
+    return this.executeScripts(scripts, payload, topic, envVariables, "text");
+  }
+
+  private static async executeScripts(
+    scripts: Script[],
+    payload: ScriptPayload,
+    topic: string,
+    env: Record<string, string> | undefined,
+    format: PayloadFormat
+  ): Promise<ScriptPayload> {
     let result = payload;
-    
     for (const script of scripts) {
       try {
-        result = await this.executeScript(script.code, { payload: result, topic, env: envVariables, payloadBytes });
-      } catch (error: any) {
-        const errorMessage = `脚本执行失败 [${script.name}]: ${error?.message || error}`;
-        console.error(errorMessage, error);
-        // 抛出错误，让调用方可以在消息列表中展示
-        throw new ScriptExecutionError(script, error);
+        result = await this.executeScript(script.code, result, topic, env, format);
+      } catch (error) {
+        const failure = new ScriptExecutionError(script, error);
+        console.error(`脚本执行失败 [${script.name}]: ${failure.message}`, error);
+        throw failure;
       }
     }
-    
     return result;
+  }
+
+  private static getPayloadBytes(payload: string, format: PayloadFormat): Uint8Array {
+    if (format === "hex" || format === "base64") {
+      try {
+        return decodePayload(payload, format);
+      } catch {
+        // Intermediate text can be converted to the publish format by a later script.
+      }
+    }
+    return decodePayload(payload, "text");
   }
 
   /**
    * 执行单个脚本
    * @param code 脚本代码
-   * @param context 执行上下文
    * @returns 脚本返回值
    */
   private static async executeScript(
     code: string,
-    context: { payload: string; topic?: string; env?: Record<string, string>; payloadBytes?: Uint8Array }
-  ): Promise<string> {
+    input: ScriptPayload,
+    topic: string,
+    env: Record<string, string> | undefined,
+    format: PayloadFormat
+  ): Promise<ScriptPayload> {
+    const payload = typeof input === "string" ? input : encodePayload(input, format);
+    const payloadBytes = typeof input === "string"
+      ? this.getPayloadBytes(input, format)
+      : new Uint8Array(input);
+
     // 创建环境变量对象，支持直接属性访问和方法调用
-    const envData = context.env || {};
+    const envData = env || {};
     const envObject = {
       // 直接访问变量值：env.VAR_NAME
       ...envData,
@@ -671,10 +689,9 @@ export class ScriptEngine {
     
     // 创建沙箱环境
     const sandbox = {
-      payload: context.payload,
-      // 原始 payload 字节（只读副本），用于处理 gzip/zlib 等二进制内容
-      payloadBytes: new Uint8Array(context.payloadBytes || []),
-      topic: context.topic || "",
+      payload,
+      payloadBytes,
+      topic,
       env: envObject,
       console: {
         log: (...args: any[]) => console.log("[Script]", ...args),
@@ -737,21 +754,12 @@ export class ScriptEngine {
     };
 
     const result = await compiledScripts.get(code)(...Object.values(sandbox));
-    
-    // 确保返回字符串
-    if (result === undefined || result === null) {
-      return context.payload;
-    }
-    
-    if (typeof result === "string") {
-      return result;
-    }
-    
-    if (typeof result === "object") {
-      return JSON.stringify(result);
-    }
-    
-    return String(result);
+    if (result === undefined || result === null) return input;
+    if (isUint8Array(result)) return new Uint8Array(result);
+
+    const text = typeof result === "object" ? JSON.stringify(result) : String(result);
+    // A script returning the same text preserves any bytes behind that view.
+    return text === undefined || text === payload ? input : text;
   }
 
   /**

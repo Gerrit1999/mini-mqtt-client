@@ -141,3 +141,15 @@ export function detectPayloadFormat(bytes: Uint8Array): DetectedPayloadFormat {
 
   return nonPrintable / Array.from(text).length > 0.1 ? "hex" : "text";
 }
+
+export function encodePayloadForStorage(
+  bytes: Uint8Array,
+  preferredFormat?: PayloadFormat
+): { payload: string; format: PayloadFormat } {
+  // TextDecoder strips a leading UTF-8 BOM. Keep it in the stored bytes.
+  const hasBom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  const format = preferredFormat === "hex" || preferredFormat === "base64"
+    ? preferredFormat
+    : hasBom ? "hex" : detectPayloadFormat(bytes);
+  return { payload: encodePayload(bytes, format), format };
+}

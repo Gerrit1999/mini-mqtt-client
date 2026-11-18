@@ -217,7 +217,7 @@ const basicFunctions = [
   { name: 'JSON.parse(str)', desc: 'Parse JSON string' },
   { name: 'JSON.stringify(obj)', desc: 'Object to JSON string' },
   { name: 'console.log(...args)', desc: 'Output log (debug)' },
-  { name: 'payloadBytes', desc: 'Raw payload bytes (Uint8Array, after_receive only)' },
+  { name: 'payloadBytes', desc: 'Current payload bytes (Uint8Array). Return a Uint8Array to set the raw bytes.' },
   { name: 'btoa(str)', desc: 'Base64 encode' },
   { name: 'atob(str)', desc: 'Base64 decode' },
 ]
