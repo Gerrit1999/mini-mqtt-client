@@ -2,15 +2,15 @@
   <div class="message-payload" :class="{ preview, expanded: !preview, 'full-preview': isFormattedJsonPreview }">
     <!-- JSON 格式 -->
     <div v-if="effectiveFormat === 'json'" class="payload-content json-content">
-      <pre v-if="shouldHighlight" v-html="highlightText(formattedJsonPayload)" />
-      <pre v-else>{{ formattedJsonPayload }}</pre>
+      <pre v-if="highlightRegex" v-html="highlightText(displayJson)" />
+      <pre v-else>{{ displayJson }}</pre>
     </div>
 
     <!-- 二进制/HEX 格式 -->
     <div v-else-if="effectiveFormat === 'hex'" class="payload-content hex-content">
       <!-- 预览模式：只显示简单的 HEX 字符串 -->
       <div v-if="preview" class="hex-preview-simple">
-        <span v-if="shouldHighlight" v-html="highlightText(simpleHexPreview)" />
+        <span v-if="highlightRegex" v-html="highlightText(simpleHexPreview)" />
         <span v-else>{{ simpleHexPreview }}</span>
       </div>
       <!-- 详情模式：显示完整的 HEX + ASCII 展示 -->
@@ -32,14 +32,14 @@
 
     <!-- Base64 格式 -->
     <div v-else-if="effectiveFormat === 'base64'" class="payload-content base64-content">
-      <pre v-if="shouldHighlight" v-html="highlightText(base64Payload)" />
+      <pre v-if="highlightRegex" v-html="highlightText(base64Payload)" />
       <pre v-else>{{ base64Payload }}</pre>
     </div>
 
     <!-- 纯文本格式 -->
     <div v-else class="payload-content text-content">
       <pre
-        v-if="shouldHighlight"
+        v-if="highlightRegex"
         v-html="highlightText(preview ? previewDisplayPayload : detailDisplayPayload)"
       />
       <pre v-else>{{ preview ? previewDisplayPayload : detailDisplayPayload }}</pre>
@@ -51,6 +51,7 @@
 import { parse as parseLosslessJson, stringify as stringifyLosslessJson } from "lossless-json";
 import { computed } from "vue";
 import type { PayloadFormat } from "@/types/mqtt";
+import { buildMessageSearchRegex, highlightMessageText } from "@/utils/messageSearch";
 import { detectPayloadFormat, encodePayload } from "@/utils/payloadCodec";
 
 const props = defineProps<{
@@ -64,14 +65,28 @@ const props = defineProps<{
   searchUseRegex?: boolean;
 }>();
 
-const shouldHighlight = computed(() => Boolean(props.highlightKeyword?.trim()));
+const PREVIEW_LENGTH = 2048;
+const textDecoder = new TextDecoder();
+const highlightRegex = computed(() => buildMessageSearchRegex({
+  keyword: props.highlightKeyword?.trim() ?? "",
+  matchCase: Boolean(props.searchMatchCase),
+  wholeWord: Boolean(props.searchWholeWord),
+  useRegex: Boolean(props.searchUseRegex),
+}));
+
+function truncatePreview(text: string): string {
+  if (text.length <= PREVIEW_LENGTH) return text;
+  const last = text.charCodeAt(PREVIEW_LENGTH - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? PREVIEW_LENGTH - 1 : PREVIEW_LENGTH;
+  return text.slice(0, end) + "…";
+}
 
 // 将 payload 转换为字符串
 const payloadString = computed(() => {
   if (!props.payload) return "";
   return typeof props.payload === "string"
     ? props.payload
-    : new TextDecoder().decode(props.payload);
+    : textDecoder.decode(props.payload);
 });
 
 // 将 payload 转换为字节数组
@@ -92,14 +107,19 @@ const effectiveFormat = computed<PayloadFormat>(() => {
   return props.payloadType ?? detectedFormat.value;
 });
 
-const base64Payload = computed(() => encodePayload(payloadBytes.value, "base64"));
+const base64Payload = computed(() => {
+  const bytes = payloadBytes.value;
+  const previewBytes = PREVIEW_LENGTH / 4 * 3;
+  if (!props.preview || bytes.length <= previewBytes) return encodePayload(bytes, "base64");
+  return encodePayload(bytes.subarray(0, previewBytes), "base64") + "…";
+});
 
 // 简单的 HEX 预览（用于列表预览，不包含 offset 和 ASCII）
 const simpleHexPreview = computed(() => {
   const bytes = payloadBytes.value;
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
-    .join(" ");
+  const prefix = bytes.subarray(0, Math.floor((PREVIEW_LENGTH + 1) / 3));
+  const text = encodePayload(prefix, "hex").match(/.{2}/g)?.join(" ") ?? "";
+  return prefix.length < bytes.length ? text + "…" : text;
 });
 
 // JSON 格式化（失败时回退原始文本，避免破坏现有行为）
@@ -128,8 +148,14 @@ const isFormattedJsonPreview = computed(
 );
 
 const previewDisplayPayload = computed(() => {
-  return displayPayload.value;
+  const payload = props.payload;
+  const text = typeof payload === "string"
+    ? payload
+    : textDecoder.decode(payload?.subarray(0, PREVIEW_LENGTH * 4));
+  return truncatePreview(text);
 });
+const displayJson = computed(() => props.preview && !isFormattedJsonPreview.value
+  ? previewDisplayPayload.value : formattedJsonPayload.value);
 
 // 带换行符标记的 payload（用于详情展示）
 const detailDisplayPayload = computed(() => {
@@ -138,72 +164,8 @@ const detailDisplayPayload = computed(() => {
   return str.replace(/\r?\n/g, '↵$&');
 });
 
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => {
-    const htmlEscapeMap: Record<string, string> = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return htmlEscapeMap[char];
-  });
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildSearchRegex(
-  keyword: string,
-  options: { matchCase: boolean; wholeWord: boolean; useRegex: boolean }
-): RegExp | null {
-  if (!keyword) return null;
-
-  let pattern = options.useRegex ? keyword : escapeRegExp(keyword);
-  if (options.wholeWord) {
-    pattern = `\\b(?:${pattern})\\b`;
-  }
-
-  const flags = options.matchCase ? "g" : "gi";
-
-  try {
-    return new RegExp(pattern, flags);
-  } catch {
-    return null;
-  }
-}
-
 function highlightText(text: string): string {
-  const source = String(text ?? "");
-  const keyword = props.highlightKeyword?.trim() ?? "";
-  const regex = buildSearchRegex(keyword, {
-    matchCase: Boolean(props.searchMatchCase),
-    wholeWord: Boolean(props.searchWholeWord),
-    useRegex: Boolean(props.searchUseRegex),
-  });
-  if (!keyword || !regex) return escapeHtml(source);
-
-  const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
-  let highlighted = "";
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = globalRegex.exec(source)) !== null) {
-    const start = match.index;
-    const end = start + match[0].length;
-    highlighted += escapeHtml(source.slice(lastIndex, start));
-    highlighted += `<mark class="search-highlight">${escapeHtml(source.slice(start, end))}</mark>`;
-    lastIndex = end;
-
-    if (match[0].length === 0) {
-      globalRegex.lastIndex++;
-    }
-  }
-
-  highlighted += escapeHtml(source.slice(lastIndex));
-  return highlighted;
+  return highlightMessageText(text, highlightRegex.value, props.preview ? PREVIEW_LENGTH : undefined);
 }
 
 // HEX 行数据

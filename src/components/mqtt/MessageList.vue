@@ -216,10 +216,10 @@
                 :preview="true"
                 :payload-type="msg.payload_type"
                 :format-json="formatJsonPayload"
-                :highlight-keyword="searchKeyword.trim()"
-                :search-match-case="searchMatchCase"
-                :search-whole-word="searchWholeWord"
-                :search-use-regex="searchUseRegex"
+                :highlight-keyword="appliedQuery.keyword"
+                :search-match-case="appliedQuery.matchCase"
+                :search-whole-word="appliedQuery.wholeWord"
+                :search-use-regex="appliedQuery.useRegex"
               />
             </div>
           </div>
@@ -328,10 +328,10 @@
             :preview="false"
             :payload-type="detailPayloadFormat"
             :format-json="detailFormatJson"
-            :highlight-keyword="searchKeyword.trim()"
-            :search-match-case="searchMatchCase"
-            :search-whole-word="searchWholeWord"
-            :search-use-regex="searchUseRegex"
+            :highlight-keyword="appliedQuery.keyword"
+            :search-match-case="appliedQuery.matchCase"
+            :search-whole-word="appliedQuery.wholeWord"
+            :search-use-regex="appliedQuery.useRegex"
           />
         </div>
       </div>
@@ -343,7 +343,9 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, onUpdated } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import { useVirtualizer } from "@tanstack/vue-virtual";
+import { useMessageSearch } from "@/composables/useMessageSearch";
 import { createMessageIdentity } from "@/utils/messageIdentity";
+import { buildMessageSearchRegex, createMessageMatcher, highlightMessageText } from "@/utils/messageSearch";
 import { useI18n } from "vue-i18n";
 import {
   ChatDotRound,
@@ -738,42 +740,33 @@ const topics = computed(() => {
 });
 
 const selectedTopicSet = computed(() => new Set(selectedTopics.value));
-const trimmedSearchKeyword = computed(() => searchKeyword.value.trim());
+const searchQuery = computed(() => ({
+  keyword: searchKeyword.value.trim(),
+  matchCase: searchMatchCase.value,
+  wholeWord: searchWholeWord.value,
+  useRegex: searchUseRegex.value,
+}));
+const isRegexInvalid = computed(() => {
+  const query = searchQuery.value;
+  return Boolean(query.keyword && query.useRegex && !buildMessageSearchRegex(query));
+});
 
-function applyMessageFilters(source: MqttMessage[]): MqttMessage[] {
-  let result = source;
+function filterByTopicAndDirection(source: MqttMessage[]): MqttMessage[] {
+  const direction = directionFilter.value;
+  const topics = selectedTopicSet.value;
+  if (direction === "all" && !topics.size) return source;
 
-  // 方向过滤
-  if (directionFilter.value !== "all") {
-    result = result.filter((m) => m.direction === directionFilter.value);
-  }
-
-  // Topic 多选筛选
-  if (selectedTopicSet.value.size > 0) {
-    result = result.filter((m) => selectedTopicSet.value.has(m.topic));
-  }
-
-  // 关键词搜索
-  if (trimmedSearchKeyword.value) {
-    const regex = searchRegex.value;
-    if (!regex) return [];
-
-    result = result.filter((m) => {
-      const meta = getDerivedMessageMeta(m);
-      return (
-        matchesSearchField(m.topic, regex) ||
-        matchesSearchField(meta.payloadText, regex) ||
-        matchesSearchField(getDerivedPayloadHex(m), regex) ||
-        matchesSearchField(getDerivedPayloadBase64(m), regex)
-      );
-    });
-  }
-
-  return result;
+  return source.filter((message) =>
+    (direction === "all" || message.direction === direction) &&
+    (!topics.size || topics.has(message.topic))
+  );
 }
 
-// 过滤后的消息
-const filteredMessages = computed(() => applyMessageFilters(messages.value));
+const { appliedQuery, matchingMessages } = useMessageSearch(
+  messages, searchQuery, computed(() => serverStore.activeServerId),
+);
+const filteredMessages = computed(() => filterByTopicAndDirection(matchingMessages.value));
+const highlightRegex = computed(() => buildMessageSearchRegex(appliedQuery.value));
 
 // Retained history can pin the first key while the capped live window trims
 // rows from the middle. That is not TanStack's contiguous append-with-trim
@@ -868,7 +861,8 @@ async function invalidateMeasurements(previousKey?: string, atEnd = virtualizer.
 }
 
 watch(formatJsonPayload, () => invalidateMeasurements(), { flush: "sync" });
-watch([searchKeyword, searchMatchCase, searchWholeWord, searchUseRegex, directionFilter, selectedTopics], async () => {
+watch(searchQuery, () => { layoutGeneration++; }, { flush: "sync" });
+watch([appliedQuery, directionFilter, selectedTopics], async () => {
   const generation = ++layoutGeneration;
   // A new query starts at its first result; arrivals thereafter obey bottom follow.
   await nextTick();
@@ -894,88 +888,8 @@ const filterLabel = computed(() => {
   }
 });
 
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => {
-    const htmlEscapeMap: Record<string, string> = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return htmlEscapeMap[char];
-  });
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildSearchRegex(
-  keyword: string,
-  options: { matchCase: boolean; wholeWord: boolean; useRegex: boolean }
-): RegExp | null {
-  if (!keyword) return null;
-
-  let pattern = options.useRegex ? keyword : escapeRegExp(keyword);
-  if (options.wholeWord) {
-    pattern = `\\b(?:${pattern})\\b`;
-  }
-
-  const flags = options.matchCase ? "g" : "gi";
-
-  try {
-    return new RegExp(pattern, flags);
-  } catch {
-    return null;
-  }
-}
-
-const searchRegex = computed(() =>
-  buildSearchRegex(trimmedSearchKeyword.value, {
-    matchCase: searchMatchCase.value,
-    wholeWord: searchWholeWord.value,
-    useRegex: searchUseRegex.value,
-  })
-);
-
-const isRegexInvalid = computed(
-  () =>
-    Boolean(trimmedSearchKeyword.value) &&
-    searchUseRegex.value &&
-    !searchRegex.value
-);
-
-function matchesSearchField(value: string, regex: RegExp): boolean {
-  regex.lastIndex = 0;
-  return regex.test(value);
-}
-
 function highlightText(text: string): string {
-  const source = String(text ?? "");
-  const regex = searchRegex.value;
-  if (!trimmedSearchKeyword.value || !regex) return escapeHtml(source);
-
-  const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
-  let highlighted = "";
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = globalRegex.exec(source)) !== null) {
-    const start = match.index;
-    const end = start + match[0].length;
-    highlighted += escapeHtml(source.slice(lastIndex, start));
-    highlighted += `<mark class="search-highlight">${escapeHtml(source.slice(start, end))}</mark>`;
-    lastIndex = end;
-
-    // 防止零宽匹配导致死循环
-    if (match[0].length === 0) {
-      globalRegex.lastIndex++;
-    }
-  }
-
-  highlighted += escapeHtml(source.slice(lastIndex));
-  return highlighted;
+  return highlightMessageText(text, highlightRegex.value);
 }
 
 // 获取消息的显示格式（优先使用保存的类型，否则自动检测）
@@ -1227,7 +1141,9 @@ async function handleExportCommand(command: string): Promise<void> {
 
   const format = command as ExportFormat;
   const fullHistory = await messageStore.fetchAllMessageHistory(serverId);
-  const exportItems = applyMessageFilters(fullHistory.map(historyToRealtimeMessage)).map(toExportMessage);
+  const exportItems = filterByTopicAndDirection(fullHistory.map(historyToRealtimeMessage))
+    .filter(createMessageMatcher(searchQuery.value))
+    .map(toExportMessage);
 
   if (exportItems.length === 0) {
     ElMessage.warning(t("messages.exportEmpty"));

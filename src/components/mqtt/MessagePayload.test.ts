@@ -63,3 +63,17 @@ describe("MessagePayload Base64 display", () => {
     expect(wrapper.find("pre").text()).toBe("AP+AQQo=");
   });
 });
+
+it("bounds single-character highlighting in a large list preview", () => {
+  const wrapper = mount(MessagePayload, {
+    props: {
+      payload: "x".repeat(8000),
+      payloadType: "text",
+      preview: true,
+      highlightKeyword: "x",
+    },
+  });
+
+  expect(wrapper.findAll("mark")).toHaveLength(96);
+  expect(wrapper.get("pre").text()).toBe("x".repeat(2048) + "…");
+});

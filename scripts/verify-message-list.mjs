@@ -50,7 +50,8 @@ try {
   await server.listen();
   browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
   const url = server.resolvedUrls.local[0];
-  if (process.env.LIVE_FOLLOW_FORMAT_OVERFLOW) await verifyDisabledFormatOverflow(browser, url);
+  if (process.env.MESSAGE_SEARCH_ONLY) await verifyMessageSearch(browser, url);
+  else if (process.env.LIVE_FOLLOW_FORMAT_OVERFLOW) await verifyDisabledFormatOverflow(browser, url);
   else if (process.env.LIVE_FOLLOW_DISABLED) await verifyDisabledEmptyOverflow(browser, url);
   else if (process.env.LIVE_FOLLOW_EMPTY) await verifyEmptyLiveFollow(browser, url);
   else if (process.env.LIVE_FOLLOW_STATIC) await verifyStaticLiveFollow(browser, url);
@@ -62,7 +63,7 @@ try {
   await verifyStaticLiveFollow(browser, url, { count: 240, batch: 128, history: true });
   await verifyLiveFollow(browser, url);
   }
-  if (!process.env.LIVE_FOLLOW_ONLY && !process.env.LIVE_FOLLOW_EMPTY && !process.env.LIVE_FOLLOW_STATIC && !process.env.LIVE_FOLLOW_DISABLED && !process.env.LIVE_FOLLOW_FORMAT_OVERFLOW) {
+  if (!process.env.MESSAGE_SEARCH_ONLY && !process.env.LIVE_FOLLOW_ONLY && !process.env.LIVE_FOLLOW_EMPTY && !process.env.LIVE_FOLLOW_STATIC && !process.env.LIVE_FOLLOW_DISABLED && !process.env.LIVE_FOLLOW_FORMAT_OVERFLOW) {
   await verifyReviewRegressions(browser, url);
   await verifyToolbarRegressions(browser, url);
   await verifyContentWidthRegression(browser, url);
@@ -120,6 +121,83 @@ try {
   }
 } finally {
   await browser?.close(); await server?.close(); await rm(temp, { recursive: true, force: true });
+}
+
+async function verifyMessageSearch(browser, url) {
+  for (const { count, keyword } of [{ count: 6000, keyword: "~" }, { count: 1000, keyword: "x" }]) {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+    try {
+      let searchWorkers = 0;
+      page.on("worker", (worker) => {
+        if (worker.url().includes("messageSearch.worker")) searchWorkers++;
+      });
+      await page.goto(`${url}?version=after&count=${count}&emptyHistory&receiveOnly`);
+      await page.waitForSelector(".message-row");
+      if (keyword === "x") {
+        await page.evaluate(() => {
+          const encoder = new TextEncoder();
+          const prefix = "x".repeat(8000);
+          const payload = encoder.encode(prefix);
+          const withTail = encoder.encode(prefix + "tail-marker");
+          window.fixture.data.live[1] = window.fixture.data.live[1]
+            .map((row, index) => ({ ...row, payload: index === 0 ? withTail : payload, payload_type: "text" }));
+        });
+        await page.waitForFunction(() => document.querySelector(".message-row pre")?.textContent.startsWith("xxx"));
+      }
+
+      const metrics = await page.evaluate(async (keyword) => {
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        const longTasks = [];
+        const observer = new PerformanceObserver((list) => longTasks.push(...list.getEntries()));
+        observer.observe({ type: "longtask" });
+        const start = performance.now();
+        const input = document.querySelector(".message-search input");
+        input.value = keyword;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise(requestAnimationFrame);
+        const firstFrameMs = performance.now() - start;
+        const vm = document.querySelector(".message-list").__vueParentComponent.setupState;
+        while (vm.appliedQuery.keyword !== keyword && performance.now() - start < 5000) {
+          await new Promise(requestAnimationFrame);
+        }
+        const appliedMs = performance.now() - start;
+        await new Promise(requestAnimationFrame);
+        observer.disconnect();
+        return {
+          firstFrameMs: Math.round(firstFrameMs),
+          appliedMs: Math.round(appliedMs),
+          longestTaskMs: Math.max(0, ...longTasks.map((task) => task.duration)),
+          matches: vm.filteredMessages.length,
+          mountedRows: document.querySelectorAll(".message-row").length,
+          marks: document.querySelectorAll(".message-row mark").length,
+        };
+      }, keyword);
+      console.log("Chromium message search", JSON.stringify({ count, keyword, searchWorkers, ...metrics }));
+      assert.equal(searchWorkers, 1, "search ran in a browser worker");
+      assert.equal(metrics.matches, keyword === "x" ? count : 0);
+      assert(metrics.firstFrameMs < 150, "the next frame stays responsive after input");
+      assert(metrics.marks <= metrics.mountedRows * 96, "payload highlights are bounded per row");
+      if (keyword === "x") {
+        assert(metrics.marks > 0, "visible matches are highlighted");
+        await page.locator(".message-search input").fill("tail-marker");
+        await page.waitForFunction(() =>
+          document.querySelector(".message-list").__vueParentComponent.setupState.filteredMessages.length === 1);
+        assert.equal(await page.locator(".message-row mark").count(), 0, "search reaches beyond the preview");
+      } else {
+        await page.evaluate(() => {
+          const [row] = window.fixture.rows(1, 6000);
+          window.fixture.data.live[1] = window.fixture.data.live[1].concat({ ...row, topic: "live/~" });
+        });
+        await page.locator(".topic-text").filter({ hasText: "live/~" }).waitFor();
+        await page.locator(".message-search input").fill("");
+        await page.waitForFunction(() =>
+          document.querySelector(".message-list").__vueParentComponent.setupState.filteredMessages.length === 6001);
+      }
+    } finally {
+      await page.close();
+    }
+  }
 }
 
 async function verifyDisabledFormatOverflow(browser, url) {
@@ -531,7 +609,8 @@ async function verify(page) {
       if (Math.abs(current.top - previous.bottom) > 2) throw new Error("Measured rows overlap or have an unexpected gap");
     }
   });
-  await page.locator(".message-search input").fill("payload-1"); await settle();
+  await page.locator(".message-search input").fill("payload-1");
+  await page.locator(".message-row mark").first().waitFor(); await settle();
   assert(await page.locator(".message-row").count() > 0, "filter renders matches");
   assert(await page.evaluate(() => document.querySelector(".message-scroll-wrapper").scrollTop) < 3, "filter starts first result");
   await page.locator(".message-search input").fill(""); await settle();

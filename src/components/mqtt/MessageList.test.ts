@@ -220,6 +220,7 @@ describe("MessageList Topic 筛选", () => {
   afterEach(() => {
     wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
   beforeEach(() => {
     mockServer.activeServerId = 1;
@@ -632,6 +633,52 @@ describe("MessageList Topic 筛选", () => {
   });
 
   describe("filteredMessages with topic filter", () => {
+    it("keeps the current results while the search input changes and applies the latest query", async () => {
+      mockMessages.mockReturnValue(createTestMessages());
+      const wrapper = createWrapper();
+      const input = wrapper.get<HTMLInputElement>(".message-search input");
+      const vm = wrapper.vm as any;
+
+      await input.setValue("~");
+      expect(vm.filteredMessages).toHaveLength(5);
+      await input.setValue("sensor");
+      await vi.waitFor(() => {
+        expect(vm.filteredMessages.map((msg: MqttMessage) => msg.topic)).toEqual(["sensor/temp"]);
+      });
+      await input.setValue("");
+      expect(vm.filteredMessages).toHaveLength(5);
+    });
+
+    it("discards a pending search result from the previous server", async () => {
+      const replies: Array<() => void> = [];
+      vi.stubGlobal("Worker", class {
+        onmessage?: (event: MessageEvent<boolean[]>) => void;
+
+        postMessage() {
+          replies.push(() => this.onmessage?.(new MessageEvent("message", { data: [true] })));
+        }
+
+        terminate() {}
+      });
+      const [first, second] = createTestMessages();
+      mockMessages.mockImplementation(() => mockServer.activeServerId === 1 ? [first] : [second]);
+      const wrapper = createWrapper();
+      const vm = wrapper.vm as any;
+      await wrapper.get(".message-search input").setValue("device");
+      await vi.waitFor(() => expect(replies).toHaveLength(1));
+
+      mockServer.activeServerId = 2;
+      await flushPromises();
+      replies[0]();
+      await vi.waitFor(() => expect(replies).toHaveLength(2));
+      expect(vm.appliedQuery.keyword).toBe("");
+
+      replies[1]();
+      await flushPromises();
+      expect(vm.appliedQuery.keyword).toBe("device");
+      expect(vm.filteredMessages.map((message: MqttMessage) => message.id)).toEqual([second.id]);
+    });
+
     it("retains case, whole-word, regex and invalid regex searches", async () => {
       mockMessages.mockReturnValue([
         { ...createTestMessages()[0], topic: "alpha", payload: new TextEncoder().encode("Word words") },
@@ -641,11 +688,9 @@ describe("MessageList Topic 筛选", () => {
       await flushPromises();
       const vm = wrapper.vm as any;
       vm.searchKeyword = "Word"; vm.searchMatchCase = true; vm.searchWholeWord = true;
-      await flushPromises();
-      expect(vm.filteredMessages.map((msg: MqttMessage) => msg.topic)).toEqual(["alpha"]);
+      await vi.waitFor(() => expect(vm.filteredMessages.map((msg: MqttMessage) => msg.topic)).toEqual(["alpha"]));
       vm.searchUseRegex = true; vm.searchWholeWord = false; vm.searchMatchCase = false; vm.searchKeyword = "^word.*";
-      await flushPromises();
-      expect(vm.filteredMessages).toHaveLength(2);
+      await vi.waitFor(() => expect(vm.filteredMessages).toHaveLength(2));
       vm.searchKeyword = "[";
       await flushPromises();
       expect(vm.filteredMessages).toHaveLength(0);
@@ -711,11 +756,9 @@ describe("MessageList Topic 筛选", () => {
 
       const vm = wrapper.vm as any;
       vm.selectedTopics = ["device/001/command"];
-      vm.searchKeyword = "device";
-      await flushPromises();
+      vm.searchKeyword = "sensor";
 
-      // device/001/command 有 2 条消息，关键词 "device" 匹配 topic
-      expect(vm.filteredMessages).toHaveLength(2);
+      await vi.waitFor(() => expect(vm.filteredMessages).toHaveLength(0));
     });
 
     it("方向 + Topic 双重筛选", async () => {
@@ -848,10 +891,10 @@ describe("MessageList Topic 筛选", () => {
       await flushPromises();
 
       const vm = wrapper.vm as any;
+      vm.searchKeyword = "~";
+      await vi.waitFor(() => expect(vm.filteredMessages).toHaveLength(0));
       vm.searchKeyword = "AP+A";
-      await flushPromises();
-
-      expect(vm.filteredMessages).toHaveLength(1);
+      await vi.waitFor(() => expect(vm.filteredMessages).toHaveLength(1));
     });
   });
 
