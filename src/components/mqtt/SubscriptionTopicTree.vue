@@ -28,7 +28,7 @@
         >
           <el-tooltip :content="nodeTooltip(data)" placement="top" :show-after="500">
             <span
-              class="topic-node-label text-ellipsis"
+              class="topic-node-label"
               :class="{ 'topic-node-label--empty': data.segment === '' }"
               :title="nodeTooltip(data)"
               :data-testid="`topic-label-${data.fullPath}`"
@@ -100,22 +100,20 @@
                 <span class="subscription-toggle-knob" aria-hidden="true" />
               </button>
 
-              <span class="topic-node-retry-slot">
-                <el-tooltip
-                  v-if="displayStatus(subscription) === 'failed'"
-                  :content="retryLabel(subscription)"
-                  placement="top"
-                >
-                  <el-button
-                    class="topic-node-action"
-                    text
-                    size="small"
-                    :icon="RefreshRight"
-                    :aria-label="retryLabel(subscription)"
-                    @click.stop="emit('retry', subscription)"
-                  />
-                </el-tooltip>
-              </span>
+              <el-tooltip
+                v-if="displayStatus(subscription) === 'failed'"
+                :content="retryLabel(subscription)"
+                placement="top"
+              >
+                <el-button
+                  class="topic-node-action"
+                  text
+                  size="small"
+                  :icon="RefreshRight"
+                  :aria-label="retryLabel(subscription)"
+                  @click.stop="emit('retry', subscription)"
+                />
+              </el-tooltip>
 
               <el-dropdown
                 trigger="click"
@@ -315,7 +313,9 @@ function handleAction(command: string, subscription: Subscription) {
 :deep(.el-tree-node__content) {
   height: auto;
   min-height: 32px;
+  padding-block: 4px;
   padding-right: 4px;
+  border-bottom: 1px solid var(--app-border-color);
   border-radius: 4px;
 }
 
@@ -330,20 +330,27 @@ function handleAction(command: string, subscription: Subscription) {
 }
 
 .topic-tree-node {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
   align-items: center;
-  column-gap: 6px;
-  width: 100%;
+  gap: 2px 6px;
   min-width: 0;
   min-height: 28px;
 }
 
 .topic-node-label {
+  flex: 1 1 auto;
   min-width: 0;
   font-family: "Fira Code", "Consolas", monospace;
   font-size: 12px;
   line-height: 20px;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+}
+
+.topic-tree-node--configured .topic-node-label {
+  font-weight: 600;
 }
 
 .topic-node-label--empty {
@@ -352,17 +359,20 @@ function handleAction(command: string, subscription: Subscription) {
 }
 
 .topic-node-configurations {
-  display: grid;
-  justify-items: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   gap: 2px;
   min-width: 0;
+  margin-inline-start: auto;
 }
 
 .topic-node-configuration {
-  display: grid;
-  grid-template-columns: 7px 14px minmax(28px, max-content) 28px 24px 24px;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  column-gap: 3px;
+  justify-content: flex-end;
+  gap: 2px 3px;
   max-width: 100%;
 }
 
@@ -480,14 +490,6 @@ function handleAction(command: string, subscription: Subscription) {
   min-height: 24px;
   padding: 4px;
   margin: 0;
-}
-
-.topic-node-retry-slot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
 }
 
 @keyframes subscription-topic-spin {
