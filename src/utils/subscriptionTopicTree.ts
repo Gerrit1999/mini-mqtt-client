@@ -9,7 +9,7 @@ export interface SubscriptionTopicTreeNode {
   children: SubscriptionTopicTreeNode[];
 }
 
-interface MutableSubscriptionTopicTreeNode extends SubscriptionTopicTreeNode {
+interface MutableSubscriptionTopicTreeNode extends Omit<SubscriptionTopicTreeNode, "depth" | "children"> {
   childMap: Map<string, MutableSubscriptionTopicTreeNode>;
 }
 
@@ -26,17 +26,23 @@ function compareNodes(
 }
 
 function finalizeNode(
-  node: MutableSubscriptionTopicTreeNode
+  node: MutableSubscriptionTopicTreeNode,
+  depth: number
 ): SubscriptionTopicTreeNode {
+  const segments = [node.segment];
+  while (!node.subscriptions.length && node.childMap.size === 1) {
+    [node] = node.childMap.values();
+    segments.push(node.segment);
+  }
   const children = Array.from(node.childMap.values())
     .sort(compareNodes)
-    .map(finalizeNode);
+    .map(child => finalizeNode(child, depth + 1));
 
   return {
     key: node.key,
-    segment: node.segment,
+    segment: segments.join("/"),
     fullPath: node.fullPath,
-    depth: node.depth,
+    depth,
     subscriptions: [...node.subscriptions].sort(
       (left, right) => (left.id ?? 0) - (right.id ?? 0)
     ),
@@ -71,9 +77,7 @@ export function buildSubscriptionTopicTree(
           key,
           segment,
           fullPath: pathSegments.join("/"),
-          depth: index + 1,
           subscriptions: [],
-          children: [],
           childMap: new Map(),
         };
         siblings.set(key, node);
@@ -87,7 +91,7 @@ export function buildSubscriptionTopicTree(
     });
   }
 
-  return Array.from(rootNodes.values()).sort(compareNodes).map(finalizeNode);
+  return Array.from(rootNodes.values()).sort(compareNodes).map(node => finalizeNode(node, 1));
 }
 
 export function collectExpandedTopicNodeKeys(

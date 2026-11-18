@@ -66,23 +66,14 @@
           </div>
 
           <el-button
-            class="btn-timed-message"
-            :icon="props.timedMessageRunning ? Loading : Timer"
-            :type="props.timedMessageRunning ? 'danger' : 'default'"
-            :class="{ 'is-running': props.timedMessageRunning }"
-            @click="handleTimedMessage"
+            type="primary"
+            class="send-button"
+            :icon="Promotion"
+            :loading="publishing"
+            :disabled="!isConnected"
+            @click="handlePublish"
           >
-            {{ props.timedMessageRunning ? $t('timedMessage.stop') : $t('publish.timedMessage') }}
-          </el-button>
-
-          <el-button
-            class="btn-scheduled-publish"
-            :icon="props.scheduledPublishRunning ? Loading : Timer"
-            :type="props.scheduledPublishRunning ? 'primary' : 'default'"
-            :class="{ 'is-running': props.scheduledPublishRunning }"
-            @click="handleScheduledPublish"
-          >
-            {{ props.scheduledPublishRunning ? $t('scheduled.running') : $t('publish.scheduledPublish') }}
+            {{ $t('publish.send') }}
           </el-button>
         </div>
 
@@ -113,6 +104,26 @@
         </div>
 
         <div class="action-row-bottom">
+          <el-button
+            text
+            class="btn-timed-message"
+            :icon="props.timedMessageRunning ? Loading : Timer"
+            :type="props.timedMessageRunning ? 'danger' : 'default'"
+            :class="{ 'is-running': props.timedMessageRunning }"
+            @click="handleTimedMessage"
+          >
+            {{ props.timedMessageRunning ? $t('timedMessage.stop') : $t('publish.timedMessage') }}
+          </el-button>
+          <el-button
+            text
+            class="btn-scheduled-publish"
+            :icon="props.scheduledPublishRunning ? Loading : Timer"
+            :type="props.scheduledPublishRunning ? 'primary' : 'default'"
+            :class="{ 'is-running': props.scheduledPublishRunning }"
+            @click="handleScheduledPublish"
+          >
+            {{ props.scheduledPublishRunning ? $t('scheduled.running') : $t('publish.scheduledPublish') }}
+          </el-button>
           <el-tooltip :content="$t('publish.openTemplates')" placement="top">
             <el-button
               class="icon-action"
@@ -129,16 +140,6 @@
               @click="handleSaveTemplate"
             />
           </el-tooltip>
-          <el-button
-            class="send-button"
-            type="primary"
-            :icon="Promotion"
-            :loading="publishing"
-            :disabled="!isConnected"
-            @click="handlePublish"
-          >
-            {{ $t('publish.send') }}
-          </el-button>
         </div>
       </div>
     </div>
@@ -652,11 +653,12 @@ const handlePublish = async () => {
   padding: 10px 16px 12px;
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .topic-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
 
@@ -669,19 +671,12 @@ const handlePublish = async () => {
   }
 }
 
-.btn-timed-message,
-.btn-scheduled-publish {
-  min-width: 112px;
-  height: 32px;
-  margin-left: 0 !important;
-  border-radius: 6px;
-}
-
 .topic-prefix {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--app-text-secondary);
+  color: var(--primary-color);
+  font-weight: 600;
 
   &::after {
     width: 1px;
@@ -694,7 +689,7 @@ const handlePublish = async () => {
 .payload-input-wrapper {
   position: relative;
   flex: 1;
-  min-height: 0;
+  min-height: 72px;
 }
 
 .payload-format-button {
@@ -721,13 +716,20 @@ const handlePublish = async () => {
 
 .action-row-bottom {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--app-border-color);
 
   .el-button {
     height: 32px;
     margin-left: 0;
     border-radius: 6px;
+  }
+
+  .el-button.is-text {
+    padding-inline: 6px;
   }
 }
 
@@ -737,7 +739,7 @@ const handlePublish = async () => {
 }
 
 .send-button {
-  width: 160px;
+  min-width: 80px;
 }
 
 .payload-input {
@@ -749,6 +751,8 @@ const handlePublish = async () => {
   height: 100%;
   min-height: 72px;
   padding: 10px 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  line-height: 1.6;
   border-radius: 6px;
 }
 
@@ -794,19 +798,6 @@ const handlePublish = async () => {
     min-width: 0;
   }
 
-  .topic-row {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .topic-input {
-    grid-column: 1 / -1;
-  }
-
-  .btn-timed-message,
-  .btn-scheduled-publish {
-    min-width: 0;
-  }
-
 }
 
 @container (max-width: 380px) {
@@ -820,17 +811,5 @@ const handlePublish = async () => {
     grid-column: 1 / -1;
   }
 
-  .topic-row {
-    grid-template-columns: 1fr;
-  }
-
-  .topic-input {
-    grid-column: auto;
-  }
-
-  .btn-timed-message,
-  .btn-scheduled-publish {
-    width: 100%;
-  }
 }
 </style>

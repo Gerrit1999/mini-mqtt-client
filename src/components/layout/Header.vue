@@ -1,31 +1,24 @@
 <template>
-  <div class="header">
+  <div v-if="activeServer" class="header">
     <!-- 左侧：Server 信息 -->
     <div class="header-left">
-      <template v-if="activeServer">
-        <span class="status-indicator" :class="connectionStatus" />
-        <div class="server-details">
-          <span class="server-name">{{ activeServer.server.name }}</span>
-          <span class="server-address">
-            {{ formatServerAddress(activeServer.server) }}
-          </span>
-          <span
-            v-if="connectionStatus === 'reconnecting'"
-            class="reconnect-detail"
-            :title="localizedConnectionError"
-          >
-            {{ reconnectDetail }}
-          </span>
-        </div>
-        <el-tag :type="statusTagType" size="small" effect="plain">
-          {{ statusText }}
-        </el-tag>
-      </template>
-      <span v-else class="welcome-text">{{ $t('header.welcome') }}</span>
+      <span class="status-indicator" :class="connectionStatus" />
+      <div class="server-details">
+        <span class="server-name">{{ activeServer.server.name }}</span>
+        <span class="server-address">{{ formatServerAddress(activeServer.server) }}</span>
+        <span
+          v-if="connectionStatus === 'reconnecting'"
+          class="reconnect-detail"
+          :title="localizedConnectionError"
+        >
+          {{ reconnectDetail }}
+        </span>
+      </div>
+      <el-tag :type="statusTagType" size="small" effect="plain">{{ statusText }}</el-tag>
     </div>
 
     <!-- 中间：协议和配置信息 -->
-    <div v-if="activeServer" class="header-center">
+    <div class="header-center">
       <el-tag size="small" type="info" effect="plain">
         MQTT {{ displayedProtocolVersion }}
       </el-tag>
@@ -44,34 +37,29 @@
 
     <!-- 右侧：操作按钮 -->
     <div class="header-right">
-      <template v-if="activeServer">
-        <el-button
-          v-if="connectionStatus === 'disconnected' || connectionStatus === 'error'"
-          type="primary"
-          size="small"
-          :icon="Connection"
-          :loading="connecting"
-          @click="handleConnect"
-        >
-          {{ $t('header.connect') }}
-        </el-button>
-        <el-button
-          v-else-if="connectionStatus === 'connected' || connectionStatus === 'reconnecting'"
-          type="danger"
-          size="small"
-          plain
-          :icon="SwitchButton"
-          @click="handleDisconnect"
-        >
-          {{ $t('header.disconnect') }}
-        </el-button>
-        <el-button v-else type="warning" size="small" :loading="true" disabled>
-          {{ $t('header.connecting') }}
-        </el-button>
-      </template>
-      <el-tooltip :content="$t('header.settings')" placement="bottom">
-        <el-button :icon="Setting" circle size="small" @click="handleSettings" />
-      </el-tooltip>
+      <el-button
+        v-if="connectionStatus === 'disconnected' || connectionStatus === 'error'"
+        type="primary"
+        size="small"
+        :icon="Connection"
+        :loading="connecting"
+        @click="handleConnect"
+      >
+        {{ $t('header.connect') }}
+      </el-button>
+      <el-button
+        v-else-if="connectionStatus === 'connected' || connectionStatus === 'reconnecting'"
+        type="danger"
+        size="small"
+        plain
+        :icon="SwitchButton"
+        @click="handleDisconnect"
+      >
+        {{ $t('header.disconnect') }}
+      </el-button>
+      <el-button v-else type="warning" size="small" :loading="true" disabled>
+        {{ $t('header.connecting') }}
+      </el-button>
     </div>
   </div>
 </template>
@@ -82,7 +70,6 @@ import { useI18n } from "vue-i18n";
 import {
   Connection,
   SwitchButton,
-  Setting,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useServerStore } from "@/stores/server";
@@ -223,13 +210,6 @@ const handleDisconnect = async () => {
   }
 };
 
-const emit = defineEmits<{
-  settings: []
-}>();
-
-const handleSettings = () => {
-  emit("settings");
-};
 </script>
 
 <style scoped lang="scss">
@@ -302,11 +282,6 @@ const handleSettings = () => {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.welcome-text {
-  font-size: 14px;
-  color: var(--app-text-secondary);
 }
 
 .status-indicator {

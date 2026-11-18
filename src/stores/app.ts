@@ -29,6 +29,38 @@ export interface CopyToPublishData {
 export const useAppStore = defineStore("app", () => {
   // 主题
   const theme = ref<Theme>("light");
+  const accentColor = ref("");
+
+  function previewAccentColor(color: string) {
+    const root = document.documentElement;
+    const valid = /^#[0-9a-f]{6}$/i.test(color);
+    root.toggleAttribute("data-custom-accent", valid);
+    if (!valid) {
+      root.style.removeProperty("--accent-source");
+      root.style.removeProperty("--accent-ink");
+      root.style.removeProperty("--accent-hover-mix");
+      root.style.removeProperty("--accent-on-light");
+      root.style.removeProperty("--accent-on-dark");
+      return;
+    }
+    const linear = [1, 3, 5].map(start => {
+      const channel = parseInt(color.slice(start, start + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    const luminance = linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+    root.style.setProperty("--accent-source", color);
+    root.style.setProperty("--accent-on-light", luminance <= 0.16 ? color : `color-mix(in srgb, ${color} 40%, #101014)`);
+    root.style.setProperty("--accent-on-dark", luminance >= 0.30 ? color : `color-mix(in srgb, ${color} 38%, white)`);
+    root.style.setProperty("--accent-ink", luminance > 0.179 ? "#000" : "#fff");
+    root.style.setProperty("--accent-hover-mix", luminance > 0.179 ? "#fff" : "#000");
+  }
+
+  function saveAccentColor(color: string) {
+    if (color) localStorage.setItem("mqtt-client-accent", color);
+    else localStorage.removeItem("mqtt-client-accent");
+    accentColor.value = color;
+    previewAccentColor(color);
+  }
   
   // 语言
   const locale = ref<Locale>("auto");
@@ -142,6 +174,9 @@ export const useAppStore = defineStore("app", () => {
 
   // 初始化主题
   const initTheme = async () => {
+    const accent = localStorage.getItem("mqtt-client-accent") ?? "";
+    accentColor.value = /^#[0-9a-f]{6}$/i.test(accent) ? accent : "";
+    previewAccentColor(accentColor.value);
     const stored = localStorage.getItem("mqtt-client-theme");
     if (stored === "light" || stored === "dark" || stored === "auto") {
       theme.value = stored;
@@ -283,6 +318,9 @@ export const useAppStore = defineStore("app", () => {
 
   return {
     theme,
+    accentColor,
+    previewAccentColor,
+    saveAccentColor,
     locale,
     actualLocale,
     sidebarCollapsed,

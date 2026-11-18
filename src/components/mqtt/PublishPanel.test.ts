@@ -850,7 +850,7 @@ describe("PublishPanel", () => {
       vm.publishData.payload = "SGVs\n bG8";
       await flushPromises();
 
-      const sendButton = wrapper.find(".action-row-bottom .el-button--primary");
+      const sendButton = wrapper.find(".send-button");
       await sendButton.trigger("click");
       await flushPromises();
 

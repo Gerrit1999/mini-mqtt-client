@@ -88,7 +88,24 @@ afterEach(() => {
 });
 
 describe("SubscriptionTopicTree", () => {
-  it("searches complete topic filters and retains their parent nodes", async () => {
+  it("splits a compact path when a sibling is added and merges it again on removal", async () => {
+    const status = subscription(1, "device/001/status");
+    const temperature = subscription(2, "device/001/temp");
+    const wrapper = mountTree([status]);
+    const labels = () => wrapper.findAll(".topic-node-label").map(label => label.text());
+
+    expect(labels()).toEqual(["device/001/status"]);
+    await wrapper.setProps({ subscriptions: [status, temperature] });
+    await flushPromises();
+    expect(labels()).toEqual(["device/001", "status", "temp"]);
+    await wrapper.setProps({ subscriptions: [status] });
+    await flushPromises();
+    expect(labels()).toEqual(["device/001/status"]);
+    await wrapper.get('[aria-label="Disable subscription device/001/status"]').trigger("click");
+    expect(wrapper.emitted("toggle")?.[0]).toEqual([status, false]);
+  });
+
+  it("shows a single matching filter as one row with its complete path", async () => {
     const wrapper = mountTree([
       subscription(1, "factory/line-a/temperature"),
       subscription(2, "factory/line-b/humidity"),
@@ -98,9 +115,8 @@ describe("SubscriptionTopicTree", () => {
     await wrapper.get('[data-testid="topic-tree-search"]').setValue("line-b/hum");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("factory");
-    expect(wrapper.text()).toContain("line-b");
-    expect(wrapper.text()).toContain("humidity");
+    expect(wrapper.findAll('[role="treeitem"]')).toHaveLength(1);
+    expect(wrapper.text()).toContain("factory/line-b/humidity");
     expect(wrapper.text()).not.toContain("line-a");
     expect(wrapper.text()).not.toContain("office");
   });
@@ -187,6 +203,9 @@ describe("SubscriptionTopicTree", () => {
   it("supports keyboard expansion through treeitem focus", async () => {
     const wrapper = mountTree([
       subscription(1, "factory/line-a/device-1/temperature"),
+      subscription(2, "factory/line-a/device-1"),
+      subscription(3, "factory/line-a"),
+      subscription(4, "factory"),
     ]);
     await flushPromises();
 

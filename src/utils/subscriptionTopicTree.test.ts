@@ -30,10 +30,10 @@ describe("subscriptionTopicTree", () => {
     expect(tree).toHaveLength(1);
     expect(tree[0].segment).toBe("factory");
     expect(tree[0].children.map((node) => node.segment)).toEqual([
-      "line-a",
-      "line-b",
+      "line-a/temperature",
+      "line-b/humidity",
     ]);
-    expect(tree[0].children[0].children[0].subscriptions[0]).toMatchObject({
+    expect(tree[0].children[0].subscriptions[0]).toMatchObject({
       id: 1,
       topic: "factory/line-a/temperature",
       qos: 1,
@@ -42,15 +42,13 @@ describe("subscriptionTopicTree", () => {
 
   it("preserves leading and empty topic levels", () => {
     const tree = buildSubscriptionTopicTree([
-      subscription(1, "/devices//temperature"),
+      subscription(1, "/devices//temperature/"),
     ]);
 
-    expect(tree[0].segment).toBe("");
-    expect(tree[0].children[0].segment).toBe("devices");
-    expect(tree[0].children[0].children[0].segment).toBe("");
-    expect(tree[0].children[0].children[0].children[0]).toMatchObject({
-      segment: "temperature",
-      fullPath: "/devices//temperature",
+    expect(tree[0]).toMatchObject({
+      segment: "/devices//temperature/",
+      fullPath: "/devices//temperature/",
+      children: [],
     });
   });
 
@@ -60,17 +58,18 @@ describe("subscriptionTopicTree", () => {
       subscription(2, "devices/#"),
     ]);
 
-    expect(tree[0].children.map((node) => node.segment)).toEqual(["#", "+"]);
-    expect(tree[0].children[1].children[0].segment).toBe("state");
+    expect(tree[0].children.map((node) => node.segment)).toEqual(["#", "+/state"]);
   });
 
   it("allows a saved subscription to also be a parent node", () => {
     const tree = buildSubscriptionTopicTree([
-      subscription(1, "factory"),
-      subscription(2, "factory/line-a"),
+      subscription(1, "factory/line-a"),
+      subscription(2, "factory/line-a/status"),
     ]);
 
+    expect(tree[0].segment).toBe("factory/line-a");
     expect(tree[0].subscriptions.map((item) => item.id)).toEqual([1]);
+    expect(tree[0].children[0].segment).toBe("status");
     expect(tree[0].children[0].subscriptions.map((item) => item.id)).toEqual([2]);
   });
 
@@ -80,7 +79,7 @@ describe("subscriptionTopicTree", () => {
       subscription(2, "factory/line-a", { qos: 2 }),
     ]);
 
-    expect(tree[0].children[0].subscriptions.map((item) => item.id)).toEqual([
+    expect(tree[0].subscriptions.map((item) => item.id)).toEqual([
       1,
       2,
     ]);
@@ -97,15 +96,17 @@ describe("subscriptionTopicTree", () => {
     );
 
     expect(tree).toHaveLength(1);
-    expect(tree[0].segment).toBe("factory");
-    expect(tree[0].children).toHaveLength(1);
-    expect(tree[0].children[0].segment).toBe("line-b");
-    expect(tree[0].children[0].children[0].subscriptions[0].id).toBe(2);
+    expect(tree[0].segment).toBe("factory/line-b/humidity");
+    expect(tree[0].children).toHaveLength(0);
+    expect(tree[0].subscriptions[0].id).toBe(2);
   });
 
   it("returns the first two branch levels for default expansion", () => {
     const tree = buildSubscriptionTopicTree([
       subscription(1, "factory/line-a/device-1/temperature"),
+      subscription(2, "factory/line-a/device-1"),
+      subscription(3, "factory/line-a"),
+      subscription(4, "factory/line-a/device-1/temperature/unit"),
     ]);
 
     expect(collectExpandedTopicNodeKeys(tree, 2)).toEqual([

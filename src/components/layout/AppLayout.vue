@@ -2,11 +2,11 @@
   <div class="app-layout">
     <Sidebar class="app-sidebar" />
     <div class="app-main">
-      <Header class="app-header" @settings="handleSettings" />
+      <Header class="app-header" />
       <div class="app-content">
         <slot />
       </div>
-      <CommandBar class="app-command-bar" @open-templates="handleOpenTemplates" @open-scripts="handleOpenScripts" @open-env="handleOpenEnv" />
+      <CommandBar class="app-command-bar" @open-templates="handleOpenTemplates" @open-scripts="handleOpenScripts" @open-env="handleOpenEnv" @settings="handleSettings" />
     </div>
   </div>
 </template>

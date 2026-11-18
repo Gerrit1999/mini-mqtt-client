@@ -75,7 +75,6 @@ const AUTO_COLLAPSE_DRAG_THRESHOLD = 48;
 const AUTO_EXPAND_DRAG_THRESHOLD = 32;
 const PANEL_SIZE_TRANSITION_DURATION = 160;
 const RESIZER_SIZE = 6;
-const RESIZER_MARGIN = 4;
 
 let resizeStartPosition = 0;
 let resizeStartPublishSize = 0;
@@ -126,7 +125,6 @@ function getMaxPublishPanelSize(): number {
     (isHorizontal.value ? container.clientWidth : container.clientHeight) -
     startPadding -
     endPadding;
-  const resizerOccupiedSize = RESIZER_SIZE + RESIZER_MARGIN * 2;
   const minimumPublishSize = isHorizontal.value
     ? MIN_PUBLISH_PANEL_WIDTH
     : MIN_PUBLISH_PANEL_HEIGHT;
@@ -136,7 +134,7 @@ function getMaxPublishPanelSize(): number {
 
   return Math.max(
     minimumPublishSize,
-    availableSize - minimumMessageSize - resizerOccupiedSize
+    availableSize - minimumMessageSize - RESIZER_SIZE
   );
 }
 
@@ -278,8 +276,23 @@ onBeforeUnmount(() => {
 .main-content {
   display: flex;
   height: 100%;
-  padding: 12px 16px;
   overflow: hidden;
+  background: var(--card-bg);
+
+  :deep(.app-card) {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  :deep(.panel-header) {
+    background: var(--sidebar-bg);
+  }
+
+  :deep(.panel-title) {
+    font-size: 14px;
+    font-weight: 600;
+  }
 }
 
 .main-content.is-horizontal {
@@ -305,8 +318,7 @@ onBeforeUnmount(() => {
 }
 
 .panel-resizer {
-  border-radius: 6px;
-  background: transparent;
+  background: var(--sidebar-bg);
   flex-shrink: 0;
   position: relative;
   transition: background-color 0.2s ease;
@@ -322,29 +334,31 @@ onBeforeUnmount(() => {
   }
 
   &:hover {
-    background-color: var(--sidebar-hover);
+    background-color: var(--primary-light);
+  }
+
+  &:hover::before {
+    background-color: var(--primary-color);
   }
 }
 
 .is-horizontal .panel-resizer {
   width: 6px;
-  margin: 0 4px;
   cursor: col-resize;
 
   &::before {
-    width: 2px;
-    height: 32px;
+    width: 1px;
+    height: 100%;
   }
 }
 
 .is-vertical .panel-resizer {
   height: 6px;
-  margin: 4px 0;
   cursor: row-resize;
 
   &::before {
-    width: 32px;
-    height: 2px;
+    width: 100%;
+    height: 1px;
   }
 }
 

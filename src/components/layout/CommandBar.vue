@@ -63,6 +63,9 @@
       <el-button size="small" :icon="Document" text @click="handleOpenScripts">
         {{ $t('publish.openScripts') }}
       </el-button>
+      <el-tooltip :content="$t('header.settings')" placement="top">
+        <el-button size="small" text :icon="Setting" :aria-label="$t('header.settings')" @click="emit('settings')" />
+      </el-tooltip>
     </div>
   </div>
 </template>
@@ -70,7 +73,7 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Histogram, Plus, FolderOpened, Document, Key } from "@element-plus/icons-vue";
+import { Histogram, Plus, FolderOpened, Document, Key, Setting } from "@element-plus/icons-vue";
 import {
   useTemplateStore,
   type CommandTemplate,
@@ -119,6 +122,7 @@ async function handleQuickSend(template: CommandTemplate) {
 }
 
 const emit = defineEmits<{
+  settings: []
   openTemplates: []
   openScripts: []
   openEnv: []

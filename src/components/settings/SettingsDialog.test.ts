@@ -5,6 +5,7 @@ import ElementPlus, { ElDialog, ElSwitch, ElButton, ElMessage, ElMessageBox } fr
 import { defineComponent, h, type VNode } from 'vue'
 import i18n, { loadLocaleMessages } from '@/i18n'
 import SettingsDialog from './SettingsDialog.vue'
+import { useAppStore } from '@/stores/app'
 import { useUpdaterStore } from '@/stores/updater'
 
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '1.8.1' }))
@@ -15,6 +16,43 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: async (command: string) => comm
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ theme: async () => 'light', onThemeChanged: async () => () => {} }) }))
 beforeEach(() => { localStorage.clear(); setActivePinia(createPinia()) })
 afterEach(() => vi.restoreAllMocks())
+
+it('previews accent changes, saves across restarts and rolls back a cancelled reset', async () => {
+  const app = useAppStore()
+  const wrapper = shallowMount(SettingsDialog, {
+    props: { visible: true },
+    global: {
+      renderStubDefaultSlot: true,
+      stubs: { ElDialog: { name: 'ElDialog', template: '<div><slot/><slot name="footer"/></div>' } },
+      plugins: [ElementPlus, i18n],
+    },
+  })
+  const open = async () => {
+    wrapper.getComponent(ElDialog).vm.$emit('open')
+    await flushPromises()
+  }
+  try {
+    await open()
+    await wrapper.get('#settings-accent').setValue('#006688')
+    expect(document.documentElement.style.getPropertyValue('--accent-source')).toBe('#006688')
+    expect(localStorage.getItem('mqtt-client-accent')).toBeNull()
+    const save = wrapper.findAllComponents(ElButton).find(button => button.text() === i18n.global.t('common.save'))!
+    await save.trigger('click')
+    await flushPromises()
+    expect(localStorage.getItem('mqtt-client-accent')).toBe('#006688')
+    const restarted = useAppStore(createPinia())
+    await restarted.initTheme()
+    expect(restarted.accentColor).toBe('#006688')
+    await open()
+    await wrapper.get('.accent-row .el-button, .accent-row el-button-stub').trigger('click')
+    expect(document.documentElement.hasAttribute('data-custom-accent')).toBe(false)
+    wrapper.getComponent(ElDialog).vm.$emit('close')
+    expect(document.documentElement.style.getPropertyValue('--accent-source')).toBe('#006688')
+  } finally {
+    wrapper.unmount()
+    app.saveAccentColor('')
+  }
+})
 
 it.each(['en-US', 'zh-CN'] as const)('shows the actual skipped version after a manual settings check (%s)', async locale => {
   localStorage.setItem('mqtt-client-update-skipped-version', '1.9.0')

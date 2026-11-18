@@ -312,26 +312,29 @@ function handleSaved() {
 }
 
 .drawer-toolbar {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--app-border-color);
   flex-shrink: 0;
 }
 
 .drawer-toolbar .el-input {
-  flex: 1;
+  min-width: 0;
+  grid-column: 1 / -1;
 }
 
 .drawer-scope-select {
-  width: 130px;
-  flex-shrink: 0;
+  width: 100%;
 }
 
 .category-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--app-border-color);
   flex-shrink: 0;
 }
 
@@ -349,21 +352,13 @@ function handleSaved() {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-right: 4px;
+  min-height: 0;
 }
 
 .template-card {
   background-color: var(--card-bg);
-  border: 1px solid var(--app-border-color);
-  border-radius: 8px;
-  padding: 14px;
-  transition: all 0.2s ease;
-
-  &:hover {
-    border-color: var(--primary-color);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  }
+  border-bottom: 1px solid var(--app-border-color);
+  padding: 14px 4px;
 }
 
 .card-header {

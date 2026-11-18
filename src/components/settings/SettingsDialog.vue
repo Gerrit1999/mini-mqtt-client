@@ -2,15 +2,27 @@
   <el-dialog
     v-model="dialogVisible"
     :title="$t('settings.title')"
-    width="640px"
+    width="800px"
     :close-on-click-modal="false"
     class="settings-dialog"
     @open="loadSettings"
     @close="handleClose"
   >
+    <nav class="settings-nav" :aria-label="$t('settings.title')">
+      <button
+        v-for="group in settingsGroups"
+        :key="group.id"
+        type="button"
+        :aria-pressed="activeGroup === group.id"
+        @click="activeGroup = group.id"
+      >
+        <el-icon aria-hidden="true"><component :is="group.icon" /></el-icon>
+        {{ $t(`settings.groups.${group.id}`) }}
+      </button>
+    </nav>
     <div class="settings-content">
       <!-- 主题设置 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'general'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.theme.title') }}</div>
           <div class="setting-desc">{{ $t('settings.theme.desc') }}</div>
@@ -33,10 +45,22 @@
             {{ $t('settings.theme.auto') }}
           </el-radio-button>
         </el-radio-group>
+        <div class="accent-row">
+          <label for="settings-accent">{{ $t('settings.theme.accent') }}</label>
+          <input
+            id="settings-accent"
+            type="color"
+            :value="currentAccent || '#5345c9'"
+            @input="setAccent(($event.target as HTMLInputElement).value)"
+          />
+          <el-button size="small" text :disabled="!currentAccent" @click="setAccent('')">
+            {{ $t('settings.theme.resetAccent') }}
+          </el-button>
+        </div>
       </div>
 
       <!-- 语言设置 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'general'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.language.title') }}</div>
           <div class="setting-desc">{{ $t('settings.language.desc') }}</div>
@@ -60,7 +84,7 @@
       </div>
 
       <!-- 内容布局 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'general'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.layout.title') }}</div>
           <div class="setting-desc">{{ $t('settings.layout.desc') }}</div>
@@ -76,7 +100,7 @@
       </div>
 
       <!-- 消息设置 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'messages'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.messages.title') }}</div>
           <div class="setting-desc">{{ $t('settings.messages.desc') }}</div>
@@ -132,7 +156,7 @@
       </div>
 
       <!-- MQTT 设置 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'messages'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.mqtt.title') }}</div>
           <div class="setting-desc">{{ $t('settings.mqtt.desc') }}</div>
@@ -153,7 +177,7 @@
       </div>
 
       <!-- 数据存储设置 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'storage'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.storage.title') }}</div>
           <div class="setting-desc">{{ $t('settings.storage.desc') }}</div>
@@ -183,7 +207,7 @@
       </div>
 
       <!-- 日志设置 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'storage'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.log.title') }}</div>
           <div class="setting-desc">{{ $t('settings.log.desc') }}</div>
@@ -202,7 +226,7 @@
       </div>
 
       <!-- 检查更新 -->
-      <div class="setting-section">
+      <div v-show="activeGroup === 'updates'" class="setting-section">
         <div class="setting-header">
           <div class="setting-title">{{ $t('settings.update.title') }}</div>
           <div class="setting-desc">{{ $t('settings.update.currentVersion') }}: v{{ currentVersion }}</div>
@@ -257,7 +281,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sunny, Moon, Platform, FolderOpened, CopyDocument, Delete, Refresh } from '@element-plus/icons-vue'
+import { Sunny, Moon, Platform, FolderOpened, CopyDocument, Delete, Refresh, Setting, ChatLineSquare } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -292,6 +316,14 @@ const mqttStore = useMqttStore()
 const messageStore = useMessageStore()
 const { t } = useI18n()
 
+const settingsGroups = [
+  { id: 'general', icon: Setting },
+  { id: 'messages', icon: ChatLineSquare },
+  { id: 'storage', icon: FolderOpened },
+  { id: 'updates', icon: Refresh },
+] as const
+const activeGroup = ref<(typeof settingsGroups)[number]['id']>('general')
+
 const dialogVisible = computed({
   get: () => props.visible,
   set: (val) => emit('update:visible', val)
@@ -301,6 +333,7 @@ const dialogVisible = computed({
 const saving = ref(false)
 const currentTheme = ref<Theme>('light')
 const originalTheme = ref<Theme>('light')
+const currentAccent = ref('')
 const currentLocale = ref<Locale>('auto')
 const originalLocale = ref<Locale>('auto')
 const currentContentLayout = ref<ContentLayout>('horizontal')
@@ -326,6 +359,7 @@ const cleaningMessages = ref(false)
 // 是否有更改
 const hasChanges = computed(() => {
   return currentTheme.value !== originalTheme.value || 
+         currentAccent.value !== appStore.accentColor ||
          currentLocale.value !== originalLocale.value ||
          currentContentLayout.value !== originalContentLayout.value ||
          currentMessageLimit.value !== originalMessageLimit.value ||
@@ -337,15 +371,17 @@ const hasChanges = computed(() => {
          newDataPath.value !== ''
 })
 useUpdateProtection('settings', () => props.visible && hasChanges.value ? JSON.stringify([
-  currentTheme.value, currentLocale.value, currentContentLayout.value, currentMessageLimit.value,
+  currentTheme.value, currentAccent.value, currentLocale.value, currentContentLayout.value, currentMessageLimit.value,
   currentMqttPacketSizeLimitKb.value, currentMessageRetentionDays.value, currentMessageRetentionCount.value,
   currentAutoCheck.value, currentAutoDownload.value, newDataPath.value,
 ]) : false)
 
 // 加载设置
 async function loadSettings() {
+  activeGroup.value = 'general'
   currentTheme.value = appStore.theme
   originalTheme.value = appStore.theme
+  currentAccent.value = appStore.accentColor
   currentLocale.value = appStore.locale
   originalLocale.value = appStore.locale
   currentContentLayout.value = appStore.contentLayout
@@ -406,6 +442,11 @@ async function loadSettings() {
 // 主题变化
 function handleThemeChange(theme: Theme) {
   appStore.setTheme(theme)
+}
+
+function setAccent(color: string) {
+  currentAccent.value = color
+  appStore.previewAccentColor(color)
 }
 
 // 语言变化
@@ -581,6 +622,7 @@ async function handleSave() {
     originalAutoCheck.value = currentAutoCheck.value
     originalAutoDownload.value = currentAutoDownload.value
     originalTheme.value = currentTheme.value
+    if (currentAccent.value !== appStore.accentColor) appStore.saveAccentColor(currentAccent.value)
     originalLocale.value = currentLocale.value
     newDataPath.value = ''
     dialogVisible.value = false
@@ -595,6 +637,7 @@ async function handleSave() {
 
 // 关闭对话框
 function handleClose() {
+  if (currentAccent.value !== appStore.accentColor) setAccent(appStore.accentColor)
   // 如果主题已更改但未保存，恢复原始主题
   if (currentTheme.value !== originalTheme.value && !saving.value) {
     appStore.setTheme(originalTheme.value)
@@ -621,35 +664,74 @@ async function handleCheckUpdate() {
 
 <style scoped lang="scss">
 :global(.settings-dialog) {
-  max-height: calc(100vh - 96px);
+  height: min(530px, calc(100vh - 32px));
+  max-height: calc(100vh - 32px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  margin: 48px auto;
+  margin: max(16px, calc((100vh - 530px) / 2)) auto;
+  padding: 0;
+  background: var(--card-bg);
+}
+
+:global(.settings-dialog .el-dialog__header),
+:global(.settings-dialog .el-dialog__footer) {
+  padding: 14px 20px;
 }
 
 :global(.settings-dialog .el-dialog__body) {
-  padding-top: 12px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  padding: 0;
+  overflow: hidden;
   flex: 1;
   min-height: 0;
+  display: grid;
+  grid-template-columns: 174px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--app-border-color);
+  background: var(--sidebar-bg);
+  overflow: auto;
+
+  button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: var(--app-control-radius);
+    background: transparent;
+    color: var(--app-text-secondary);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+
+    &:hover { background: var(--sidebar-hover); }
+    &:focus-visible { outline: 2px solid var(--primary-color); }
+    &[aria-pressed='true'] {
+      color: var(--primary-color);
+      background: var(--primary-light);
+      font-weight: 600;
+    }
+  }
 }
 
 .settings-content {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+  overflow: auto;
+  padding: 0 22px;
 }
 
 .setting-section {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 16px 18px;
-  border: 1px solid var(--app-border-color);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
+  padding: 16px 0;
+  border-bottom: 1px solid var(--app-border-color);
 }
 
 .setting-header {
@@ -675,6 +757,7 @@ async function handleCheckUpdate() {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: space-between;
 }
 
 .setting-label {
@@ -688,11 +771,13 @@ async function handleCheckUpdate() {
 }
 
 .message-setting-row {
-  gap: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 30px;
+  gap: 6px;
 }
 
 .limit-input {
-  width: 180px;
+  width: 118px;
 }
 
 .setting-unit {
@@ -751,11 +836,38 @@ async function handleCheckUpdate() {
   }
 }
 
-:deep(.el-radio-group) {
-  overflow: hidden;
+.accent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
 }
 
-:deep(.el-dialog__footer .el-button + .el-button) {
-  margin-left: 5px;
+.accent-row input {
+  width: 38px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--app-border-color);
+  border-radius: var(--app-control-radius);
+  background: var(--card-bg);
+  cursor: pointer;
+}
+
+@media (max-width: 660px) {
+  :global(.settings-dialog .el-dialog__body) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--app-border-color);
+    padding: 6px;
+
+    button { white-space: nowrap; }
+  }
+
+  .settings-content { padding: 0 14px; }
 }
 </style>

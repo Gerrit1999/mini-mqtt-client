@@ -16,7 +16,6 @@ common:
   info: Info
 
 header:
-  welcome: Welcome to Mini MQTT Client
   connect: Connect
   disconnect: Disconnect
   connecting: Connecting
@@ -98,9 +97,16 @@ sidebar:
       placeholder: Replace + and # with concrete levels
 
 settings:
+  groups:
+    general: General
+    messages: Messages & MQTT
+    storage: Storage & logs
+    updates: Updates
   title: Settings
   theme:
     title: Appearance
+    accent: Accent color
+    resetAccent: Use default
     desc: Select the application theme, takes effect immediately
     light: Light
     dark: Dark
