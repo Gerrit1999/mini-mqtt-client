@@ -17,13 +17,13 @@
       <el-tag :type="statusTagType" size="small" effect="plain">{{ statusText }}</el-tag>
     </div>
 
-    <!-- 中间：协议和配置信息 -->
-    <div class="header-center">
+    <div class="header-controls">
       <el-tag size="small" type="info" effect="plain">
         MQTT {{ displayedProtocolVersion }}
       </el-tag>
       <el-tag
         v-if="activeServer.server.use_tls"
+        class="tls-tag"
         size="small"
         type="success"
         effect="plain"
@@ -33,10 +33,6 @@
       <el-tag size="small" effect="plain">
         Keep Alive: {{ activeServer.server.keep_alive }}s
       </el-tag>
-    </div>
-
-    <!-- 右侧：操作按钮 -->
-    <div class="header-right">
       <el-button
         v-if="connectionStatus === 'disconnected' || connectionStatus === 'error'"
         type="primary"
@@ -263,25 +259,26 @@ const handleDisconnect = async () => {
   line-height: 1.3;
 }
 
-.header-center {
-  display: flex;
+.header-controls {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   align-items: center;
-  gap: 8px;
+  gap: var(--app-control-gap);
+  margin-inline-start: auto;
+
+  &:has(> .tls-tag) {
+    grid-template-columns: 1fr max-content 1fr 1fr;
+  }
 }
 
 .header-left,
-.header-center {
+.header-controls {
   :deep(.el-tag) {
     height: var(--app-control-height-small);
     padding: 0 var(--app-control-padding-x-small);
     border-radius: var(--app-control-radius);
   }
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .status-indicator {

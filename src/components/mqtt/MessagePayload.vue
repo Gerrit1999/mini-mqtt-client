@@ -2,11 +2,8 @@
   <div class="message-payload" :class="{ preview, expanded: !preview, 'full-preview': isFormattedJsonPreview }">
     <!-- JSON 格式 -->
     <div v-if="effectiveFormat === 'json'" class="payload-content json-content">
-      <pre
-        v-if="shouldHighlight"
-        v-html="highlightText(preview ? previewDisplayPayload : detailDisplayPayload)"
-      />
-      <pre v-else>{{ preview ? previewDisplayPayload : detailDisplayPayload }}</pre>
+      <pre v-if="shouldHighlight" v-html="highlightText(formattedJsonPayload)" />
+      <pre v-else>{{ formattedJsonPayload }}</pre>
     </div>
 
     <!-- 二进制/HEX 格式 -->

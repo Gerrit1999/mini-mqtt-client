@@ -33,6 +33,21 @@ describe("MessagePayload JSON formatting", () => {
       '{"id":9223372036854775807'
     );
   });
+
+  it("keeps highlighted JSON details valid after indentation", () => {
+    const wrapper = mount(MessagePayload, {
+      props: {
+        payload: '{"id":9223372036854775807}',
+        payloadType: "json",
+        formatJson: true,
+        preview: false,
+        highlightKeyword: "id",
+      },
+    });
+
+    expect(wrapper.get("mark").text()).toBe("id");
+    expect(wrapper.get("pre").text()).toBe('{\n  "id": 9223372036854775807\n}');
+  });
 });
 
 describe("MessagePayload Base64 display", () => {

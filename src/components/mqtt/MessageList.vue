@@ -185,14 +185,14 @@
                   {{ $t('script.testError') }}
                 </el-tag>
                 <el-tag
+                  class="msg-meta-tag"
                   size="small"
                   effect="plain"
                   :type="getFormatTagType(getMessageFormat(msg))"
-                  class="format-tag"
                 >
                   {{ getFormatLabel(getMessageFormat(msg), msg) }}
                 </el-tag>
-                <el-tag size="small" effect="plain">Q{{ msg.qos }}</el-tag>
+                <el-tag class="msg-meta-tag" size="small" effect="plain">Q{{ msg.qos }}</el-tag>
                 <el-tag v-if="msg.retain" size="small" type="warning" effect="plain">
                   R
                 </el-tag>
@@ -303,12 +303,19 @@
                   {{ option.label }}
                 </el-radio-button>
               </el-radio-group>
-              <el-button size="small" text :icon="CopyDocument" @click="copyPayload">
+              <el-switch
+                v-if="detailPayloadFormat === 'json'"
+                v-model="detailFormatJson"
+                size="small"
+                :active-text="$t('messages.formatJson')"
+                :aria-label="$t('messages.formatJson')"
+              />
+              <el-button size="small" plain :icon="CopyDocument" @click="copyPayload">
                 {{ $t('messages.copyPayload') }}
               </el-button>
               <el-button
                 size="small"
-                text
+                plain
                 :icon="Promotion"
                 @click="copyToPublish"
               >
@@ -320,7 +327,7 @@
             :payload="selectedMessage.payload"
             :preview="false"
             :payload-type="detailPayloadFormat"
-            :format-json="formatJsonPayload"
+            :format-json="detailFormatJson"
             :highlight-keyword="searchKeyword.trim()"
             :search-match-case="searchMatchCase"
             :search-whole-word="searchWholeWord"
@@ -503,6 +510,7 @@ const formatJsonPayload = ref(false);
 const showDetailDialog = ref(false);
 const selectedMessage = ref<MqttMessage | null>(null);
 const detailPayloadFormat = ref<PayloadFormat>("text");
+const detailFormatJson = ref(true);
 const detailPayloadFormatOptions = [
   { label: "TEXT", value: "text" },
   { label: "JSON", value: "json" },
@@ -1535,21 +1543,19 @@ watch(
 .msg-meta {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.format-tag {
-  font-size: 10px;
-  padding: 0 6px;
-  height: 18px;
-  line-height: 18px;
+.msg-meta-tag {
+  width: 60px;
+  justify-content: center;
 }
 
 .msg-time {
-  font-size: 11px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--app-text-secondary);
-  margin-left: 2px;
 }
 
 .message-body {
@@ -1622,6 +1628,8 @@ watch(
 
 .payload-header {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: space-between;
   align-items: center;
 }
@@ -1634,7 +1642,19 @@ watch(
 
 .payload-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-control-gap);
+
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
+}
+
+.payload-format-selector :deep(.el-radio-button__inner) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .topic-code {
