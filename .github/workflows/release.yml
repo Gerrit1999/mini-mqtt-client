@@ -1,0 +1,219 @@
+name: Release Tauri App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      platform:
+        required: true
+        type: string
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: true
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.inputs.outputs.tag }}
+      platform: ${{ steps.inputs.outputs.platform }}
+      matrix: ${{ steps.inputs.outputs.matrix }}
+      commit: ${{ steps.source.outputs.commit }}
+      wix: ${{ steps.source.outputs.wix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Validate tag, platform and workflow ref
+        id: inputs
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          PLATFORM: ${{ github.event_name == 'push' && 'all' || inputs.platform }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python scripts/release.py inputs -- "$TAG" "$PLATFORM" "$DEFAULT_BRANCH"
+
+      - name: Check out source tag for a repair
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/tags/${{ steps.inputs.outputs.tag }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Check all source versions and pin the build commit
+        id: source
+        env:
+          TAG: ${{ steps.inputs.outputs.tag }}
+          SOURCE: ${{ github.event_name == 'workflow_dispatch' && 'release-source' || '.' }}
+        run: python scripts/release.py source "$TAG" "$SOURCE"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: release-source
+    steps:
+      - name: Check out release tooling
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: release-source
+          persist-credentials: false
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: release-source/package-lock.json
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install both macOS targets
+        if: matrix.platform == 'macos'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: release-source/src-tauri -> target
+          shared-key: release-${{ matrix.platform }}
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: npm ci
+
+      - name: Build and sign Tauri bundles
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PLATFORM: ${{ matrix.platform }}
+          WIX_CONFIG: ${{ needs.prepare.outputs.wix }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          args=()
+          case "$PLATFORM" in
+            macos) args+=(--target universal-apple-darwin) ;;
+            linux)
+              # Old Tauri bundlers do not normalize SemVer for deb/rpm.
+              case "${TAG#v}" in *[-+]*) args+=(--bundles appimage) ;; esac
+              ;;
+            windows)
+              if [[ -n "$WIX_CONFIG" ]]; then
+                printf '%s\n' "$WIX_CONFIG" > .release-wix.json
+                args+=(--config .release-wix.json)
+              fi
+              ;;
+          esac
+          npm run tauri -- build "${args[@]}" -- --locked
+
+      - name: Check and collect bundles
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          bundle=src-tauri/target/release/bundle
+          if [[ "$PLATFORM" == macos ]]; then
+            bundle=src-tauri/target/universal-apple-darwin/release/bundle
+            app="$bundle/macos/Mini MQTT Client.app/Contents"
+            binary=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
+            lipo "$app/MacOS/$binary" -verify_arch x86_64 arm64
+          fi
+          python ../scripts/release.py collect "$TAG" "$PLATFORM" "$bundle" ../release-assets
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-${{ matrix.platform }}
+          path: release-assets/
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: tauri-release-publish
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check out source for release metadata and updater key
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: release-source
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: release-*
+          # The action extracts a single artifact directly into path.
+          path: ${{ needs.prepare.outputs.platform == 'all' && 'release-artifacts' || format('release-artifacts/release-{0}', needs.prepare.outputs.platform) }}
+
+      - name: Install updater signature verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+      - name: Verify artifacts and update GitHub Release
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          PLATFORM: ${{ needs.prepare.outputs.platform }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=()
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then args+=(--repair); fi
+          python scripts/release.py publish "$TAG" "$COMMIT" "$PLATFORM" release-artifacts --source release-source "${args[@]}"

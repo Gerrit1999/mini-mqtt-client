@@ -10,15 +10,20 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: 'lts/*'
           cache: 'npm'
@@ -28,3 +33,24 @@ jobs:
 
       - name: Build (vue-tsc + vite)
         run: npm run build
+
+  release-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Test release scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          python -B -m unittest discover -s scripts -p 'test_release.py'
+
+      - name: Lint Actions workflows
+        # GitHub supports concurrency.queue. actionlint's schema still lags it.
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11 -ignore '^unexpected key "queue" for "concurrency" section\.'

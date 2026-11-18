@@ -8,7 +8,6 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "updater:json": "node scripts/generate-updater-json.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

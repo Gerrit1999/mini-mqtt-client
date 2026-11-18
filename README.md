@@ -133,13 +133,21 @@ npm run tauri -- build --no-bundle -- --locked
 
 ### 发布安装包与自动更新
 
-项目的 [Build Tauri App 工作流](.github/workflows/build.yml) 在推送 `v*` 标签时构建 Windows、Linux 和 macOS Universal 安装包，并上传到 GitHub Release。
+1. 同步 `package.json`、`package-lock.json` 的根版本和根包版本、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 中的本项目版本，以及 `src-tauri/tauri.conf.json`。从包含发布工作流的提交推送 `v<SemVer>` 标签，例如 `v1.9.0` 或 `v1.9.0-rc.1`。
+2. [Release Tauri App](.github/workflows/release.yml) 构建 Windows x64、Linux x64 和 macOS Universal。可在标签对应提交中放置 `.github/release-notes/<tag>.md`。文件缺省时由 GitHub 生成发布说明。
+3. 三个平台全部成功后，发布任务校验安装包和 Tauri 签名，生成一份 `latest.json` 和覆盖全部最终资产的 `SHA256SUMS.txt`（校验和文件本身除外），上传到同一个草稿后再公开。预发布和低于当前 Latest 的正式版会保留在 Releases 列表中。现有公开版本的标签任务重跑时保留原发布。
 
-发布前同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和两个锁文件中的项目版本，并配置工作流使用的 `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` Secrets。本地打包命令为 `npm run tauri -- build -- --locked`，同样需要配置更新签名密钥。
+在 Actions Secrets 中配置与客户端公钥配对的 `TAURI_SIGNING_PRIVATE_KEY`，密钥有密码时再配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。同一把私钥用于后续版本。本地签名打包命令为 `npm run tauri -- build -- --locked`。
 
-自动更新使用 [Tauri updater 的签名校验](https://v2.tauri.app/plugin/updater/)。每次发布使用与客户端公钥对应的同一把私钥，保留安装包、更新包、`.sig` 文件和 `latest.json`；macOS 更新包为 `.app.tar.gz`，Linux 更新包为 `.AppImage`。
+客户端通过固定的 [Latest Release 的 latest.json](https://github.com/Gerrit1999/mini-mqtt-client/releases/latest/download/latest.json) 获取更新。默认更新包为 Windows NSIS、Linux AppImage 和 macOS Universal `.app.tar.gz`，后者同时服务 Intel 和 Apple Silicon。正式版还包含 MSI、deb、RPM 与 DMG。带预发布后缀或构建元数据的版本在 Linux 上只生成 AppImage，以避开当前 Tauri 打包器的 deb/RPM 版本排序及格式限制。签名由客户端和发布任务分别验证，历史补建使用指定标签的公钥。
 
-客户端通过 [最新 Release 的 latest.json](https://github.com/Gerrit1999/mini-mqtt-client/releases/latest/download/latest.json) 获取版本和更新说明。
+#### 重跑与补建
+
+- 构建或发布失败时，在原运行中选择 **Re-run failed jobs**。发布任务会复用成功的构建产物，并继续更新同一草稿。构建产物保留 14 天。产物过期后可重跑整个标签运行。
+- 在默认分支运行 [Repair Tauri Release](.github/workflows/release-repair.yml)，填写已存在 Release 的标签，并选择 `all`、`windows`、`linux` 或 `macos`。例如 `gh workflow run release-repair.yml --ref main -f tag=v1.8.3 -f platform=macos`。工作流和校验脚本来自默认分支，构建源码来自指定标签。标签须通过当前版本和打包格式检查。
+- 补建保留 Release 的草稿、预发布和 Latest 状态，以及其他平台现有资产和更新条目。已公开安装包只有在同名文件的 SHA-256 一致时才会复用；会重新验证并保留其旧签名，避免仅签名时间戳变化就导致冲突。安装包内容不同需要发布新版本。启用 GitHub immutable releases 后，已公开版本的资产由 GitHub 锁定。替换更新清单时，固定下载地址可能短暂不可用；补建重跑会先恢复中断前的清单，即使新安装包随后因冲突被拒绝。
+- 同版本构建和所有版本的发布任务分别串行排队，防止本流水线互相覆盖资产或回退 Latest。发布期间不要手动移动版本标签或通过其他流程并发修改同一 Release / Latest；GitHub API 不提供跨这些操作的原子事务。
+- 迁移时在仓库 Actions 中停用历史的 **Build Tauri App**（旧 `build.yml`）工作流，使历史 ref 或旧工作流 ID 也无法手动触发旧流程。新发布和补建使用两个新的工作流 ID。
 
 ## 技术栈
 

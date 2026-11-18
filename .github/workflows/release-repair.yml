@@ -1,0 +1,26 @@
+name: Repair Tauri Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag (e.g. v1.8.3)'
+        required: true
+        type: string
+      platform:
+        description: 'Platform to rebuild'
+        required: true
+        type: choice
+        options: [all, windows, linux, macos]
+
+jobs:
+  repair:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ inputs.tag }}
+      platform: ${{ inputs.platform }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
