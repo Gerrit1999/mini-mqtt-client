@@ -1,5 +1,5 @@
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Header from "./Header.vue";
 
 const mqttState = vi.hoisted(() => ({
@@ -11,7 +11,8 @@ const mqttState = vi.hoisted(() => ({
   disconnect: vi.fn(),
 }));
 
-vi.mock("vue-i18n", () => ({
+vi.mock("vue-i18n", async (importOriginal) => ({
+  ...await importOriginal<typeof import("vue-i18n")>(),
   useI18n: () => ({
     t: (key: string, params?: Record<string, unknown>) =>
       params ? `${key} ${Object.values(params).join(" ")}` : key,
@@ -67,6 +68,7 @@ describe("Header", () => {
     mqttState.error = undefined;
     mqttState.disconnect.mockReset();
   });
+  afterEach(() => vi.restoreAllMocks());
 
   it("连接后显示后端确认的实际 MQTT 协议版本", () => {
     const wrapper = mount(Header, {
@@ -114,5 +116,22 @@ describe("Header", () => {
     expect(disconnectButton).toBeDefined();
     await disconnectButton!.trigger("click");
     expect(mqttState.disconnect).toHaveBeenCalledWith(1);
+  });
+
+  it("重连时显示系统错误类别和原文", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    mqttState.status = "reconnecting";
+    mqttState.error = "Connection error: I/O: 远程主机强迫关闭了一个现有的连接。 (os error 10054)";
+    const wrapper = mount(Header, {
+      global: {
+        mocks: { $t: (key: string) => key },
+        stubs: {
+          ElTag: { template: "<span><slot /></span>" },
+          ElButton: { template: "<button><slot /></button>" },
+        },
+      },
+    });
+
+    expect(wrapper.get(".reconnect-detail").text()).toBe(`Connection reset: ${mqttState.error}`);
   });
 });

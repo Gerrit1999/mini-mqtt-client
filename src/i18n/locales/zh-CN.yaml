@@ -436,6 +436,12 @@ errors:
   receiveOverflow: "接收队列溢出：已丢弃 {count} 条消息（显示和历史记录）。"
   receiveFailed: "部分接收消息处理或保存失败，后续批次将继续处理。"
   connectFailed: 连接失败
+  mqttSocket:
+    CONNECTION_REFUSED: 连接被拒绝：{details}
+    CONNECTION_TIMEOUT: 连接超时：{details}
+    CONNECTION_RESET: 连接被重置：{details}
+    DISCONNECTED: 连接已中止：{details}
+    DNS_ERROR: 无法解析服务器地址：{details}
   disconnectFailed: 断开失败
   publishFailed: 发布失败
   subscribeFailed: 订阅失败

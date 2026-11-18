@@ -121,6 +121,77 @@ const mqttErrorMap: Record<string, MqttErrorInfo> = {
   }
 }
 
+const mqttOsErrors = {
+  CONNECTION_REFUSED: mqttErrorMap.connection_refused,
+  CONNECTION_TIMEOUT: mqttErrorMap.connection_timeout,
+  CONNECTION_RESET: {
+    code: 'CONNECTION_RESET',
+    message: '连接被重置',
+    suggestion: '请检查服务器和网络连接后重试'
+  },
+  DISCONNECTED: mqttErrorMap.disconnected,
+  DNS_ERROR: {
+    code: 'DNS_ERROR',
+    message: '无法解析服务器地址',
+    suggestion: '请检查服务器主机名和 DNS 设置'
+  }
+} satisfies Record<string, MqttErrorInfo>
+
+type MqttOsErrorCode = keyof typeof mqttOsErrors
+type OsErrorCodes = Partial<Record<number, MqttOsErrorCode>>
+
+const windowsErrorCodes: OsErrorCodes = {
+  10053: 'DISCONNECTED',
+  10054: 'CONNECTION_RESET',
+  10060: 'CONNECTION_TIMEOUT',
+  10061: 'CONNECTION_REFUSED',
+  11001: 'DNS_ERROR',
+  11002: 'DNS_ERROR',
+  11003: 'DNS_ERROR',
+  11004: 'DNS_ERROR'
+}
+
+const linuxErrorCodes: OsErrorCodes = {
+  103: 'DISCONNECTED',
+  104: 'CONNECTION_RESET',
+  110: 'CONNECTION_TIMEOUT',
+  111: 'CONNECTION_REFUSED'
+}
+
+const macErrorCodes: OsErrorCodes = {
+  53: 'DISCONNECTED',
+  54: 'CONNECTION_RESET',
+  60: 'CONNECTION_TIMEOUT',
+  61: 'CONNECTION_REFUSED'
+}
+
+function matchMqttTextError(error: string): MqttErrorInfo | undefined {
+  const lowerError = error.toLowerCase()
+  return Object.entries(mqttErrorMap).find(([key]) => lowerError.includes(key))?.[1]
+}
+
+function getMqttOsErrorCode(error: string): MqttOsErrorCode | undefined {
+  const match = /\(os error (\d+)\)\s*$/.exec(error)
+  if (!match) return
+
+  // TLS、WebSocket 和英文错误详情沿用原有的文本处理。
+  if (matchMqttTextError(error) ||
+      /\b(?:tls|certificate|websocket|timed out|connection reset|connection aborted|failed to lookup|dns)\b/i.test(error)) {
+    return
+  }
+
+  const code = Number(match[1])
+  const platform = globalThis.navigator?.platform ?? ''
+  if (platform.startsWith('Win')) return windowsErrorCodes[code]
+  if (platform.startsWith('Linux')) return linuxErrorCodes[code]
+  if (platform.startsWith('Mac')) return macErrorCodes[code]
+}
+
+export function formatMqttOsError(error: string): string | undefined {
+  const code = getMqttOsErrorCode(error)
+  if (code) return i18n.global.t('errors.mqttSocket.' + code, { details: error })
+}
+
 /**
  * 处理 MQTT 错误
  * @param error 错误字符串
@@ -129,16 +200,13 @@ const mqttErrorMap: Record<string, MqttErrorInfo> = {
  * @returns MQTT 错误信息
  */
 export function handleMqttError(error: string, silent: boolean = false, context?: Record<string, unknown>): MqttErrorInfo {
-  const lowerError = error.toLowerCase()
-  
-  // 尝试匹配已知错误
-  for (const [key, info] of Object.entries(mqttErrorMap)) {
-    if (lowerError.includes(key)) {
-      if (!silent) {
-        errorHandler.handle({ message: `${info.message}: ${info.suggestion}`, reason: error, code: info.code }, ErrorType.MQTT, false, context)
-      }
-      return info
+  const osCode = getMqttOsErrorCode(error)
+  const info = osCode ? mqttOsErrors[osCode] : matchMqttTextError(error)
+  if (info) {
+    if (!silent) {
+      errorHandler.handle({ message: `${info.message}: ${info.suggestion}`, reason: error, code: info.code }, ErrorType.MQTT, false, context)
     }
+    return info
   }
 
   // 未知 MQTT 错误
@@ -187,7 +255,7 @@ export function getMqttStatusInfo(status: MqttConnectionStatus): {
  * @param errorCode 错误代码
  */
 export function getMqttErrorSuggestion(errorCode: string): string {
-  for (const info of Object.values(mqttErrorMap)) {
+  for (const info of [...Object.values(mqttErrorMap), ...Object.values(mqttOsErrors)]) {
     if (info.code === errorCode) {
       return info.suggestion
     }

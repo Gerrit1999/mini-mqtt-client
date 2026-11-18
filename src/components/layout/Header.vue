@@ -71,6 +71,7 @@ import { ElMessage } from "element-plus";
 import { useServerStore } from "@/stores/server";
 import { useMqttStore } from "@/stores/mqtt";
 import type { MqttServer } from "@/types/mqtt";
+import { formatMqttOsError } from "@/utils/mqttErrorHandler";
 
 const { t } = useI18n();
 
@@ -106,6 +107,9 @@ const connectionError = computed(() => {
 const localizedConnectionError = computed(() => {
   const error = connectionError.value;
   if (!error) return undefined;
+
+  const osError = formatMqttOsError(error);
+  if (osError) return osError;
 
   const mappings = [
     ["Connection error:", "header.connectionError.connectionLost"],

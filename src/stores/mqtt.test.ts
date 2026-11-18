@@ -99,6 +99,7 @@ describe("useMqttStore", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   describe("连接协议状态", () => {
@@ -135,6 +136,22 @@ describe("useMqttStore", () => {
       expect(store.getConnectionError(1)).toBe(
         "Unsupported MQTT protocol version: 4.0. Supported versions: 3.1.1, 5.0"
       );
+    });
+
+    it("连接失败通知解释系统错误码并保留后端原文", async () => {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+      const store = useMqttStore();
+      await store.initListeners();
+      const error = "Failed to connect: I/O: 不知道这样的主机。 (os error 11001)";
+
+      connectionStateListener!({ payload: { server_id: 1, status: "error", error } });
+
+      expect(store.getConnectionError(1)).toBe(error);
+      expect(translate).toHaveBeenCalledWith("errors.mqttSocket.DNS_ERROR", { details: error });
+      expect(ElMessage.error).toHaveBeenCalledWith({
+        message: "errors.mqttSocket.DNS_ERROR",
+        duration: 5000,
+      });
     });
 
     it("保存重连进度和最近错误且保留活跃订阅状态", async () => {

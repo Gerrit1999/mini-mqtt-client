@@ -436,6 +436,12 @@ errors:
   receiveOverflow: "Receive queue overflow: {count} messages dropped from display and history."
   receiveFailed: "Some received messages could not be processed or saved. Later batches will continue."
   connectFailed: Connection failed
+  mqttSocket:
+    CONNECTION_REFUSED: "Connection refused: {details}"
+    CONNECTION_TIMEOUT: "Connection timed out: {details}"
+    CONNECTION_RESET: "Connection reset: {details}"
+    DISCONNECTED: "Connection aborted: {details}"
+    DNS_ERROR: "Could not resolve the broker address: {details}"
   disconnectFailed: Disconnect failed
   publishFailed: Publish failed
   subscribeFailed: Subscribe failed

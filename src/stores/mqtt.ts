@@ -22,6 +22,7 @@ import type {
 import { ScriptEngine } from "@/utils/scriptEngine";
 import { clearScriptCache, getCachedScripts } from "@/utils/scriptCache";
 import { handleScriptError } from "@/utils/errorHandler";
+import { formatMqttOsError } from "@/utils/mqttErrorHandler";
 import i18n from "@/i18n";
 import { ReceiveQueue } from "@/utils/receiveQueue";
 import { useAppStore } from "@/stores/app";
@@ -363,7 +364,7 @@ export const useMqttStore = defineStore("mqtt", () => {
       // 如果有错误，使用 ElMessage 显示
       if (error && status === "error") {
         ElMessage.error({
-          message: `${i18n.global.t('errors.connectFailed')}: ${error}`,
+          message: formatMqttOsError(error) ?? `${i18n.global.t('errors.connectFailed')}: ${error}`,
           duration: 5000,
         });
       }
