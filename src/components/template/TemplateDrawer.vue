@@ -8,7 +8,6 @@
         :prefix-icon="Search"
         clearable
         size="default"
-        @input="handleSearch"
       />
       <el-select v-model="scopeFilter" class="drawer-scope-select" size="default">
         <el-option :label="$t('template.scopeFilterAll')" value="all" />
@@ -22,103 +21,97 @@
 
     <!-- 分类筛选 -->
     <div v-if="categories.length > 0" class="category-filter">
-      <el-tag
-        :type="!selectedCategory ? 'primary' : 'info'"
-        class="category-tag"
-        effect="plain"
-        @click="selectedCategory = null"
-      >
-        {{ $t('template.allCategories') }}
-      </el-tag>
-      <el-tag
-        v-for="cat in categories"
-        :key="cat"
-        :type="selectedCategory === cat ? 'primary' : 'info'"
-        class="category-tag"
-        effect="plain"
-        @click="selectedCategory = cat"
-      >
-        {{ cat }}
-      </el-tag>
+      <el-select-v2
+        v-model="selectedCategory"
+        :options="categoryOptions"
+        :placeholder="$t('template.allCategories')"
+        :aria-label="$t('template.category')"
+        clearable
+      />
     </div>
 
     <!-- 模板卡片列表 -->
-    <div class="template-cards" v-loading="loading">
-      <div
-        v-for="template in filteredTemplates"
-        :key="template.id"
-        class="template-card"
-      >
-        <div class="card-header">
-          <span class="card-title-row">
-            <span class="card-name">{{ template.name }}</span>
-            <el-tag
-              v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
-              size="small"
-              type="success"
-              effect="plain"
-              class="card-scope-tag"
-            >
-              {{ $t('template.global') }}
-            </el-tag>
-            <el-tag
-              v-else
-              size="small"
-              type="info"
-              effect="plain"
-              class="card-scope-tag"
-            >
-              {{ $t('template.connectionOnly') }}
-            </el-tag>
-          </span>
-          <el-dropdown trigger="click" @command="(cmd: string) => handleCommand(cmd, template)">
-            <el-button :icon="MoreFilled" text size="small" class="more-btn" />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="edit" :icon="Edit">{{ $t('common.edit') }}</el-dropdown-item>
-                <el-dropdown-item command="duplicate" :icon="CopyDocument">{{ $t('common.copy') }}</el-dropdown-item>
-                <el-dropdown-item command="delete" :icon="Delete" divided>
-                  <span style="color: var(--el-color-danger)">{{ $t('common.delete') }}</span>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-
-        <div class="card-topic">
-          <el-icon><Position /></el-icon>
-          <code>{{ template.topic }}</code>
-        </div>
-
-        <div class="card-payload">
-          <pre>{{ formatPayload(template.payload) }}</pre>
-        </div>
-
-        <div class="card-footer">
-          <div class="card-meta">
-            <el-tag size="small" :type="getPayloadTypeTag(template.payload_type)">
-              {{ template.payload_type.toUpperCase() }}
-            </el-tag>
-            <span class="meta-item">QoS {{ template.qos }}</span>
-            <span v-if="template.retain" class="meta-item retain">Retain</span>
+    <VirtualList
+      v-loading="loading"
+      class="template-cards"
+      :items="filteredTemplates"
+      :row-height="152"
+      :reset-key="JSON.stringify([serverId, searchKeyword, selectedCategory, scopeFilter])"
+      :aria-label="$t('template.drawerTitle')"
+      measure-rows
+    >
+      <template #default="{ item: template }">
+        <div class="template-card">
+          <div class="card-header">
+            <span class="card-title-row">
+              <span class="card-name">{{ template.name }}</span>
+              <el-tag
+                v-if="template.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+                size="small"
+                type="success"
+                effect="plain"
+                class="card-scope-tag"
+              >
+                {{ $t('template.global') }}
+              </el-tag>
+              <el-tag
+                v-else
+                size="small"
+                type="info"
+                effect="plain"
+                class="card-scope-tag"
+              >
+                {{ $t('template.connectionOnly') }}
+              </el-tag>
+            </span>
+            <el-dropdown trigger="click" @command="(cmd: string) => handleCommand(cmd, template)">
+              <el-button
+                :icon="MoreFilled"
+                :aria-label="`${$t('sidebar.actions')} ${template.name}`"
+                text size="small" class="more-btn"
+              />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="edit" :icon="Edit">{{ $t('common.edit') }}</el-dropdown-item>
+                  <el-dropdown-item command="duplicate" :icon="CopyDocument">{{ $t('common.copy') }}</el-dropdown-item>
+                  <el-dropdown-item command="delete" :icon="Delete" divided>
+                    <span style="color: var(--el-color-danger)">{{ $t('common.delete') }}</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
-          <el-button type="primary" size="small" @click="handleUse(template)">
-            {{ $t('publish.send') }}
-          </el-button>
-        </div>
-      </div>
 
-      <!-- 空状态 -->
-      <el-empty
-        v-if="!loading && filteredTemplates.length === 0"
-        :description="$t('template.noTemplate')"
-        :image-size="80"
-      >
-        <el-button type="primary" @click="handleCreate">
-          {{ $t('template.addTemplate') }}
-        </el-button>
-      </el-empty>
-    </div>
+          <div class="card-topic">
+            <el-icon><Position /></el-icon>
+            <code>{{ template.topic }}</code>
+          </div>
+
+          <div class="card-payload">
+            <pre>{{ formatPayload(template.payload) }}</pre>
+          </div>
+
+          <div class="card-footer">
+            <div class="card-meta">
+              <el-tag size="small" :type="getPayloadTypeTag(template.payload_type)">
+                {{ template.payload_type.toUpperCase() }}
+              </el-tag>
+              <span class="meta-item">QoS {{ template.qos }}</span>
+              <span v-if="template.retain" class="meta-item retain">Retain</span>
+            </div>
+            <el-button type="primary" size="small" @click="handleUse(template)">
+              {{ $t('publish.send') }}
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <template #empty>
+        <el-empty v-if="!loading" :description="$t('template.noTemplate')" :image-size="80">
+          <el-button type="primary" @click="handleCreate">{{ $t('template.addTemplate') }}</el-button>
+        </el-empty>
+      </template>
+    </VirtualList>
 
     <!-- 创建/编辑对话框 -->
     <TemplateDialog
@@ -151,6 +144,7 @@ import {
   GLOBAL_TEMPLATE_SERVER_ID
 } from '@/stores/template'
 import TemplateDialog from './TemplateDialog.vue'
+import VirtualList from '@/components/common/VirtualList.vue'
 
 const { t } = useI18n()
 
@@ -172,6 +166,7 @@ const editingTemplate = ref<CommandTemplate | null>(null)
 
 const loading = computed(() => templateStore.loading)
 const categories = computed(() => templateStore.categories)
+const categoryOptions = computed(() => categories.value.map(category => ({ label: category, value: category })))
 
 // 过滤模板
 const filteredTemplates = computed(() => {
@@ -228,11 +223,6 @@ function formatPayload(payload: string): string {
     return payload.substring(0, maxLen) + '...'
   }
   return payload
-}
-
-// 搜索处理
-function handleSearch() {
-  // 本地过滤，无需额外操作
 }
 
 // 创建模板
@@ -338,21 +328,8 @@ function handleSaved() {
   flex-shrink: 0;
 }
 
-.category-tag {
-  cursor: pointer;
-  transition: all 0.2s ease;
-
-  &:hover {
-    opacity: 0.8;
-  }
-}
-
 .template-cards {
   flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
 }
 
 .template-card {

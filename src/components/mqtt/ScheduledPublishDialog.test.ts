@@ -87,6 +87,7 @@ function createTestI18n() {
         common: {
           cancel: "取消",
           close: "关闭",
+          selectAll: "全选",
         },
         success: {
           published: "发布成功",
@@ -136,7 +137,17 @@ vi.mock("@/stores/template", async (importOriginal) => {
 import { useTemplateStore, GLOBAL_TEMPLATE_SERVER_ID } from "@/stores/template";
 
 describe("ScheduledPublishDialog", () => {
+  let restoreViewport: () => void;
+
   beforeEach(() => {
+    // jsdom has no layout. The production virtualizer still calculates the window.
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains("command-list")) return 240;
+        if (this.classList.contains("log-list")) return 200;
+        return 0;
+      });
+    restoreViewport = () => height.mockRestore();
     useRealMqttStore = false;
     setActivePinia(createPinia());
     vi.clearAllMocks();
@@ -151,6 +162,7 @@ describe("ScheduledPublishDialog", () => {
   });
 
   afterEach(() => {
+    restoreViewport();
     vi.useRealTimers();
   });
 
@@ -356,6 +368,80 @@ describe("ScheduledPublishDialog", () => {
   });
 
   describe("命令选择", () => {
+    it("全选涵盖未挂载的模板，切换全局范围后只保留全局选择", async () => {
+      const store = setupTemplates();
+      const sample = store.templates[0];
+      store.templates = Array.from({ length: 2000 }, (_, index) => ({
+        ...sample,
+        id: index + 1,
+        name: `模板 ${index + 1}`,
+        server_id: index % 2 ? GLOBAL_TEMPLATE_SERVER_ID : 1,
+      }));
+      const wrapper = createWrapper();
+      try {
+        await flushPromises();
+        const list = wrapper.get(".command-list");
+        expect(list.findAll(".command-item").length).toBeLessThan(16);
+
+        await wrapper.get(".section-actions input[type=checkbox]").setValue(true);
+        expect(wrapper.get(".selected-count").text()).toBe("已选择 2000 个模板");
+
+        list.element.scrollTop = 2000 * 74 - 240;
+        await list.trigger("scroll");
+        const last = list.get<HTMLInputElement>('[aria-posinset="2000"] input[type=checkbox]');
+        expect(last.element.checked).toBe(true);
+        await last.setValue(false);
+        expect(wrapper.get(".selected-count").text()).toBe("已选择 1999 个模板");
+
+        store.scopeFilter = "global";
+        // jsdom cannot clamp scrollTop when the content shrinks.
+        list.element.scrollTop = 0;
+        await list.trigger("scroll");
+        expect(wrapper.get(".selected-count").text()).toBe("已选择 999 个模板");
+        expect(list.get<HTMLInputElement>('[aria-posinset="1"] input[type=checkbox]').element.checked).toBe(true);
+        expect(list.get('[aria-posinset="1"] .command-name').text()).toBe("模板 2");
+      } finally {
+        wrapper.unmount();
+      }
+    });
+
+    it("滚过视口选中的模板按点击顺序使用启动时的队列和连接", async () => {
+      const store = setupTemplates();
+      const sample = store.templates[0];
+      store.templates = Array.from({ length: 2000 }, (_, index) => ({
+        ...sample,
+        id: index + 1,
+        name: `模板 ${index + 1}`,
+        topic: `device/${index + 1}`,
+      }));
+      mockPublish.mockResolvedValue(undefined);
+      const wrapper = createWrapper();
+      try {
+        await flushPromises();
+        const list = wrapper.get(".command-list");
+        list.element.scrollTop = 2000 * 74 - 240;
+        await list.trigger("scroll");
+        await list.get('[aria-posinset="2000"] input[type=checkbox]').setValue(true);
+
+        list.element.scrollTop = 0;
+        await list.trigger("scroll");
+        await list.get('[aria-posinset="1"] input[type=checkbox]').setValue(true);
+        expect(wrapper.get(".selected-count").text()).toBe("已选择 2 个模板");
+
+        await wrapper.get(".el-dialog__footer .el-button--primary").trigger("click");
+        await flushPromises();
+        expect(mockPublishRequest).toHaveBeenNthCalledWith(1, 1, expect.objectContaining({ topic: "device/2000" }));
+
+        store.templates[0].topic = "changed";
+        store.scopeFilter = "connection";
+        await wrapper.setProps({ serverId: 2 });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(mockPublishRequest).toHaveBeenNthCalledWith(2, 1, expect.objectContaining({ topic: "device/1" }));
+      } finally {
+        wrapper.unmount();
+      }
+    });
+
     it("应支持单选命令", async () => {
       setupTemplates();
       const wrapper = createWrapper();
@@ -818,7 +904,7 @@ describe("ScheduledPublishDialog", () => {
       await flushPromises();
 
       const vm = wrapper.vm as any;
-      vm.config.interval = 10;
+      vm.config.interval = 100;
       vm.config.loopMode = "infinite";
 
       vm.selectedIds = [1];
@@ -829,12 +915,12 @@ describe("ScheduledPublishDialog", () => {
 
       // 快速发送超过 100 条
       for (let i = 0; i < 110; i++) {
-        vi.advanceTimersByTime(10);
+        vi.advanceTimersByTime(100);
         await flushPromises();
       }
 
-      // 日志应限制在 100 条以内
-      expect(vm.logs.length).toBeLessThanOrEqual(100);
+      expect(vm.logs).toHaveLength(100);
+      expect(wrapper.findAll(".log-item").length).toBeLessThan(16);
     });
 
     it("应支持清空日志", async () => {

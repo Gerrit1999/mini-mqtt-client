@@ -11,20 +11,15 @@
           class="search-input"
           @input="handleSearch"
         />
-        <el-select
+        <el-select-v2
           v-model="selectedCategory"
+          :options="categoryOptions"
+          :aria-label="$t('template.category')"
           :placeholder="$t('template.allCategories')"
           clearable
           class="category-select"
           @change="handleCategoryChange"
-        >
-          <el-option
-            v-for="category in categories"
-            :key="category"
-            :label="category"
-            :value="category"
-          />
-        </el-select>
+        />
         <el-select v-model="scopeFilter" class="scope-select">
           <el-option :label="$t('template.scopeFilterAll')" value="all" />
           <el-option :label="$t('template.global')" value="global" />
@@ -72,19 +67,34 @@
     </div>
 
     <!-- 模板列表 -->
-    <div class="template-table-wrapper app-card">
-      <el-table
-        :data="filteredTemplates"
-        v-loading="loading"
-        stripe
+    <div v-loading="loading" class="template-table-wrapper app-card">
+      <VirtualList
+        :items="filteredTemplates"
+        :row-height="54"
+        :header-height="40"
+        :reset-key="JSON.stringify([serverId, searchKeyword, selectedCategory, scopeFilter])"
+        :aria-label="$t('template.title')"
+        min-width="820px"
         class="template-table"
-        @row-dblclick="handleQuickSend"
+        table
       >
-        <el-table-column prop="name" :label="$t('template.name')" min-width="140">
-          <template #default="{ row }">
-            <div class="template-name-cell">
+        <template #header>
+          <div class="template-table-grid table-heading" role="row" aria-rowindex="1">
+            <div role="columnheader">{{ $t('template.name') }}</div>
+            <div role="columnheader">{{ $t('publish.topic') }}</div>
+            <div role="columnheader">{{ $t('publish.type') }}</div>
+            <div role="columnheader">QoS</div>
+            <div role="columnheader">Retain</div>
+            <div role="columnheader">{{ $t('template.category') }}</div>
+            <div role="columnheader">{{ $t('template.useCount') }}</div>
+            <div role="columnheader">{{ $t('sidebar.actions') }}</div>
+          </div>
+        </template>
+        <template #default="{ item: row, index }">
+          <div class="template-table-grid table-data" :class="{ striped: index % 2 === 1 }" role="presentation" @dblclick="handleQuickSend(row)">
+            <div class="template-name-cell" role="cell">
               <span class="name-row">
-                <span class="name">{{ row.name }}</span>
+                <span class="name text-ellipsis" :title="row.name">{{ row.name }}</span>
                 <el-tag
                   v-if="row.server_id === GLOBAL_TEMPLATE_SERVER_ID"
                   size="small"
@@ -104,63 +114,37 @@
                   {{ $t('template.connectionOnly') }}
                 </el-tag>
               </span>
-              <span v-if="row.description" class="desc text-ellipsis">
+              <span v-if="row.description" class="desc text-ellipsis" :title="row.description">
                 {{ row.description }}
               </span>
             </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="topic" :label="$t('publish.topic')" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">
-            <code class="topic-code">{{ row.topic }}</code>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="payload_type" :label="$t('publish.type')" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="getPayloadTypeTag(row.payload_type)">
-              {{ row.payload_type.toUpperCase() }}
-            </el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="qos" label="QoS" width="60" align="center">
-          <template #default="{ row }">
-            <span class="qos-badge">{{ row.qos }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="retain" label="Retain" width="70" align="center">
-          <template #default="{ row }">
-            <el-icon v-if="row.retain" class="retain-icon active"><Check /></el-icon>
-            <el-icon v-else class="retain-icon"><Close /></el-icon>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="category" :label="$t('template.category')" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.category" size="small" effect="plain" type="info">
-              {{ row.category }}
-            </el-tag>
-            <span v-else class="no-category">-</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="use_count" :label="$t('template.useCount')" width="90" align="center">
-          <template #default="{ row }">
-            <span class="use-count">{{ row.use_count }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column :label="$t('sidebar.actions')" width="200" fixed="right">
-          <template #default="{ row }">
-            <div class="action-buttons">
+            <div role="cell" class="text-ellipsis">
+              <code class="topic-code" :title="row.topic">{{ row.topic }}</code>
+            </div>
+            <div role="cell">
+              <el-tag size="small" :type="getPayloadTypeTag(row.payload_type)">
+                {{ row.payload_type.toUpperCase() }}
+              </el-tag>
+            </div>
+            <div role="cell"><span class="qos-badge">{{ row.qos }}</span></div>
+            <div role="cell" :aria-label="String(row.retain)">
+              <el-icon v-if="row.retain" class="retain-icon active"><Check /></el-icon>
+              <el-icon v-else class="retain-icon"><Close /></el-icon>
+            </div>
+            <div role="cell" class="text-ellipsis">
+              <el-tag v-if="row.category" size="small" effect="plain" type="info" :title="row.category">
+                {{ row.category }}
+              </el-tag>
+              <span v-else class="no-category">-</span>
+            </div>
+            <div role="cell"><span class="use-count">{{ row.use_count }}</span></div>
+            <div class="action-buttons" role="cell" @dblclick.stop>
               <el-tooltip :content="$t('publish.send')" placement="top">
                 <el-button
                   size="small"
                   type="primary"
                   :icon="Promotion"
+                  :aria-label="`${$t('publish.send')} ${row.name}`"
                   circle
                   @click="handleQuickSend(row)"
                 />
@@ -169,6 +153,7 @@
                 <el-button
                   size="small"
                   :icon="Edit"
+                  :aria-label="`${$t('common.edit')} ${row.name}`"
                   circle
                   @click="handleEdit(row)"
                 />
@@ -177,6 +162,7 @@
                 <el-button
                   size="small"
                   :icon="CopyDocument"
+                  :aria-label="`${$t('common.copy')} ${row.name}`"
                   circle
                   @click="handleDuplicate(row)"
                 />
@@ -186,25 +172,20 @@
                   size="small"
                   type="danger"
                   :icon="Delete"
+                  :aria-label="`${$t('common.delete')} ${row.name}`"
                   circle
                   @click="handleDelete(row)"
                 />
               </el-tooltip>
             </div>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <!-- 空状态 -->
-      <el-empty
-        v-if="!loading && filteredTemplates.length === 0"
-        :description="$t('template.noTemplate')"
-        :image-size="80"
-      >
-        <el-button type="primary" @click="handleCreate">
-          {{ $t('template.addTemplate') }}
-        </el-button>
-      </el-empty>
+          </div>
+        </template>
+        <template #empty>
+          <el-empty v-if="!loading" :description="$t('template.noTemplate')" :image-size="80">
+            <el-button type="primary" @click="handleCreate">{{ $t('template.addTemplate') }}</el-button>
+          </el-empty>
+        </template>
+      </VirtualList>
     </div>
 
     <!-- 创建/编辑对话框 -->
@@ -271,6 +252,7 @@ import {
   GLOBAL_TEMPLATE_SERVER_ID
 } from '@/stores/template'
 import TemplateDialog from './TemplateDialog.vue'
+import VirtualList from '@/components/common/VirtualList.vue'
 
 const { t } = useI18n()
 
@@ -297,6 +279,7 @@ const loading = computed(() => templateStore.loading)
 const filteredTemplates = computed(() => templateStore.filteredTemplates)
 const frequentTemplates = computed(() => templateStore.frequentTemplates)
 const categories = computed(() => templateStore.categories)
+const categoryOptions = computed(() => categories.value.map(category => ({ label: category, value: category })))
 
 // 初始化加载
 onMounted(() => {
@@ -550,6 +533,7 @@ async function handleImport() {
 // 模板表格
 .template-table-wrapper {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -559,19 +543,64 @@ async function handleImport() {
   flex: 1;
 }
 
+.template-table-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1fr) 80px 60px 70px 90px 80px 120px;
+  align-items: stretch;
+  height: 100%;
+  font-size: 14px;
+  border-bottom: 1px solid var(--app-border-color);
+  box-sizing: border-box;
+
+  > div {
+    min-width: 0;
+    align-content: center;
+    padding: 0 8px;
+  }
+
+  > div:nth-child(n + 3) {
+    text-align: center;
+  }
+
+  > div:last-child {
+    position: sticky;
+    right: 0;
+    background-color: inherit;
+  }
+}
+
+.table-heading {
+  font-weight: 600;
+  background-color: var(--sidebar-hover);
+}
+
+.table-data {
+  background-color: var(--card-bg);
+
+  &.striped {
+    background-color: var(--el-fill-color-lighter);
+  }
+
+  &:hover {
+    background-color: var(--sidebar-hover);
+  }
+}
+
 .template-name-cell {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  justify-content: center;
 
   .name-row {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
+    min-width: 0;
     gap: 6px;
   }
 
   .name {
+    min-width: 0;
     font-weight: 500;
     color: var(--app-text-color);
   }
@@ -627,10 +656,16 @@ async function handleImport() {
   color: var(--app-text-secondary);
 }
 
-.action-buttons {
+.template-table-grid > .action-buttons {
   display: flex;
+  align-items: center;
   gap: 4px;
   justify-content: center;
+  padding: 0 4px;
+
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
 }
 
 // 导入对话框
@@ -660,7 +695,4 @@ async function handleImport() {
   padding: 32px;
 }
 
-:deep(.el-table) {
-  --el-table-header-bg-color: var(--sidebar-hover);
-}
 </style>

@@ -20,7 +20,7 @@
               <el-option :label="$t('template.connectionOnly')" value="connection" />
             </el-select>
             <el-checkbox
-              v-model="selectAll"
+              :model-value="selectAll"
               :indeterminate="isIndeterminate"
               @change="(val: boolean | string | number) => handleSelectAll(Boolean(val))"
             >
@@ -29,56 +29,68 @@
             <span class="selected-count">{{ $t('scheduled.selectedTemplates', { count: selectedIds.length }) }}</span>
           </div>
         </div>
-        <div class="command-list" v-loading="loading">
-          <div
-            v-for="cmd in templates"
-            :key="cmd.id"
-            class="command-item"
-            :class="{ selected: selectedIds.includes(cmd.id!) }"
-            @click="toggleSelect(cmd.id!)"
-          >
-            <el-checkbox
-              :model-value="selectedIds.includes(cmd.id!)"
-              @change="toggleSelect(cmd.id!)"
-              @click.stop
-            />
-            <div class="command-info">
-              <div class="command-name-row">
-                <span class="command-name">{{ cmd.name }}</span>
-                <el-tag
-                  v-if="cmd.server_id === GLOBAL_TEMPLATE_SERVER_ID"
-                  size="small"
-                  type="success"
-                  effect="plain"
-                  class="command-scope-tag"
-                >
-                  {{ $t('template.global') }}
-                </el-tag>
-                <el-tag
-                  v-else
-                  size="small"
-                  type="info"
-                  effect="plain"
-                  class="command-scope-tag"
-                >
-                  {{ $t('template.connectionOnly') }}
-                </el-tag>
-              </div>
-              <div class="command-meta">
-                <span class="topic">
-                  <el-icon><Position /></el-icon>
-                  {{ cmd.topic }}
-                </span>
-                <span class="payload">{{ truncatePayload(cmd.payload) }}</span>
-                <el-tag size="small" :type="getPayloadTypeTag(cmd.payload_type)">
-                  {{ cmd.payload_type.toUpperCase() }}
-                </el-tag>
-                <el-tag size="small" type="info">QoS {{ cmd.qos }}</el-tag>
+        <VirtualList
+          v-loading="loading"
+          class="command-list"
+          :items="templates"
+          :row-height="74"
+          :reset-key="`${serverId}:${scopeFilter}`"
+          :aria-label="$t('scheduled.selectTemplate')"
+        >
+          <template #default="{ item: cmd }">
+            <div
+              class="command-item"
+              :class="{ selected: cmd.id != null && selectedIdSet.has(cmd.id) }"
+              @click="toggleSelect(cmd.id)"
+            >
+              <el-checkbox
+                :model-value="cmd.id != null && selectedIdSet.has(cmd.id)"
+                :disabled="cmd.id == null"
+                @change="toggleSelect(cmd.id)"
+                @click.stop
+              >
+                {{ cmd.name }}
+              </el-checkbox>
+              <div class="command-info">
+                <div class="command-name-row">
+                  <span class="command-name" :title="cmd.name">{{ cmd.name }}</span>
+                  <el-tag
+                    v-if="cmd.server_id === GLOBAL_TEMPLATE_SERVER_ID"
+                    size="small"
+                    type="success"
+                    effect="plain"
+                    class="command-scope-tag"
+                  >
+                    {{ $t('template.global') }}
+                  </el-tag>
+                  <el-tag
+                    v-else
+                    size="small"
+                    type="info"
+                    effect="plain"
+                    class="command-scope-tag"
+                  >
+                    {{ $t('template.connectionOnly') }}
+                  </el-tag>
+                </div>
+                <div class="command-meta">
+                  <span class="topic">
+                    <el-icon><Position /></el-icon>
+                    <span :title="cmd.topic">{{ cmd.topic }}</span>
+                  </span>
+                  <span class="payload">{{ truncatePayload(cmd.payload) }}</span>
+                  <el-tag size="small" :type="getPayloadTypeTag(cmd.payload_type)">
+                    {{ cmd.payload_type.toUpperCase() }}
+                  </el-tag>
+                  <el-tag size="small" type="info">QoS {{ cmd.qos }}</el-tag>
+                </div>
               </div>
             </div>
-          </div>
-          <el-empty v-if="templates.length === 0" :description="$t('template.noTemplate')" :image-size="60" />
-        </div>
+          </template>
+          <template #empty>
+            <el-empty v-if="!loading" :description="$t('template.noTemplate')" :image-size="60" />
+          </template>
+        </VirtualList>
       </div>
 
       <!-- 发送配置 -->
@@ -183,26 +195,34 @@
           <span class="section-title">{{ $t('scheduled.logs') }}</span>
           <el-button text size="small" @click="logs = []">{{ $t('messages.clear') }}</el-button>
         </div>
-        <div class="log-list" ref="logListRef">
-          <div
-            v-for="(log, index) in logs"
-            :key="index"
-            class="log-item"
-            :class="log.status"
-          >
-            <div class="log-header">
-              <span class="log-time">[{{ log.time }}]</span>
-              <span class="log-topic">{{ log.topic }}</span>
-              <el-tag :type="log.status === 'success' ? 'success' : 'danger'" size="small">
-                {{ log.status === 'success' ? 'OK' : 'Fail' }}
-              </el-tag>
+        <VirtualList
+          ref="logList"
+          class="log-list"
+          :items="logs"
+          :row-height="64"
+          :aria-label="$t('scheduled.logs')"
+        >
+          <template #default="{ item: log }">
+            <div
+              class="log-item"
+              :class="log.status"
+            >
+              <div class="log-header">
+                <span class="log-time">[{{ log.time }}]</span>
+                <span class="log-topic" :title="log.topic">{{ log.topic }}</span>
+                <el-tag :type="log.status === 'success' ? 'success' : 'danger'" size="small">
+                  {{ log.status === 'success' ? 'OK' : 'Fail' }}
+                </el-tag>
+              </div>
+              <div class="log-payload">
+                <code :title="truncatePayload(log.payload)">{{ truncatePayload(log.payload) }}</code>
+              </div>
             </div>
-            <div class="log-payload">
-              <code>{{ truncatePayload(log.payload) }}</code>
-            </div>
-          </div>
-          <div v-if="logs.length === 0" class="empty-log">{{ $t('messages.noMessages') }}</div>
-        </div>
+          </template>
+          <template #empty>
+            <div class="empty-log">{{ $t('messages.noMessages') }}</div>
+          </template>
+        </VirtualList>
       </div>
     </div>
 
@@ -246,6 +266,7 @@ import {
   GLOBAL_TEMPLATE_SERVER_ID
 } from '@/stores/template'
 import { usePublishPipeline } from '@/composables/usePublishPipeline'
+import VirtualList from '@/components/common/VirtualList.vue'
 
 const { t } = useI18n()
 
@@ -283,6 +304,7 @@ const templates = computed(() => {
 
 /** 开始发布后固定，避免运行期间其他界面改动 scopeFilter 导致队列错乱 */
 const publishQueue = ref<CommandTemplate[]>([])
+let publishServerId = 0
 
 // 运行状态（须在 templates watch 之前声明，供回调使用）
 const isRunning = ref(false)
@@ -291,9 +313,19 @@ const isMinimized = ref(false) // 是否已最小化（用于区分最小化和�
 
 // 选择状态
 const selectedIds = ref<number[]>([])
-const selectAll = ref(false)
+const selectedIdSet = computed(() => new Set(selectedIds.value))
+const templatesById = computed(() => {
+  const byId = new Map<number, CommandTemplate>()
+  for (const template of templates.value) {
+    if (template.id != null) byId.set(template.id, template)
+  }
+  return byId
+})
+const selectAll = computed(() =>
+  selectedIds.value.length > 0 && selectedIds.value.length === templatesById.value.size
+)
 const isIndeterminate = computed(() => {
-  return selectedIds.value.length > 0 && selectedIds.value.length < templates.value.length
+  return selectedIds.value.length > 0 && !selectAll.value
 })
 
 // 发送配置
@@ -313,6 +345,7 @@ const failCount = ref(0)
 
 // 日志
 interface LogEntry {
+  id: number
   time: string
   topic: string
   payload: string
@@ -320,7 +353,8 @@ interface LogEntry {
   message?: string
 }
 const logs = ref<LogEntry[]>([])
-const logListRef = ref<HTMLElement | null>(null)
+const logList = ref<{ scrollToEnd: () => void } | null>(null)
+let nextLogId = 0
 
 // 定时器
 let publishTimeout: ReturnType<typeof setTimeout> | null = null
@@ -364,7 +398,6 @@ function formatProgress(_percentage: number) {
 // 重置状态
 function resetState() {
   selectedIds.value = []
-  selectAll.value = false
   publishQueue.value = []
   isRunning.value = false
   isCompleted.value = false
@@ -397,67 +430,49 @@ function truncatePayload(payload: string): string {
 }
 
 // 切换选择
-function toggleSelect(id: number) {
+function toggleSelect(id: number | undefined) {
+  if (id == null) return
   const index = selectedIds.value.indexOf(id)
   if (index === -1) {
     selectedIds.value.push(id)
   } else {
     selectedIds.value.splice(index, 1)
   }
-  updateSelectAll()
 }
 
-// 更新全选状态
-function updateSelectAll() {
-  selectAll.value = selectedIds.value.length === templates.value.length && templates.value.length > 0
+function pruneSelection() {
+  selectedIds.value = selectedIds.value.filter((id) => templatesById.value.has(id))
 }
 
-watch(templates, (list) => {
-  if (isRunning.value) return
-  const ids = new Set(list.map((t) => t.id).filter((id): id is number => id != null))
-  selectedIds.value = selectedIds.value.filter((id) => ids.has(id))
-  updateSelectAll()
+watch(templatesById, () => {
+  if (!isRunning.value) pruneSelection()
 })
 
 // 全选处理
 function handleSelectAll(val: boolean) {
-  if (val) {
-    selectedIds.value = templates.value.map(t => t.id!)
-  } else {
-    selectedIds.value = []
-  }
-  updateSelectAll()
+  selectedIds.value = val ? [...templatesById.value.keys()] : []
 }
 
 // 获取排序后的命令
 function getOrderedCommands(): CommandTemplate[] {
-  const selected = templates.value.filter(t => selectedIds.value.includes(t.id!))
   if (config.value.order === 'name') {
-    return [...selected].sort((a, b) => a.name.localeCompare(b.name))
+    return [...templatesById.value.values()]
+      .filter(template => selectedIdSet.value.has(template.id!))
+      .sort((a, b) => a.name.localeCompare(b.name))
   }
-  // 按勾选顺序
   return selectedIds.value
-    .map((id) => selected.find((t) => t.id === id))
-    .filter((t): t is CommandTemplate => t != null)
+    .map(id => templatesById.value.get(id))
+    .filter((template): template is CommandTemplate => template != null)
 }
 
 // 添加日志
 function addLog(topic: string, payload: string, status: 'success' | 'error', message?: string) {
   const now = new Date()
   const time = now.toLocaleTimeString('zh-CN', { hour12: false })
-  logs.value.push({ time, topic, payload, status, message })
-  
-  // 限制日志数量
-  if (logs.value.length > 100) {
-    logs.value.shift()
-  }
+  logs.value = [...logs.value.slice(-99), { id: ++nextLogId, time, topic, payload, status, message }]
   
   // 滚动到底部
-  nextTick(() => {
-    if (logListRef.value) {
-      logListRef.value.scrollTop = logListRef.value.scrollHeight
-    }
-  })
+  nextTick(() => logList.value?.scrollToEnd())
 }
 
 // 开始发布
@@ -473,7 +488,8 @@ async function handleStart() {
     return
   }
 
-  publishQueue.value = ordered
+  publishQueue.value = ordered.map(command => ({ ...command }))
+  publishServerId = props.serverId
 
   isRunning.value = true
   currentIndex.value = 0
@@ -513,13 +529,14 @@ async function publishNext(runId: number = publishRunId) {
     return
   }
   currentCommand.value = command
+  const serverId = publishServerId
 
   if (!isRunning.value || runId !== publishRunId) return
 
   let trackedPublish!: Promise<void>
   trackedPublish = Promise.resolve()
     .then(() => publish({
-      serverId: props.serverId,
+      serverId,
       topic: command.topic,
       payload: command.payload,
       qos: command.qos,
@@ -624,6 +641,7 @@ function stopPublishing(keepView: boolean = false) {
 // 返回配置界面
 function handleBackToConfig() {
   isCompleted.value = false
+  pruneSelection()
   publishQueue.value = []
   currentIndex.value = 0
   currentRound.value = 1
@@ -707,21 +725,18 @@ function handleClose() {
 
 .command-list {
   max-height: 240px;
-  overflow-y: auto;
 }
 
 .command-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: 12px 16px;
+  height: 100%;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--app-border-color);
   cursor: pointer;
   transition: background-color 0.2s;
-
-  &:last-child {
-    border-bottom: none;
-  }
 
   &:hover {
     background-color: var(--sidebar-hover);
@@ -737,10 +752,19 @@ function handleClose() {
   min-width: 0;
 }
 
+.command-item :deep(.el-checkbox__label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .command-name-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 6px;
 }
@@ -749,6 +773,9 @@ function handleClose() {
   font-size: 14px;
   font-weight: 500;
   color: var(--app-text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .command-scope-tag {
@@ -757,16 +784,26 @@ function handleClose() {
 
 .command-meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: var(--app-text-secondary);
 
+  :deep(.el-tag) {
+    flex-shrink: 0;
+  }
+
   .topic {
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
+  }
+
+  .topic > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .payload {
@@ -866,21 +903,17 @@ function handleClose() {
 
 .log-list {
   max-height: 200px;
-  overflow-y: auto;
-  padding: 8px 16px;
 }
 
 .log-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 8px 16px;
   font-size: 12px;
   border-bottom: 1px dashed var(--app-border-color);
-
-  &:last-child {
-    border-bottom: none;
-  }
 }
 
 .log-header {
@@ -908,12 +941,14 @@ function handleClose() {
   padding: 4px 8px;
   background-color: var(--sidebar-hover);
   border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   
   code {
     font-family: 'Fira Code', 'Consolas', monospace;
     font-size: 11px;
     color: var(--app-text-secondary);
-    word-break: break-all;
   }
 }
 
