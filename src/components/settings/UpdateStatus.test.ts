@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-updater', () => ({ check: native.check }))
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '1.8.1' }))
 
 beforeEach(() => { localStorage.clear(); setActivePinia(createPinia()); vi.resetAllMocks(); native.check.mockRejectedValue(new Error('Network unavailable')) })
-it('keeps ready feedback available after later and renders release notes as text', async () => {
+it('keeps ready feedback available after later and escapes raw HTML in release notes', async () => {
   const updater = useUpdaterStore()
   updater.phase = 'ready'
   updater.info = { hasUpdate: true, latestVersion: 'v1.9.0', currentVersion: '1.8.1', date: '2026-10-10', body: '<img src=x onerror=alert(1)>' }
@@ -23,6 +23,43 @@ it('keeps ready feedback available after later and renders release notes as text
   expect(wrapper.get('[data-action="show"]').text()).toContain('v1.9.0')
   await wrapper.get('[data-action="show"]').trigger('click')
   expect(wrapper.find('[data-action="restart"]').exists()).toBe(true)
+  wrapper.unmount()
+})
+
+it('formats Markdown release notes and only makes HTTP(S) destinations clickable', () => {
+  const updater = useUpdaterStore()
+  updater.phase = 'available'
+  updater.info = {
+    hasUpdate: true,
+    latestVersion: 'v1.9.0',
+    currentVersion: 'v1.8.1',
+    body: [
+      '## Improvements',
+      '',
+      '- **Updated** the `mqtt` client',
+      '- [Release details](https://example.com/releases/v1.9.0)',
+      '',
+      '[Local file](file:///example) ![Preview](https://example.com/preview.png)',
+      '',
+      '```text',
+      '# Literal text',
+      '```',
+    ].join('\n'),
+  }
+  const wrapper = mount(UpdateStatus, { global: { plugins: [i18n] } })
+  const notes = wrapper.get('.release-notes-content')
+  expect(notes.get('h2').text()).toBe('Improvements')
+  expect(notes.get('li strong').text()).toBe('Updated')
+  expect(notes.get('li code').text()).toBe('mqtt')
+  expect(notes.get('pre code').text()).toBe('# Literal text')
+  expect(notes.findAll('a')).toHaveLength(1)
+  expect(notes.get('a').attributes()).toMatchObject({
+    href: 'https://example.com/releases/v1.9.0',
+    target: '_blank',
+    rel: 'noopener noreferrer',
+  })
+  expect(notes.text()).toContain('Preview')
+  expect(notes.find('img').exists()).toBe(false)
   wrapper.unmount()
 })
 

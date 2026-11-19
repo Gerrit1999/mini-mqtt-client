@@ -179,7 +179,8 @@ updater:
   releaseDate: Release Date
   releaseNotes: Release Notes
   failure: Update failed
-  confirm: "Install {version} and restart? Installation may close the app. The following activities will be interrupted and unsaved changes may be lost."
+  confirmTitle: Install Update
+  confirm: "The app will restart after installing {version}."
   phases:
     idle: Waiting
     checking: Checking for updates

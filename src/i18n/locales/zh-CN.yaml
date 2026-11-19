@@ -179,7 +179,8 @@ updater:
   releaseDate: 发布日期
   releaseNotes: 更新说明
   failure: 更新失败
-  confirm: "是否安装 {version} 并重新启动？安装可能关闭应用，以下活动将被中断，未保存的内容可能丢失。"
+  confirmTitle: 安装更新
+  confirm: "安装 {version} 后，应用将重新启动。"
   phases:
     idle: 等待检查
     checking: 正在检查更新

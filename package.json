@@ -21,6 +21,7 @@
     "@tauri-apps/plugin-updater": "^2.10.1",
     "element-plus": "^2.13.1",
     "lossless-json": "^4.3.1",
+    "markdown-it": "^15.0.3",
     "pako": "^2.1.0",
     "pinia": "^3.0.4",
     "vue": "^3.5.43",

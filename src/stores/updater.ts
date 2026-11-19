@@ -182,18 +182,25 @@ export const useUpdaterStore = defineStore('updater', () => {
     item.id === b[index].id && item.token === b[index].token)
   async function confirmInstall(snapshot: Impacts) {
     const t = i18n.global.t
+    const kinds = [...new Set(snapshot.map(item => item.kind))]
     const cancelled = new Promise<boolean>(resolve => {
       cancelConfirmation = () => { resolve(false); ElMessageBox.close() }
     })
     try {
       const confirmation = ElMessageBox.confirm(h('div', [
         h('p', t('updater.confirm', { version: info.value?.latestVersion })),
-        h('ul', [...new Set(snapshot.map(item => item.kind))].map(kind => h('li', t(`updater.impacts.${kind}`)))),
-        h('button', { type: 'button', class: 'el-button', onClick: () => { defer(); cancelConfirmation?.() } }, t('updater.later')),
-      ]), t('updater.restart'), {
-        confirmButtonText: t('updater.restart'), cancelButtonText: t('common.cancel'),
-        closeOnClickModal: false, type: snapshot.length ? 'warning' : 'info',
-      }).then(() => true, () => false)
+        kinds.length ? h('ul', kinds.map(kind => h('li', t(`updater.impacts.${kind}`)))) : null,
+      ]), t('updater.confirmTitle'), {
+        customClass: 'updater-confirm',
+        confirmButtonText: t('updater.restart'),
+        cancelButtonText: t('updater.later'),
+        distinguishCancelAndClose: true,
+        closeOnClickModal: false,
+        autofocus: false,
+      }).then(() => true, action => {
+        if (action === 'cancel') defer()
+        return false
+      })
       // Element Plus close() removes the box without settling its promise.
       return await Promise.race([confirmation, cancelled])
     } catch { return false } finally { cancelConfirmation = undefined }
